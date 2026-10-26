@@ -1,0 +1,94 @@
+{
+  "description": "FrameCrypto vectors for the VLP v1 link layer: PBKDF2 bootstrap-key derivation, pairing-mode framing (plaintext + outer HMAC), and session-mode framing (AES-256-GCM + outer HMAC). See ProjectInfo/04-PROTOCOL.md section 5.",
+  "derivation": "Computed with .NET BCL primitives (Rfc2898DeriveBytes.Pbkdf2, AesGcm, HMACSHA256) in a throwaway program referencing neither implementation. .NET's and Java JCE's are separate implementations of the same published standards, so agreement between them is meaningful. The harness was sanity-checked against the published SHA-256 value for 'abc'.",
+  "algorithms": {
+    "bootstrapKey": "PBKDF2-HMAC-SHA256(pin, salt, 120000 iterations, 256 bits), salt = min(idA,idB) ':' max(idA,idB) lower-cased, US-ASCII",
+    "mac": "HMAC-SHA256(key, utf8(fromDeviceId) || nonce || body)",
+    "sessionBody": "AES-256-GCM, 96-bit nonce, 128-bit tag, body = ciphertext || tag",
+    "pairingBody": "utf8(payloadJson), unencrypted, authenticated by the outer HMAC only"
+  },
+  "bootstrapKeyVectors": [
+    {
+      "name": "PIN 123456, ids ALPHA and bravo",
+      "note": "The initiator id is given upper-case to pin the lower-casing step. The salt is the ordered pair, so both peers derive the same key regardless of who initiated.",
+      "input": { "pin": "123456", "initiatorId": "ALPHA", "targetId": "bravo" },
+      "expected": {
+        "salt": "alpha:bravo",
+        "keyHex": "d463eb25b4cb7f915557dcf563b4910aa87aabb0f867e9add81d76711310e7ba"
+      }
+    },
+    {
+      "name": "Same PIN with the roles reversed derives the identical key",
+      "note": "This is the whole reason the salt is lexicographically ordered. If this vector fails, pairing succeeds in one direction and fails in the other.",
+      "input": { "pin": "123456", "initiatorId": "bravo", "targetId": "ALPHA" },
+      "expected": {
+        "salt": "alpha:bravo",
+        "keyHex": "d463eb25b4cb7f915557dcf563b4910aa87aabb0f867e9add81d76711310e7ba"
+      }
+    }
+  ],
+  "pairingFrameVectors": [
+    {
+      "name": "Pairing-mode frame, plaintext body with outer HMAC",
+      "input": {
+        "keyHex": "d463eb25b4cb7f915557dcf563b4910aa87aabb0f867e9add81d76711310e7ba",
+        "fromDeviceId": "ALPHA",
+        "nonceHex": "000102030405060708090a0b",
+        "payloadJson": "{\"t\":\"ping\",\"nonce\":\"abc\"}",
+        "encrypt": false
+      },
+      "expected": {
+        "bodyHex": "7b2274223a2270696e67222c226e6f6e6365223a22616263227d",
+        "macHex": "731b1a4bf68ce0480ecd150ff82a1a53859ee51b1f550a60ceeaa18e41fd8870"
+      }
+    }
+  ],
+  "sessionFrameVectors": [
+    {
+      "name": "Session-mode frame, AES-256-GCM body with outer HMAC",
+      "note": "Java's Cipher.doFinal returns ciphertext||tag as a single array; .NET returns them separately. The wire form is the concatenation, so an implementation that keeps them apart must join them in this order.",
+      "input": {
+        "keyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "fromDeviceId": "ALPHA",
+        "nonceHex": "000102030405060708090a0b",
+        "payloadJson": "{\"t\":\"ping\",\"nonce\":\"abc\"}",
+        "encrypt": true
+      },
+      "expected": {
+        "ciphertextHex": "3c20a239ffc7b272e326b5a793871703e0b3a50ed21a3d1f1a1a",
+        "tagHex": "4d40dfef1e88a818314ae226db1ad68f",
+        "bodyHex": "3c20a239ffc7b272e326b5a793871703e0b3a50ed21a3d1f1a1a4d40dfef1e88a818314ae226db1ad68f",
+        "macHex": "a0845f3ced0fffd974203f1a596eae1915f6449c8a9268cfd4d26f558f8be7c4"
+      }
+    }
+  ],
+  "rejectionVectors": [
+    {
+      "name": "A frame whose MAC is altered must not open",
+      "input": { "mutate": "flip the last byte of macHex" },
+      "expected": { "open": null, "reason": "MAC mismatch, rejected before any decryption is attempted" }
+    },
+    {
+      "name": "A frame re-attributed to a different sender must not open",
+      "note": "This is what binding fromDeviceId into the MAC buys. With a shared key and an unbound MAC, a frame could be lifted and replayed as if it came from another peer.",
+      "input": { "mutate": "change fromDeviceId from ALPHA to CHARLIE, leaving nonce, body and mac untouched" },
+      "expected": { "open": null, "reason": "MAC covers the sender id" }
+    },
+    {
+      "name": "A session frame whose ciphertext is altered must not open",
+      "input": { "mutate": "flip a byte inside bodyHex" },
+      "expected": { "open": null, "reason": "outer HMAC fails first; GCM tag would also fail" }
+    },
+    {
+      "name": "A repeated nonce must be rejected by the replay cache",
+      "input": { "action": "open the same valid frame twice" },
+      "expected": { "firstOpen": "succeeds", "secondOpen": null, "reason": "nonce already seen" }
+    }
+  ],
+  "notes": [
+    "120000 PBKDF2 iterations is the only thing standing between a 6-digit PIN and an offline attacker who captured the exchange. Lowering it is a security change, not a performance tuning knob.",
+    "MAC verification MUST precede decryption and MUST use a constant-time comparison. A short-circuiting compare leaks how many leading tag bytes an attacker guessed, which is enough to forge a tag one byte at a time.",
+    "open() must never throw on hostile input; it returns null. A thrown exception that escapes to a connection handler is a denial-of-service lever.",
+    "In session mode the outer HMAC is redundant for confidentiality - GCM already authenticates - but it binds the frame to the claimed sender, which GCM does not."
+  ]
+}

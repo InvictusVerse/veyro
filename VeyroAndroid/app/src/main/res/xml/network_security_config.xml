@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Veyro is a peer-to-peer local network transfer application.
+         Devices discover each other on the local network and connect via WebSockets
+         (ws://<local-ip>:<port>/veyro).
+         All communication payloads are end-to-end encrypted and authenticated at the
+         application protocol layer (Noise / ChaCha20-Poly1305 / AES-GCM + outer HMAC).
+         Android 9+ (API 28+) disables cleartext HTTP/WebSocket traffic by default.
+         Enabling cleartext traffic here permits local IPv4 peer connections while
+         preserving system trust anchors. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Debug overrides for local development and testing -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+            <certificates src="system" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

@@ -1,0 +1,38 @@
+{
+  "description": "deviceId and fingerprint derivation. Fixed X25519 public keys, so both implementations must produce byte-identical identifiers. See ProjectInfo/04-PROTOCOL.md section 2.",
+  "algorithm": "deviceIdBytes = SHA-256(\"veyro-id-v1\" || staticPublicKey)[0..15];  deviceId = CrockfordBase32(deviceIdBytes);  fingerprint = uppercase hex of deviceIdBytes[0..7], space-separated in pairs",
+  "vectors": [
+    {
+      "name": "all zero public key",
+      "note": "The all-zero public key is not a valid X25519 point, but it is a well-defined byte string and is a useful smoke-test input. This vector exercises the derivation function, not key validity.",
+      "input": {
+        "staticPublicKeyHex": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expected": {
+        "deviceIdBytesHex": "349c8204befdefebd16d190a64c77ee9",
+        "deviceId": "6JE8415YZQQYQMBD34569HVYX4",
+        "fingerprint": "34 9C 82 04 BE FD EF EB"
+      },
+      "verification": "VERIFIED - computed independently of the Kotlin implementation (PowerShell SHA-256 + a separate Crockford encoder) and cross-checked against a Kotlin JVM test. Two independent computations agreeing is the point; a vector copied out of one implementation would only encode that implementation's bugs."
+    },
+    {
+      "name": "sequential 0x01..0x20 public key",
+      "input": {
+        "staticPublicKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+      },
+      "expected": {
+        "deviceIdBytesHex": "be3aa270f0c9f869ac6c4b07dd931b4f",
+        "deviceId": "QRXA4W7GS7W6KB3C9C3XV4RV9W",
+        "fingerprint": "BE 3A A2 70 F0 C9 F8 69"
+      },
+      "verification": "VERIFIED - same two independent computations as above."
+    }
+  ],
+  "notes": [
+    "deviceId is 26 Crockford Base32 characters, encoding exactly 16 bytes with no padding.",
+    "Crockford Base32 excludes I, L, O and U, and maps I/L to 1 and O to 0 on decode.",
+    "The fingerprint bytes come from deviceIdBytes (the first 16 bytes of the digest), not from a re-encoding of the public key.",
+    "deviceId MUST be stable across restarts and app updates: the identity seed is persisted, never regenerated. It MUST change when the user resets their identity, because that is genuinely a new key pair.",
+    "Domain separation string is exactly \"veyro-id-v1\" (10 bytes ASCII), prefixed before the 32-byte public key. Getting this wrong changes every deviceId, so it is asserted in its own test."
+  ]
+}

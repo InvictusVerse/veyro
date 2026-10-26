@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same reasoning as backup_rules.xml: device-to-device credentials are not transferable. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="identity/" />
+        <exclude domain="file" path="trust/" />
+        <exclude domain="file" path="transfers/" />
+        <exclude domain="sharedpref" path="veyro_identity.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="identity/" />
+        <exclude domain="file" path="trust/" />
+        <exclude domain="file" path="transfers/" />
+        <exclude domain="sharedpref" path="veyro_identity.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Declared in the module that owns the services, so the app manifest does not have to know
+         about them. Manifest merging pulls these into :app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <application>
+        <!--
+          dataSync, not connectedDevice: this is a bulk data transfer over IP, which is what
+          dataSync describes. connectedDevice is for companion-device interaction (Bluetooth,
+          Wear), and claiming it for a Wi-Fi file transfer would be the wrong declaration even
+          though Android would accept it.
+        -->
+        <service
+            android:name="com.veyro.core.service.VeyroTransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name="com.veyro.core.service.VeyroDiscoverableService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+
+</manifest>

@@ -1,0 +1,192 @@
+{
+  "description": "Control-plane JSON vectors: the preamble/mode-branch handshake, the outer LinkWireFrame, the LinkEnvelope, and the LinkMessage set. See ProjectInfo/04-PROTOCOL.md sections 4-6.",
+  "derivation": "Derived from the declared field names and the normative codec settings, not captured from either implementation.",
+  "codecSettings": {
+    "classDiscriminator": "t",
+    "ignoreUnknownKeys": true,
+    "encodeDefaults": true,
+    "explicitNulls": false
+  },
+  "orderingNote": "JSON objects are unordered, and the frame MAC is computed over the bytes as received rather than over a re-serialization, so member order is NOT a correctness requirement and these vectors do not pin it. What they do pin is the exact set of keys produced, the discriminator values, that defaults ARE emitted, and that nulls are OMITTED rather than written as null.",
+  "nullPolicyNote": "explicitNulls = false means an absent optional field is omitted entirely. A peer emitting \"reason\": null instead of omitting it is a conformance bug, even though a tolerant parser would accept it.",
+  "handshakeVectors": [
+    {
+      "name": "LinkPreamble",
+      "note": "encodeDefaults = true, so platform and protocolVersion appear even when left at their defaults.",
+      "json": "{\"id\":\"6JE8415YZQQYQMBD34569HVYX4\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":1}",
+      "requiredKeys": ["id", "name", "platform", "protocolVersion"]
+    },
+    {
+      "name": "LinkPreambleAck accepting a session",
+      "json": "{\"mode\":\"session\"}",
+      "requiredKeys": ["mode"],
+      "forbiddenKeys": ["reason"]
+    },
+    {
+      "name": "LinkPreambleAck refusing, with a reason",
+      "json": "{\"mode\":\"refused\",\"reason\":\"not paired\"}",
+      "requiredKeys": ["mode", "reason"]
+    },
+    {
+      "name": "Valid modes",
+      "modes": ["session", "pairing", "busy", "refused"]
+    }
+  ],
+  "wireFrameVectors": [
+    {
+      "name": "Session-mode frame carries c, not p",
+      "json": "{\"f\":\"6JE8415YZQQYQMBD34569HVYX4\",\"n\":\"AAECAwQFBgcICQoL\",\"c\":\"Y2lwaGVydGV4dA==\",\"m\":\"bWFj\"}",
+      "requiredKeys": ["f", "n", "c", "m"],
+      "forbiddenKeys": ["p"]
+    },
+    {
+      "name": "Pairing-mode frame carries p, not c",
+      "json": "{\"f\":\"6JE8415YZQQYQMBD34569HVYX4\",\"n\":\"AAECAwQFBgcICQoL\",\"p\":\"cGxhaW50ZXh0\",\"m\":\"bWFj\"}",
+      "requiredKeys": ["f", "n", "p", "m"],
+      "forbiddenKeys": ["c"]
+    }
+  ],
+  "envelopeVectors": [
+    {
+      "name": "Envelope wrapping a ping",
+      "json": "{\"v\":1,\"msgId\":\"m-1\",\"from\":\"6JE8415YZQQYQMBD34569HVYX4\",\"seq\":7,\"ts\":1760000000000,\"payload\":{\"t\":\"ping\",\"nonce\":\"abc\"}}",
+      "requiredKeys": ["v", "msgId", "from", "seq", "ts", "payload"],
+      "expected": { "v": 1, "seq": 7, "payloadType": "ping" }
+    }
+  ],
+  "messageVectors": [
+    {
+      "name": "ping",
+      "discriminator": "ping",
+      "json": "{\"t\":\"ping\",\"nonce\":\"abc\"}"
+    },
+    {
+      "name": "pong",
+      "discriminator": "pong",
+      "json": "{\"t\":\"pong\",\"nonce\":\"abc\"}"
+    },
+    {
+      "name": "hello",
+      "discriminator": "hello",
+      "note": "capabilities and maxChunk are defaults and must still be emitted.",
+      "json": "{\"t\":\"hello\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"capabilities\":0,\"maxChunk\":4194304}",
+      "requiredKeys": ["t", "deviceId", "deviceName", "platform", "capabilities", "maxChunk"]
+    },
+    {
+      "name": "helloAck",
+      "discriminator": "helloAck",
+      "json": "{\"t\":\"helloAck\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"capabilities\":31,\"chunkSize\":524288}"
+    },
+    {
+      "name": "pairHello without a public key",
+      "discriminator": "pairHello",
+      "json": "{\"t\":\"pairHello\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"appVersion\":\"1.0.0\",\"protocolVersion\":1}",
+      "forbiddenKeys": ["publicKeyB64"]
+    },
+    {
+      "name": "pairOk",
+      "discriminator": "pairOk",
+      "note": "This message carries the long-lived session secret and is always sent sealed, never in the clear.",
+      "json": "{\"t\":\"pairOk\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"sessionSecretB64\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"}"
+    },
+    {
+      "name": "pairFail",
+      "discriminator": "pairFail",
+      "json": "{\"t\":\"pairFail\",\"reason\":\"wrong pin\"}"
+    },
+    {
+      "name": "offer",
+      "discriminator": "offer",
+      "note": "senderWifiP2pAddress is null and must be omitted. preferredRoutes is the ordered route preference used by ADR-023.",
+      "json": "{\"t\":\"offer\",\"transferId\":\"tx-1\",\"items\":[{\"index\":0,\"relPath\":\"photo.jpg\",\"size\":1024,\"mtime\":1760000000000,\"isDir\":false}],\"totalBytes\":1024,\"senderName\":\"Test PC\",\"preferredRoutes\":[\"LAN_TCP\",\"WIFI_DIRECT\"]}",
+      "requiredKeys": ["t", "transferId", "items", "totalBytes", "senderName", "preferredRoutes"],
+      "forbiddenKeys": ["senderWifiP2pAddress"]
+    },
+    {
+      "name": "decision accepting over LAN_TCP",
+      "discriminator": "decision",
+      "note": "Every optional field that is null must be omitted. authToken is the ephemeral per-transfer credential for the VTC1 socket.",
+      "json": "{\"t\":\"decision\",\"transferId\":\"tx-1\",\"accept\":true,\"route\":\"LAN_TCP\",\"tcpHost\":\"192.168.1.50\",\"tcpPort\":47651,\"fallbackHost\":\"192.168.1.50\",\"authToken\":\"0123456789abcdef\"}",
+      "requiredKeys": ["t", "transferId", "accept", "route", "tcpHost", "tcpPort", "authToken"],
+      "forbiddenKeys": ["reason", "resume", "p2pSsid", "p2pPassphrase"]
+    },
+    {
+      "name": "decision declining",
+      "discriminator": "decision",
+      "json": "{\"t\":\"decision\",\"transferId\":\"tx-1\",\"accept\":false,\"reason\":\"OFFER_REJECTED\"}",
+      "forbiddenKeys": ["route", "tcpHost", "tcpPort", "authToken"]
+    },
+    {
+      "name": "decision with a resume map",
+      "discriminator": "decision",
+      "note": "resume maps itemIndex to the chunk indices still needed. Absent means send everything.",
+      "json": "{\"t\":\"decision\",\"transferId\":\"tx-1\",\"accept\":true,\"resume\":{\"0\":[3,4,5]},\"route\":\"LAN_TCP\"}"
+    },
+    {
+      "name": "progressNotice",
+      "discriminator": "progressNotice",
+      "json": "{\"t\":\"progressNotice\",\"transferId\":\"tx-1\",\"bytesReceived\":512,\"totalBytes\":1024,\"currentItemIndex\":0,\"speedBps\":1048576}"
+    },
+    {
+      "name": "itemBegin",
+      "discriminator": "itemBegin",
+      "json": "{\"t\":\"itemBegin\",\"transferId\":\"tx-1\",\"index\":0,\"size\":1024,\"chunkCount\":2,\"chunkSize\":512}"
+    },
+    {
+      "name": "itemEnd",
+      "discriminator": "itemEnd",
+      "json": "{\"t\":\"itemEnd\",\"transferId\":\"tx-1\",\"index\":0,\"sha256\":\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"}"
+    },
+    {
+      "name": "itemResult ok",
+      "discriminator": "itemResult",
+      "json": "{\"t\":\"itemResult\",\"transferId\":\"tx-1\",\"index\":0,\"ok\":true}",
+      "forbiddenKeys": ["error"]
+    },
+    {
+      "name": "itemResult failed",
+      "discriminator": "itemResult",
+      "json": "{\"t\":\"itemResult\",\"transferId\":\"tx-1\",\"index\":1,\"ok\":false,\"error\":\"HASH_MISMATCH\"}"
+    },
+    {
+      "name": "transferEnd",
+      "discriminator": "transferEnd",
+      "json": "{\"t\":\"transferEnd\",\"transferId\":\"tx-1\",\"completed\":true,\"failedIndices\":[]}"
+    },
+    {
+      "name": "chunk fallback",
+      "discriminator": "chunk",
+      "note": "Base64 in JSON. Correct but slow; the normal path is the VTC1 raw TCP data plane.",
+      "json": "{\"t\":\"chunk\",\"transferId\":\"tx-1\",\"index\":0,\"chunkIndex\":0,\"dataB64\":\"aGVsbG8=\"}"
+    },
+    {
+      "name": "cancel",
+      "discriminator": "cancel",
+      "json": "{\"t\":\"cancel\",\"transferId\":\"tx-1\",\"reason\":\"user cancelled\"}"
+    }
+  ],
+  "forwardCompatibilityVectors": [
+    {
+      "name": "An unknown key inside a known message must be ignored, not rejected",
+      "note": "This is what lets a newer peer add a field without breaking an older one. Rejecting here would make every future field a breaking change.",
+      "json": "{\"t\":\"ping\",\"nonce\":\"abc\",\"somethingFromTheFuture\":42}",
+      "expected": { "decodes": true, "discriminator": "ping", "nonce": "abc" }
+    },
+    {
+      "name": "An unknown key inside the envelope must be ignored",
+      "json": "{\"v\":1,\"msgId\":\"m-1\",\"from\":\"6JE8415YZQQYQMBD34569HVYX4\",\"seq\":0,\"ts\":1,\"payload\":{\"t\":\"ping\",\"nonce\":\"a\"},\"futureField\":\"x\"}",
+      "expected": { "decodes": true }
+    },
+    {
+      "name": "An unknown discriminator must be rejected, not silently ignored",
+      "note": "Unknown FIELDS are forward compatibility; an unknown MESSAGE TYPE is not something a v1 peer can act on, and guessing would be worse than refusing.",
+      "json": "{\"t\":\"somethingNew\",\"x\":1}",
+      "expected": { "decodes": false }
+    }
+  ],
+  "notes": [
+    "The preamble is unauthenticated and carries no authority. It exists so the receiver can decide which key to use; the mode decision that follows is what grants anything.",
+    "pairOk is always sealed even though pairing mode is nominally plaintext, because it carries the session secret. There is no plaintext fallback and therefore no downgrade path.",
+    "Adding a nullable field with a null default is not a breaking change and does not require a VLP_VERSION bump. Removing a field or changing its meaning does."
+  ]
+}

@@ -1,0 +1,72 @@
+<Page
+    x:Class="Veyro.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Padding="24">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Spacing="16">
+            <TextBlock FontSize="22" FontWeight="SemiBold" Text="Settings" />
+
+            <!-- Device Identity & Fingerprint Card -->
+            <Border
+                Padding="16"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Spacing="12">
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Device Identity (X25519 + DPAPI)" />
+                    <TextBox
+                        Header="Device Display Name"
+                        Text="{x:Bind ViewModel.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <StackPanel Spacing="4">
+                        <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Device ID (Crockford Base32)" />
+                        <TextBlock FontFamily="Consolas" IsTextSelectionEnabled="True" Text="{x:Bind ViewModel.DeviceId, Mode=OneWay}" />
+                    </StackPanel>
+                    <StackPanel Spacing="4">
+                        <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Verification Fingerprint" />
+                        <TextBlock FontFamily="Consolas" FontWeight="SemiBold" IsTextSelectionEnabled="True" Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}" />
+                    </StackPanel>
+                    <Button Click="ResetIdentity_Click" Content="Reset Identity Key" />
+                </StackPanel>
+            </Border>
+
+            <!-- Discovery & Storage Card -->
+            <Border
+                Padding="16"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Spacing="12">
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Discovery &amp; Transfers" />
+                    <ToggleSwitch
+                        Header="Discoverable on LAN (mDNS + UDP Beacon)"
+                        IsOn="{x:Bind ViewModel.IsDiscoverable, Mode=TwoWay}" />
+                    <TextBox
+                        Header="Received Files Folder"
+                        Text="{x:Bind ViewModel.DownloadDirectory, Mode=TwoWay}" />
+                </StackPanel>
+            </Border>
+
+            <!-- System & Tray Behavior Card -->
+            <Border
+                Padding="16"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Spacing="12">
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="System Integration" />
+                    <ToggleSwitch
+                        Header="Start Veyro on Windows Login"
+                        IsOn="{x:Bind ViewModel.AutoStartOnLogin, Mode=TwoWay}" />
+                    <ToggleSwitch
+                        Header="Minimize to System Tray on Close"
+                        IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

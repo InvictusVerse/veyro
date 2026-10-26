@@ -1,0 +1,123 @@
+{
+  "description": "Inbound relative-path validation corpus (REQ-T11). A sender is untrusted even when paired: pairing proves who is sending, not that what they send is well-formed. One malformed path escaping the destination directory turns a file-transfer app into an arbitrary-file-write primitive. See ProjectInfo/04-PROTOCOL.md section 8.",
+  "derivation": "Enumerated from the section 8 rule list, one case per rule plus the ordering cases. Reason names are the canonical protocol names.",
+  "limits": { "maxUtf8Bytes": 1024, "maxSegments": 64 },
+  "checkOrderNote": "The order of checks is normative because it decides which reason a path violating several rules is reported under. The order is: empty, length, NUL, surrogate, backslash, UNC, absolute, drive letter, segment count, then per-segment (empty, traversal, current-dir, control char, forbidden char, trailing dot/space, reserved name). The ordering cases below exist to pin it.",
+  "failureModeNote": "Validation returns a typed result and never throws. A single bad path must fail one item, not the whole transfer: the caller emits itemResult{ok:false, error:'PATH_REJECTED'} and continues. An implementation that throws would abort a 2000-file folder because one file had an awkward name.",
+  "normalisationNote": "Unicode normalisation is deliberately NOT applied. Normalising rewrites the path and breaks the correspondence between the hash the sender computed and the filename the receiver writes.",
+  "accept": [
+    { "path": "photo.jpg", "note": "simplest case" },
+    { "path": "Documents/Reports/Q4-2026.pdf", "segments": 3 },
+    { "path": "a/b/c/d/e/f/g/h.txt", "segments": 8 },
+    { "path": "naïve-café.txt", "note": "non-ASCII is fine" },
+    { "path": "日本語/ファイル.txt", "note": "multi-byte UTF-8 is fine" },
+    { "path": "file with spaces.txt", "note": "interior spaces are fine; only trailing ones are not" },
+    { "path": "dot.in.middle.txt", "note": "only a trailing dot is a hazard" },
+    { "path": "CONSOLE.txt", "note": "not a reserved name; only the exact stems CON, PRN, AUX, NUL, COM1-9, LPT1-9 are" },
+    { "path": "NULL.txt", "note": "stem is 'null' which is NOT reserved; the reserved stem is exactly 'nul'" },
+    { "path": "cafe\u0301.txt", "note": "decomposed e + combining acute must pass through unchanged, not be folded to U+00E9" }
+  ],
+  "reject": [
+    { "path": null, "reason": "EMPTY" },
+    { "path": "", "reason": "EMPTY" },
+    { "path": "../secret.txt", "reason": "TRAVERSAL" },
+    { "path": "a/../../etc/passwd", "reason": "TRAVERSAL" },
+    { "path": "a/b/..", "reason": "TRAVERSAL" },
+    { "path": "./relative.txt", "reason": "CURRENT_DIR_SEGMENT" },
+    { "path": "a/./b.txt", "reason": "CURRENT_DIR_SEGMENT" },
+    { "path": "/etc/passwd", "reason": "ABSOLUTE" },
+    { "path": "/", "reason": "ABSOLUTE" },
+    { "path": "//server/share", "reason": "UNC_PATH" },
+    { "path": "C:/Windows/System32", "reason": "DRIVE_LETTER" },
+    { "path": "z:/tmp", "reason": "DRIVE_LETTER", "note": "lower-case drive letters count" },
+    { "path": "dir\\file.txt", "reason": "BACKSLASH" },
+    { "path": "a//b.txt", "reason": "EMPTY_SEGMENT", "note": "doubled separator normalises differently per platform" },
+    { "path": "dir/", "reason": "EMPTY_SEGMENT", "note": "trailing separator" },
+    { "path": "CON", "reason": "RESERVED_NAME" },
+    { "path": "CON.txt", "reason": "RESERVED_NAME", "note": "reserved with or without an extension" },
+    { "path": "con.TXT", "reason": "RESERVED_NAME", "note": "case-insensitive" },
+    { "path": "com1", "reason": "RESERVED_NAME" },
+    { "path": "LPT9.dat", "reason": "RESERVED_NAME" },
+    { "path": "sub/aux/file.txt", "reason": "RESERVED_NAME", "note": "reserved in any directory, not only the root" },
+    { "path": "trailing.", "reason": "TRAILING_DOT_OR_SPACE", "note": "Windows strips it, so 'evil.' and 'evil' become the same file" },
+    { "path": "trailing ", "reason": "TRAILING_DOT_OR_SPACE" },
+    { "path": "a/b./c.txt", "reason": "TRAILING_DOT_OR_SPACE", "note": "applies to interior segments too" },
+    { "path": "file:stream", "reason": "ALTERNATE_DATA_STREAM", "note": "NTFS alternate data stream marker" },
+    { "path": "what?.txt", "reason": "FORBIDDEN_CHARACTER" },
+    { "path": "star*.txt", "reason": "FORBIDDEN_CHARACTER" },
+    { "path": "pipe|x", "reason": "FORBIDDEN_CHARACTER" },
+    { "path": "lt<gt>.txt", "reason": "FORBIDDEN_CHARACTER" },
+    { "path": "quote\".txt", "reason": "FORBIDDEN_CHARACTER" },
+    { "path": "bell\u0007.txt", "reason": "CONTROL_CHARACTER" },
+    { "path": "newline\n.txt", "reason": "CONTROL_CHARACTER" },
+    { "path": "del\u007f.txt", "reason": "CONTROL_CHARACTER" },
+    { "path": "safe.txt\u0000/../../x", "reason": "CONTAINS_NUL", "note": "a NUL truncates the path in any C-based syscall layer, so a naive check passes and a different file opens" }
+  ],
+  "generatedRejects": [
+    { "name": "1025 UTF-8 bytes", "generate": { "repeat": "a", "count": 1025 }, "reason": "TOO_LONG" },
+    { "name": "65 segments", "generate": { "joinRepeat": "a", "count": 65, "separator": "/" }, "reason": "TOO_MANY_SEGMENTS" },
+    {
+      "name": "unpaired high surrogate",
+      "generate": { "loneSurrogate": "high", "template": "lone{S}surrogate.txt" },
+      "reason": "NOT_UTF8",
+      "note": "Expressed as a generator rather than a literal because a lone surrogate cannot be carried in a JSON string: strict parsers reject it. That limitation is itself the reason the rule exists — unpaired surrogates survive in a UTF-16 string but corrupt on encode, and filesystems normalise them inconsistently, which breaks the hash-to-filename correspondence."
+    },
+    {
+      "name": "unpaired low surrogate",
+      "generate": { "loneSurrogate": "low", "template": "lone{S}surrogate.txt" },
+      "reason": "NOT_UTF8"
+    }
+  ],
+  "generatedAccepts": [
+    { "name": "exactly 1024 UTF-8 bytes", "generate": { "repeat": "a", "count": 1024 } },
+    { "name": "exactly 64 segments", "generate": { "joinRepeat": "a", "count": 64, "separator": "/" } }
+  ],
+  "orderingVectors": [
+    {
+      "name": "UNC beats ABSOLUTE",
+      "path": "//server/share",
+      "reason": "UNC_PATH",
+      "note": "'//x' is both UNC-shaped and absolute-shaped. The UNC diagnosis is the more specific one, so the two-slash form is checked first."
+    },
+    {
+      "name": "BACKSLASH beats DRIVE_LETTER",
+      "path": "C:\\Windows\\System32",
+      "reason": "BACKSLASH",
+      "note": "The backslash check precedes the drive-letter check, so a classic Windows absolute path reports BACKSLASH. Both reject it; only the reported reason differs, and implementations must agree on which."
+    },
+    {
+      "name": "CONTAINS_NUL beats TRAVERSAL",
+      "path": "..\u0000/x",
+      "reason": "CONTAINS_NUL",
+      "note": "The NUL check runs before any segment splitting."
+    },
+    {
+      "name": "BACKSLASH beats TRAVERSAL",
+      "path": "..\\..\\x",
+      "reason": "BACKSLASH",
+      "note": "Separator validation precedes segment analysis, because segment analysis is only meaningful once the separator is known to be '/'."
+    },
+    {
+      "name": "ALTERNATE_DATA_STREAM beats FORBIDDEN_CHARACTER for ':'",
+      "path": "name:stream",
+      "reason": "ALTERNATE_DATA_STREAM",
+      "note": "':' is in the forbidden set, but the stream-marker diagnosis is more specific."
+    }
+  ],
+  "sanitizeOutgoingVectors": [
+    { "input": "hello.txt", "expected": "hello.txt" },
+    { "input": "bad/name.txt", "expected": "bad_name.txt", "note": "the separator is replaced, not treated as structure" },
+    { "input": "what?.txt", "expected": "what_.txt" },
+    { "input": "pipe|star*.txt", "expected": "pipe_star_.txt" },
+    { "input": "trailing. ", "expected": "trailing" },
+    { "input": "CON.txt", "expected": "_CON.txt", "note": "prefixed rather than renamed, so the original is still readable" },
+    { "input": "", "expected": "unnamed" },
+    { "input": "...", "expected": "unnamed", "note": "trims to empty, then falls back" }
+  ],
+  "notes": [
+    "The rules are deliberately stricter than either OS requires. Veyro validates against the union of POSIX and Windows hazards regardless of which platform receives, because a file received on Android may later sync to Windows, and a name that is merely awkward on one platform is a vulnerability on the other.",
+    "sanitizeOutgoing is for names WE produce. Never apply it to received input: silently rewriting a hostile path hides an attack instead of failing it.",
+    "A rejected path fails one item. The transfer continues with the next.",
+    "After validation the resolved absolute target must still be inside the destination directory. That check is the caller's and is not covered by this corpus."
+  ]
+}

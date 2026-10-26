@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Veyro (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Veyro (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

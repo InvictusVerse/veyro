@@ -1,0 +1,79 @@
+<UserControl
+    x:Class="Veyro.UserControls.ActiveTransferBanner"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border
+        Margin="16,8,16,0"
+        Padding="16,10"
+        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+        BorderThickness="1"
+        CornerRadius="12"
+        Visibility="{x:Bind ViewModel.HasActiveTransfer, Mode=OneWay}">
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <FontIcon
+                Grid.Column="0"
+                FontSize="20"
+                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                Glyph="&#xE898;" />
+
+            <StackPanel Grid.Column="1" Spacing="4">
+                <TextBlock
+                    FontWeight="SemiBold"
+                    Text="{x:Bind ViewModel.ActiveTransfer.CurrentFileName, Mode=OneWay, FallbackValue='Transfer in progress'}" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind ViewModel.ActiveTransfer.Stage, Mode=OneWay}" />
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind ViewModel.ActiveTransfer.Route, Mode=OneWay}" />
+                </StackPanel>
+                <ProgressBar
+                    Maximum="1.0"
+                    Minimum="0.0"
+                    Value="{x:Bind ViewModel.ActiveTransfer.ProgressFraction, Mode=OneWay}" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock
+                        FontFamily="Consolas"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind ViewModel.ActiveTransfer.BytesTransferred, Mode=OneWay}" />
+                    <TextBlock
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="/" />
+                    <TextBlock
+                        FontFamily="Consolas"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind ViewModel.ActiveTransfer.TotalBytes, Mode=OneWay}" />
+                    <TextBlock
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="B/s" />
+                    <TextBlock
+                        FontFamily="Consolas"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind ViewModel.ActiveTransfer.SpeedBytesPerSecond, Mode=OneWay}" />
+                </StackPanel>
+            </StackPanel>
+
+            <Button
+                Grid.Column="2"
+                Click="CancelTransfer_Click"
+                ToolTipService.ToolTip="Cancel transfer">
+                <FontIcon Glyph="&#xE711;" />
+            </Button>
+        </Grid>
+    </Border>
+</UserControl>

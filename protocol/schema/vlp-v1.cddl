@@ -1,0 +1,188 @@
+; Veyro Link Protocol (VLP) v1 - CDDL schema
+;
+; This is the language-neutral, normative description of the bytes on the wire. It is the
+; artefact the Windows client is written against, exactly as much as the Android client is.
+; ProjectInfo/04-PROTOCOL.md is the prose specification; this file is the grammar.
+;
+; Rule: if this file and the Kotlin implementation disagree, this file and 04-PROTOCOL.md are
+; right and the implementation has a bug. If all three disagree, that IS the bug report.
+;
+; Regenerate/verify mapping notes with: tools/verify-protocol.ps1
+
+; =============================================================================================
+; L0 - Presence. UNTRUSTED. Never proof of identity; produces candidate endpoints only.
+; =============================================================================================
+
+; mDNS TXT records for the _veyro._tcp service. Keys are short because mDNS packets are tiny and
+; the TXT record is re-sent on every multicast response.
+veyro-txt = {
+  "v"    => uint,        ; protocol version. Must equal 1 for VLP v1.
+  "id"   => tstr,        ; Crockford-Base32 deviceId, 26 chars.
+  "pf"   => tstr,        ; "android" | "windows".
+  "cap"  => uint,        ; capability bitfield, see capability-bits.
+  "pk8"  => tstr,        ; hex, 8 bytes: SHA-256("veyro-pk-v1" ‖ staticPublic)[0..7].
+  "tok"  => tstr,        ; hex, 8 bytes: rotating presence token. See below.
+  ? "n"  => tstr,        ; display name. ABSENT in private mode; only in open/pairing mode.
+  ? "p"  => uint,        ; TCP port. Present in UDP beacons; mDNS carries it in the SRV record.
+}
+
+capability-bits = uint .bits capability
+capability = &(
+  file-transfer: 1,
+  folder-transfer: 2,
+  resume: 4,
+  clipboard: 8,
+  sync: 16,
+  handoff: 32,
+  multi-stream: 64,
+  compression: 128,
+)
+
+; Presence token derivation:
+;   epoch = floor(unixSeconds / 60)
+;   tok   = HMAC-SHA256(key = pairingSecret, msg = "veyro-presence-v1" ‖ u64BE(epoch))[0..7]
+; A browser tests each stored pairingSecret against `epoch` and `epoch-1` (clock skew).
+; Open mode instead uses 8 random bytes regenerated per window, and it does advertise "n".
+
+; UDP beacon, sent to 239.255.42.99:47653 and to each interface's directed broadcast.
+; At most 1/second, and ONLY while a discovery window is open.
+veyro-beacon = {
+  magic:      h'56455952',   ; "VEYR"
+  version:    uint .eq 1,
+  type:       1 / 2,         ; 1 = QUERY, 2 = ANNOUNCE
+  payloadLen: uint .le 65535,
+  payload:    bstr .cbor veyro-txt,
+}
+
+; A QUERY MUST be answered with a unicast ANNOUNCE to the sender, never a broadcast.
+; Broadcasting the answer turns one device joining a busy network into a reply storm.
+
+; =============================================================================================
+; L1 - Secure channel. TCP + Noise. The framing below wraps every Noise message, handshake and
+; transport alike.
+; =============================================================================================
+
+; Handshake patterns (fixed, no negotiation, no downgrade path):
+;   session (paired)  Noise_KK_25519_ChaChaPoly_SHA256
+;   pairing           Noise_XK_25519_ChaChaPoly_SHA256
+;
+; prologue = "veyro-vlp-v1" ‖ u8(version) ‖ u8(mode)
+;   mode: 0x01 session, 0x02 pairing
+;
+; Derived after the handshake completes, with h = the Noise handshake hash:
+;   sessionId     = h[0..15]
+;   sas           = decimal(HKDF-SHA256(h, "", "veyro-sas-v1", 4) as u32 BE) mod 1000000,
+;                   zero-padded to 6 digits. Shown on both screens during pairing.
+;   pairingSecret = HKDF-SHA256(h, "", "veyro-pair-v1", 32). Stored in TrustedPeer.
+
+noise-frame = bstr .size (1..65535)   ; the Noise message itself, including its 16-byte tag
+
+; =============================================================================================
+; L2/L3 - Frames inside the encrypted channel.
+; =============================================================================================
+
+frame = control-frame / bulk-frame / keepalive-frame
+
+control-frame   = [1, uint .size 4, bstr]   ; type, payloadLength, CBOR-encoded message
+bulk-frame      = [2, uint .size 4, bstr]   ; type, payloadLength, chunk (see below)
+keepalive-frame = [3, uint .size 4, bstr]   ; type, payloadLength, empty payload
+
+; payloadLength limits: control <= 1 MiB, bulk <= chunkSize + 64.
+; A single frame MAY span multiple Noise transport messages; the reader reassembles by length.
+
+chunk = {
+  0: uint,   ; itemIndex
+  1: uint,   ; chunkIndex, u64
+  2: uint,   ; dataLength, u32 - equals chunkSize except for the final chunk
+  3: bstr,   ; data
+}
+
+; =============================================================================================
+; Control messages. Canonical CBOR maps with INTEGER keys, so the encoding is stable across
+; languages and cheap to parse on a phone. JSON is used only for logs, never on the wire.
+; =============================================================================================
+
+control-message = hello / hello-ack / transfer-offer / transfer-decision / item-begin /
+                  item-end / item-result / transfer-end / cancel / error / ping / pong
+
+hello = {
+  0:  uint,        ; protocol version. Mismatch => Error{VERSION_UNSUPPORTED, fatal:true}.
+  1:  tstr,        ; deviceId
+  2:  tstr,        ; display name
+  3:  tstr,        ; "android" | "windows"
+  4:  tstr,        ; app version, for diagnostics only - never for behaviour
+  5:  uint,        ; capability bitfield
+  6:  uint,        ; maxChunk this side will accept
+}
+
+hello-ack = hello,                            ; same shape; add:
+{
+  7: uint,         ; chosen chunkSize = min(both maxChunk), clamped to [256 KiB, 16 MiB]
+}
+
+transfer-offer = {
+  0: tstr,         ; transferId
+  1: [* item],     ; items
+  2: uint,         ; totalBytes, u64
+  3: uint,         ; itemCount
+}
+
+item = {
+  0: uint,         ; index
+  1: tstr,         ; relPath - "/" separators, relative, validated per the rules below
+  2: uint,         ; sizeBytes, u64
+  3: uint,         ; mtimeMillis
+  4: bool,         ; isDir
+}
+
+transfer-decision = {
+  0: tstr,         ; transferId
+  1: bool,         ; accept
+  ? 2: tstr,       ; reason, when declined
+  ? 3: { * uint => [* uint] },   ; itemIndex => chunk indices still needed (resume)
+}
+
+item-begin = { 0: tstr, 1: uint, 2: uint, 3: uint, 4: uint }
+;              transferId, index, size, chunkCount, chunkSize
+
+item-end    = { 0: tstr, 1: uint, 2: tstr }   ; transferId, index, sha256 hex of the whole file
+item-result = { 0: tstr, 1: uint, 2: bool, ? 3: tstr }  ; transferId, index, ok, error
+transfer-end = { 0: tstr, 1: bool, 2: [* uint] }        ; transferId, completed, failedIndices
+
+cancel = { 0: tstr, 1: tstr }                 ; transferId, reason
+error  = { 0: tstr, 1: tstr, 2: bool }        ; code, message, fatal
+ping   = { 0: uint }                          ; nonce
+pong   = { 0: uint }                          ; the same nonce, echoed
+
+; Reserved for phase P6 (Veyro Clipboard), declared now so the number is not reused:
+; clipboard-push = { 0: tstr }   ; text, size-capped, per-device opt-in
+
+; =============================================================================================
+; Convergence rules
+; =============================================================================================
+
+; Unpaired inbound connections are accepted ONLY while a bounded (<= 120 s) pairing window is
+; open, and only as Noise_XK. Everything else is closed after the first frame with no detail
+; leaked - so an attacker cannot distinguish "not paired" from "bad key".
+
+; Replay: Noise KK/XK use fresh ephemerals, so a recorded handshake cannot be replayed into a new
+; session. Nonces are per-session and strictly increasing.
+
+; Additive compatibility: unknown keys MUST be ignored, never rejected. Adding an optional key is
+; allowed within a version; removing one or changing its meaning requires a version bump.
+
+; =============================================================================================
+; Path safety - the destination-path grammar a relPath MUST satisfy (REQ-T11)
+; =============================================================================================
+
+valid-rel-path = tstr .regexp "^[^/\\\\<>:\"|?*\\x00-\\x1f\\x7f]+(/[^/\\\\<>:\"|?*\\x00-\\x1f\\x7f]+)*$"
+; Plus, checked structurally and not expressible as a single regex:
+;   - 1..64 segments, whole thing <= 1024 UTF-8 bytes, well-formed UTF-16 (no lone surrogates)
+;   - no segment equal to "." or ".."
+;   - no segment ending in "." or " " (Windows silently strips these, aliasing files)
+;   - no segment whose stem (before the first ".") is a Windows reserved name:
+;     CON PRN AUX NUL COM1-9 LPT1-9, case-insensitive
+;   - the resolved absolute target must still be inside the destination directory
+;
+; Validation lives in exactly one implementation, shared by Android and Windows:
+; core/protocol/src/main/kotlin/com/veyro/core/protocol/RelativePath.kt

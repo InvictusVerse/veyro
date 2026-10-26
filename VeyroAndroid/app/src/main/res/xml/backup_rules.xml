@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cloud backup is disabled wholesale via android:allowBackup="false". These rules are kept as
+  defence in depth in case that flag is ever flipped: the identity seed and the trust store
+  must never leave the device.
+
+  Two reasons, both from ProjectInfo/05-SECURITY.md:
+   1. Restoring an identity onto a second device would clone it, so two devices would claim the
+      same deviceId - and deviceId is a commitment to a key pair.
+   2. The seed is sealed by an Android Keystore key that is non-exportable by design, so the
+      restored ciphertext would be undecryptable anyway. Re-pairing is the correct recovery.
+-->
+<full-backup-content>
+    <exclude domain="file" path="identity/" />
+    <exclude domain="file" path="trust/" />
+    <exclude domain="file" path="transfers/" />
+    <exclude domain="sharedpref" path="veyro_identity.xml" />
+</full-backup-content>

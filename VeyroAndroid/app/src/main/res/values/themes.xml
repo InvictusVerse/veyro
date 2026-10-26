@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The real theming is in Compose (:core:designsystem). This XML theme exists only so the
+         window has sane defaults before the first composition. -->
+    <style name="Theme.Veyro" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/veyro_window_background</item>
+    </style>
+</resources>

@@ -1,0 +1,71 @@
+# ---------- Android / Gradle ----------
+.gradle/
+build/
+captures/
+.cxx/
+local.properties
+*.apk
+*.aab
+*.aar
+*.ap_
+*.dex
+output.json
+release/
+# Keep the wrapper jar: it is required to build.
+!gradle/wrapper/gradle-wrapper.jar
+
+# Signing material must never be committed
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# ---------- IDE ----------
+.idea/
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+*.iml
+.kotlin/
+out/
+
+# ---------- .NET / Windows ----------
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+artifacts/
+*.nupkg
+publish/
+
+# ---------- OS ----------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ---------- Project-local scratch ----------
+/scratch/
+/test/
+*.log
+*.tmp
+# JVM heap dumps from out-of-memory Gradle daemons (hundreds of MB)
+*.hprof
+# Per-machine Kiro settings (MCP config may hold tokens)
+.kiro/settings/
+# Third-party agent plugins: tooling, not Veyro source
+/.agents/
+
+# ProjectInfo: only the specification is versioned. Session logs, machine
+# details and notes about the private reference project stay local.
+/ProjectInfo/07-STATUS.md
+/ProjectInfo/09-ENVIRONMENT.md
+/ProjectInfo/10-CHANGELOG.md
+/ProjectInfo/11-INVOX-FINDINGS.md
+/ProjectInfo/12-TESTING.md
+# Partially received files and their resume sidecars must never be committed
+*.veyropart
+*.veyrometa

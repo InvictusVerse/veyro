@@ -1,0 +1,291 @@
+package com.veyro.core.link
+
+import com.veyro.core.model.TransferItem
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+/** Bumped on any change to bytes on the wire. */
+public const val LINK_PROTOCOL_VERSION: Int = 1
+
+/**
+ * The unauthenticated identification preamble.
+ *
+ * Sent as the **first** frame of every connection, before any key exists. It is a hint and nothing
+ * more: it says "I claim to be this device" so the receiver can decide which mode to run. It
+ * carries no authority whatsoever, and the mode decision that follows is what grants anything.
+ *
+ * Ported from the Invox ecosystem handshake, which is the part that makes connecting work: without
+ * a mode-branch step, a device has no way to tell "we are already paired, start a session" from
+ * "we have never met, run pairing" before deciding which key to use.
+ */
+@Serializable
+public data class LinkPreamble(
+    val id: String,
+    val name: String,
+    val platform: String = "android",
+    val protocolVersion: Int = LINK_PROTOCOL_VERSION,
+)
+
+/** The receiver's answer: which mode this connection will run in. */
+@Serializable
+public data class LinkPreambleAck(
+    /** `session` | `pairing` | `busy` | `refused` */
+    val mode: String,
+    val reason: String? = null,
+) {
+    public companion object {
+        public const val MODE_SESSION: String = "session"
+        public const val MODE_PAIRING: String = "pairing"
+        public const val MODE_BUSY: String = "busy"
+        public const val MODE_REFUSED: String = "refused"
+    }
+}
+
+/**
+ * The outer wire frame. Either `ciphertext` (session mode) or `plaintext` (pairing mode) is set.
+ *
+ * `from` travels in the clear because the receiver needs it to pick a key before it can verify
+ * anything. It is therefore untrusted - but it is also inside the MAC, so a frame cannot be
+ * re-attributed to a different sender without breaking the tag.
+ */
+@Serializable
+public data class LinkWireFrame(
+    @SerialName("f") val from: String,
+    @SerialName("n") val nonce: String,
+    @SerialName("c") val ciphertext: String? = null,
+    @SerialName("p") val plaintext: String? = null,
+    @SerialName("m") val mac: String,
+)
+
+/**
+ * The envelope inside a frame.
+ *
+ * `seq` is monotonic per sender and is enforced on receipt, which is what makes a reordered or
+ * truncated stream detectable rather than silently accepted.
+ */
+@Serializable
+public data class LinkEnvelope(
+    val v: Int = LINK_PROTOCOL_VERSION,
+    val msgId: String,
+    val from: String,
+    val seq: Long = 0,
+    val ts: Long,
+    val payload: LinkMessage,
+)
+
+/**
+ * Everything that can travel inside an envelope.
+ *
+ * ## Forward compatibility is mandatory
+ *
+ * Every field added after v1 must be nullable with a null default, so an older peer omits it rather
+ * than failing to decode. `ignoreUnknownKeys` handles the other direction. Together those mean a
+ * new field is **not** a breaking change and does not need a version bump - only removing a field
+ * or changing its meaning does.
+ *
+ * This discipline is taken directly from the Invox protocol, where it is the reason two app versions
+ * can talk to each other at all.
+ */
+@Serializable
+public sealed interface LinkMessage {
+
+    /** Sent by the pairing initiator, under the PIN-derived bootstrap key. */
+    @Serializable
+    @SerialName("pairHello")
+    public data class PairHello(
+        val deviceId: String,
+        val deviceName: String,
+        val platform: String,
+        val appVersion: String,
+        val protocolVersion: Int = LINK_PROTOCOL_VERSION,
+        val publicKeyB64: String? = null,
+    ) : LinkMessage
+
+    /**
+     * The target's answer, carrying the long-lived session secret.
+     *
+     * **Always sent sealed**, even though the session is still nominally in plaintext pairing mode.
+     * The secret must not cross the LAN in the clear, and the bootstrap key is available to seal it
+     * with. Invox had to keep a plaintext fallback for older peers; Veyro has no deployed versions,
+     * so sealing is unconditional and there is no downgrade path.
+     */
+    @Serializable
+    @SerialName("pairOk")
+    public data class PairOk(
+        val deviceId: String,
+        val deviceName: String,
+        val platform: String,
+        val sessionSecretB64: String,
+        val publicKeyB64: String? = null,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("pairFail")
+    public data class PairFail(val reason: String) : LinkMessage
+
+    /** First message of an established session. Confirms both sides can decrypt. */
+    @Serializable
+    @SerialName("hello")
+    public data class Hello(
+        val deviceId: String,
+        val deviceName: String,
+        val platform: String,
+        val capabilities: Int = 0,
+        val maxChunk: Int = 4 * 1024 * 1024,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("helloAck")
+    public data class HelloAck(
+        val deviceId: String,
+        val deviceName: String,
+        val platform: String,
+        val capabilities: Int = 0,
+        val chunkSize: Int = 4 * 1024 * 1024,
+    ) : LinkMessage
+
+    // ── Transfer ───────────────────────────────────────────────────────────────────────────
+
+    @Serializable
+    @SerialName("offer")
+    public data class TransferOffer(
+        val transferId: String,
+        val items: List<Item>,
+        val totalBytes: Long,
+        val senderName: String,
+        val preferredRoutes: List<String> = emptyList(),
+        val senderWifiP2pAddress: String? = null,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("decision")
+    public data class TransferDecision(
+        val transferId: String,
+        val accept: Boolean,
+        val reason: String? = null,
+        /** itemIndex to the chunk indices still needed. Absent means "send everything". */
+        val resume: Map<Int, List<Int>>? = null,
+        val route: String? = null,
+        val tcpHost: String? = null,
+        val tcpPort: Int? = null,
+        val fallbackHost: String? = null,
+        val authToken: String? = null,
+        val p2pSsid: String? = null,
+        val p2pPassphrase: String? = null,
+    ) : LinkMessage
+
+    /**
+     * Genuine receiver-side progress notification reported over WebSocket.
+     */
+    @Serializable
+    @SerialName("progressNotice")
+    public data class TransferProgressNotice(
+        val transferId: String,
+        val bytesReceived: Long,
+        val totalBytes: Long,
+        val currentItemIndex: Int = 0,
+        val speedBps: Long = 0L,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("itemBegin")
+    public data class ItemBegin(
+        val transferId: String,
+        val index: Int,
+        val size: Long,
+        val chunkCount: Int,
+        val chunkSize: Int,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("itemEnd")
+    public data class ItemEnd(
+        val transferId: String,
+        val index: Int,
+        val sha256: String,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("itemResult")
+    public data class ItemResult(
+        val transferId: String,
+        val index: Int,
+        val ok: Boolean,
+        val error: String? = null,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("transferEnd")
+    public data class TransferEnd(
+        val transferId: String,
+        val completed: Boolean,
+        val failedIndices: List<Int> = emptyList(),
+    ) : LinkMessage
+
+    /**
+     * One chunk of file data, base64 in the JSON envelope.
+     *
+     * Base64 costs 33% overhead, which is real but acceptable at this stage: it keeps **one** frame
+     * format for everything, so there is no second binary path to get wrong. Moving bulk data to
+     * binary WebSocket frames is a measured optimisation for later, not a correctness issue - and
+     * doing it now would mean two framing paths before either is proven.
+     */
+    @Serializable
+    @SerialName("chunk")
+    public data class Chunk(
+        val transferId: String,
+        val index: Int,
+        val chunkIndex: Int,
+        val dataB64: String,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("cancel")
+    public data class Cancel(val transferId: String, val reason: String) : LinkMessage
+
+    @Serializable
+    @SerialName("ping")
+    public data class Ping(val nonce: String) : LinkMessage
+
+    @Serializable
+    @SerialName("pong")
+    public data class Pong(val nonce: String) : LinkMessage
+
+    @Serializable
+    public data class Item(
+        val index: Int,
+        val relPath: String,
+        val size: Long,
+        val mtime: Long,
+        val isDir: Boolean = false,
+    ) {
+        public fun toDomain(): TransferItem = TransferItem(
+            index = index,
+            relativePath = relPath,
+            sizeBytes = size,
+            lastModifiedEpochMillis = mtime,
+            isDirectory = isDir,
+        )
+    }
+}
+
+/** The single JSON codec for the link protocol. */
+public object LinkJson {
+    public val codec: Json = Json {
+        // Unknown keys ignored, never rejected: a newer peer adding a field must not break an
+        // older one (see the LinkMessage note on forward compatibility).
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        classDiscriminator = "t"
+        explicitNulls = false
+    }
+}
+
+public fun TransferItem.toLinkItem(): LinkMessage.Item = LinkMessage.Item(
+    index = index,
+    relPath = relativePath,
+    size = sizeBytes,
+    mtime = lastModifiedEpochMillis,
+    isDir = isDirectory,
+)

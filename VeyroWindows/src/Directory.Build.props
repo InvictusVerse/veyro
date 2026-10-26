@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!--
+      bin/obj are left at their per-project defaults on purpose.
+      Redirecting them broke Visual Studio's single-project MSIX tooling
+      ("project doesn't know how to run the profile ... command 'MsixPackage'").
+      The hard constraint is "nothing on C:" — this whole tree is already on D:,
+      so the default layout satisfies it. Both are git-ignored.
+    -->
+
+    <!-- Suppress common WinUI / PRI warnings -->
+    <NoWarn>$(NoWarn);NU1507;NETSDK1201;PRI257;CS8618</NoWarn>
+  </PropertyGroup>
+</Project>

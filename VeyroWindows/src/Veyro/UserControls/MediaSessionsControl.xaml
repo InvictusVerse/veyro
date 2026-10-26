@@ -1,0 +1,27 @@
+<UserControl
+    x:Class="Veyro.UserControls.MediaSessionsControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid ColumnSpacing="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <Border
+            Grid.Column="0"
+            Width="40"
+            Height="40"
+            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+            CornerRadius="6">
+            <FontIcon FontSize="16" Glyph="&#xEC4F;" />
+        </Border>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+            <TextBlock FontWeight="SemiBold" Text="No active media session" />
+            <TextBlock
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="Media playback from your phone appears here" />
+        </StackPanel>
+    </Grid>
+</UserControl>

@@ -1,0 +1,107 @@
+{
+  "description": "Discovery vectors: the PresenceRecord key=value encoding shared by mDNS TXT and the UDP beacon, and the UDP beacon frame header. See ProjectInfo/04-PROTOCOL.md section 3.",
+  "derivation": "Assembled from section 3.1/3.2 by an independent PowerShell script linking against neither implementation. pk8 was computed with .NET SHA-256 over the documented domain-separated input. The public key used is the all-zero key from identity/device-id.json, so this file and that one describe the same hypothetical device.",
+  "encoding": {
+    "pairs": "key=value lines joined with \\n, UTF-8, at most 400 bytes",
+    "order": "v, id, pf, cap, pk8, tok, p, then n if present, then pk if present",
+    "cap": "capability bits in lower-case hexadecimal, no 0x prefix",
+    "pk8": "SHA-256(ascii('veyro-pk-v1') || staticPublicKey)[0..7], lower-case hex",
+    "tok": "8-byte rotating presence token, lower-case hex",
+    "pk": "base64url of the 32-byte X25519 static public key, unpadded"
+  },
+  "presenceVectors": [
+    {
+      "name": "Full record, public mode",
+      "input": {
+        "version": 1,
+        "deviceId": "6JE8415YZQQYQMBD34569HVYX4",
+        "platform": "windows",
+        "capabilityBits": 31,
+        "staticPublicKeyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "presenceTokenHex": "0102030405060708",
+        "name": "Test PC",
+        "port": 47650
+      },
+      "expected": {
+        "pk8Hex": "0efbac270507d720",
+        "pkBase64Url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "payloadLength": 158,
+        "payloadText": "v=1\nid=6JE8415YZQQYQMBD34569HVYX4\npf=windows\ncap=1f\npk8=0efbac270507d720\ntok=0102030405060708\np=47650\nn=Test PC\npk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    {
+      "name": "Private mode omits name and public key entirely",
+      "note": "Omitted, never sent empty. An empty value still tells an observer that a name exists and is being withheld (REQ-D06).",
+      "input": {
+        "version": 1,
+        "deviceId": "6JE8415YZQQYQMBD34569HVYX4",
+        "platform": "windows",
+        "capabilityBits": 31,
+        "staticPublicKeyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "presenceTokenHex": "0102030405060708",
+        "name": null,
+        "port": 47650
+      },
+      "expected": {
+        "payloadText": "v=1\nid=6JE8415YZQQYQMBD34569HVYX4\npf=windows\ncap=1f\npk8=0efbac270507d720\ntok=0102030405060708\np=47650",
+        "mustNotContain": ["n=", "pk="]
+      }
+    }
+  ],
+  "beaconVectors": [
+    {
+      "name": "Bare QUERY, the smallest legal frame",
+      "note": "A query with no payload is legal: it means 'announce yourselves' and nothing more.",
+      "input": { "type": "QUERY", "payload": null },
+      "expected": { "frameHex": "5645595201010000", "frameLength": 8 },
+      "layout": [
+        "56455952  magic 'VEYR'",
+        "01        version = 1",
+        "01        type = QUERY",
+        "0000      payloadLength = 0"
+      ]
+    },
+    {
+      "name": "ANNOUNCE carrying the full public-mode record",
+      "input": { "type": "ANNOUNCE", "payloadFrom": "presenceVectors[0]" },
+      "expected": {
+        "frameLength": 166,
+        "frameHex": "564559520102009e763d310a69643d364a4538343135595a515159514d4244333435363948565958340a70663d77696e646f77730a6361703d31660a706b383d306566626163323730353037643732300a746f6b3d303130323033303430353036303730380a703d34373635300a6e3d546573742050430a706b3d41414141414141414141414141414141414141414141414141414141414141414141414141414141414141"
+      },
+      "layout": [
+        "56455952  magic",
+        "01        version = 1",
+        "02        type = ANNOUNCE",
+        "009e      payloadLength = 158",
+        "...       payload bytes"
+      ]
+    }
+  ],
+  "rejectionVectors": [
+    {
+      "name": "declared length longer than the datagram is rejected",
+      "note": "This is the classic parser bug, and in a network-facing decoder it is a read past the end of received data.",
+      "input": { "mutate": "set payloadLength to 0xFFFF, leave the frame unchanged" },
+      "expected": { "reject": true, "reason": "LENGTH_MISMATCH" }
+    },
+    {
+      "name": "the received length is authoritative, not the buffer size",
+      "note": "A UDP receive hands back a fixed-size buffer plus a separate length. Using the buffer size reads uninitialised tail as payload.",
+      "input": { "setup": "copy a valid 166-byte frame into a 2048-byte buffer" },
+      "expected": { "decodedWithReceivedLength": "ok", "decodedWithBufferLength": "reject" }
+    },
+    { "name": "foreign traffic is rejected on the magic", "input": { "bytes": "GET / HTTP/1.1" }, "expected": { "reject": true, "reason": "BAD_MAGIC" } },
+    { "name": "a version other than 1 is refused, not guessed", "input": { "mutate": "version byte = 2" }, "expected": { "reject": true, "reason": "BAD_VERSION" } },
+    { "name": "ANNOUNCE with an empty payload is invalid", "input": { "type": "ANNOUNCE", "payloadLength": 0 }, "expected": { "reject": true, "reason": "BAD_PAYLOAD" } },
+    { "name": "a duplicate key is rejected", "note": "Two conflicting claims. Picking either silently would let an attacker get a different reading on the two platforms.", "input": { "payloadText": "v=1\nv=1\nid=X\ncap=0\np=1" }, "expected": { "reject": true, "reason": "DUPLICATE_KEY" } },
+    { "name": "a name containing a bidi override is rejected", "note": "Bidi overrides reorder rendered text, so a hostile device could advertise a name that displays as a trusted one (REQ-U04).", "input": { "name": "Trusted\u202EPC" }, "expected": { "reject": true, "reason": "NAME_INVALID" } },
+    { "name": "a name longer than 32 UTF-8 bytes is rejected", "input": { "nameBytes": 33 }, "expected": { "reject": true, "reason": "NAME_TOO_LONG" } },
+    { "name": "a port outside 1..65535 is rejected", "input": { "port": 0 }, "expected": { "reject": true, "reason": "BAD_PORT" } }
+  ],
+  "notes": [
+    "Presence carries no authority. It answers only 'which IP:port might be a Veyro peer?'. An attacker can broadcast a record claiming any deviceId; the connection then fails because they do not hold the private key (REQ-D07).",
+    "Unknown keys must be ignored rather than rejected, so a newer peer adding a field does not break an older one.",
+    "The payload is capped at 400 bytes, which mirrors mDNS TXT record size reality and bounds the UDP beacon.",
+    "pk8 exists so a browser can pre-filter cheaply without parsing the whole record."
+  ]
+}
