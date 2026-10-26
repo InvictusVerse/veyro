@@ -183,6 +183,76 @@
                                 OnContent="" />
                         </Grid>
                     </Border>
+                    <!--  ADR-040: this PC dials a paired phone that did not reconnect by itself  -->
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE895;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Reconnect to my phones automatically" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="When a paired phone is on the same network but has not connected for 10 seconds, this PC connects to it. Useful when the phone's battery saver stopped Veyro." />
+                            </StackPanel>
+                            <ToggleSwitch
+                                Grid.Column="2"
+                                MinWidth="0"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Reconnect to my phones automatically"
+                                IsOn="{x:Bind ViewModel.ReconnectAutomatically, Mode=TwoWay}"
+                                OffContent=""
+                                OnContent="" />
+                        </Grid>
+                    </Border>
+
+                    <!--  ADR-039: Share sheet and the optional Explorer menu  -->
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Sharing from Windows" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE72D;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Send shared files straight to the connected phone" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="When you pick Veyro in the Windows Share sheet and exactly one phone is connected, the files go to it without asking. Otherwise Veyro asks which phone." />
+                            </StackPanel>
+                            <ToggleSwitch
+                                Grid.Column="2"
+                                MinWidth="0"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Send shared files straight to the connected phone"
+                                IsOn="{x:Bind ViewModel.SendSharedFilesStraightToConnectedPhone, Mode=TwoWay}"
+                                OffContent=""
+                                OnContent="" />
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE8A7;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Show Send with Veyro in the Explorer right-click menu" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="Right-click files in File Explorer to send them to a paired phone, or to all connected phones. Takes effect on the next right-click." />
+                            </StackPanel>
+                            <ToggleSwitch
+                                Grid.Column="2"
+                                MinWidth="0"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Show Send with Veyro in the Explorer right-click menu"
+                                IsOn="{x:Bind ViewModel.ShowInExplorerContextMenu, Mode=TwoWay}"
+                                OffContent=""
+                                OnContent="" />
+                        </Grid>
+                    </Border>
 
                     <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Identity" />
                     <Border Style="{StaticResource SettingsCardStyle}">

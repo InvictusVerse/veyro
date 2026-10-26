@@ -18,7 +18,14 @@ public sealed record AppSettings(
     bool OnboardingCompleted = false,
     // ADR-036: set once the user changed the tray switch. Files without it carry the old default
     // (true), which nobody chose, so loading them turns tray mode off.
-    bool TrayModeChosen = false
+    bool TrayModeChosen = false,
+    // ADR-039: a Share sheet hand-off goes straight to the phone when exactly one is connected.
+    bool SendSharedFilesStraightToConnectedPhone = true,
+    // ADR-039: "Send with Veyro" in the Explorer right-click menu. Off until the user turns it on;
+    // the menu server reads this property from settings.json by name.
+    bool ShowInExplorerContextMenu = false,
+    // ADR-040: dial a paired phone that is on the network but did not reconnect by itself.
+    bool ReconnectAutomatically = true
 );
 
 public interface ISettingsStore

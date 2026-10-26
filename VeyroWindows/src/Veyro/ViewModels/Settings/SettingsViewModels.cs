@@ -81,6 +81,42 @@ public sealed class GeneralViewModel : BaseViewModel
             ? "Closing the window keeps Veyro in the system tray: the phone stays connected and notifications keep arriving. Right-click the icon to quit."
             : "The system tray icon could not be created, so closing the window quits Veyro.";
 
+    /// <summary>ADR-040: dial a paired phone that is on the network but did not reconnect by itself (default on).</summary>
+    public bool ReconnectAutomatically
+    {
+        get => _settingsStore.Current.ReconnectAutomatically;
+        set
+        {
+            if (value == ReconnectAutomatically) return;
+            _ = _settingsStore.UpdateAsync(s => s with { ReconnectAutomatically = value });
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>ADR-039: files from the Share sheet skip "Send to" when exactly one phone is connected (default on).</summary>
+    public bool SendSharedFilesStraightToConnectedPhone
+    {
+        get => _settingsStore.Current.SendSharedFilesStraightToConnectedPhone;
+        set
+        {
+            if (value == SendSharedFilesStraightToConnectedPhone) return;
+            _ = _settingsStore.UpdateAsync(s => s with { SendSharedFilesStraightToConnectedPhone = value });
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>ADR-039: "Send with Veyro" in the Explorer right-click menu (default off). Applies on the next right-click.</summary>
+    public bool ShowInExplorerContextMenu
+    {
+        get => _settingsStore.Current.ShowInExplorerContextMenu;
+        set
+        {
+            if (value == ShowInExplorerContextMenu) return;
+            _ = _settingsStore.UpdateAsync(s => s with { ShowInExplorerContextMenu = value });
+            OnPropertyChanged();
+        }
+    }
+
     public string VersionText
     {
         get
