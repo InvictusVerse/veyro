@@ -37,20 +37,18 @@ class ActiveTransferBannerLayoutTest {
     }
 
     @Test
-    fun `VeyroNavHost places banner in Column before NavHost with weight to reserve height`() {
+    fun `VeyroNavHost places banner in Column before the root NavHost with weight to reserve height`() {
         val projectRoot = findProjectRoot()
         val navHostFile = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt")
         val content = navHostFile.readText()
 
-        // Verify Scaffold content uses Column with innerPadding
-        assertTrue(
-            "VeyroNavHost root content must use Column with innerPadding",
-            content.contains("Column(") && content.contains(".padding(innerPadding)"),
-        )
+        // Since the Sefirah UI port the banner sits above the root graph (tabs and pushed screens),
+        // not inside the tab Scaffold, so it is still shown exactly once on every screen.
+        assertTrue("VeyroNavHost root content must use a Column", content.contains("Column("))
 
-        // Verify ActiveTransferBanner is rendered BEFORE NavHost invocation
-        val bannerIdx = content.indexOf("ActiveTransferBanner(")
-        val navHostCallIdx = content.indexOf("\n            NavHost(", bannerIdx)
+        // Verify ActiveTransferBanner is rendered BEFORE the root NavHost invocation
+        val bannerIdx = content.indexOf("ActiveTransferBanner(", content.indexOf("Column("))
+        val navHostCallIdx = content.indexOf("\n        NavHost(", bannerIdx)
         assertTrue("ActiveTransferBanner must be present", bannerIdx > 0)
         assertTrue("NavHost call must be present after ActiveTransferBanner", navHostCallIdx > 0)
         assertTrue(
@@ -59,11 +57,24 @@ class ActiveTransferBannerLayoutTest {
         )
 
         // Verify NavHost has weight(1f) to lay out underneath banner without overlap
-        val navHostBlock = content.substring(navHostCallIdx, content.indexOf("composable<VeyroDestination.Home>", navHostCallIdx))
+        val navHostBlock = content.substring(navHostCallIdx, content.indexOf("composable<VeyroDestination.Main>", navHostCallIdx))
         assertTrue(
             "NavHost must declare weight(1f) to occupy remaining vertical space below banner",
             navHostBlock.contains(".weight(1f)"),
         )
+
+        // When shown, the banner takes the status-bar inset and the graph is told it is consumed,
+        // so the top bars below do not pad for the status bar a second time.
+        assertTrue(content.contains("statusBarsPadding()"))
+        assertTrue(navHostBlock.contains("consumeWindowInsets(WindowInsets.statusBars)"))
+    }
+
+    @Test
+    fun `the tab graph does not host a second banner`() {
+        val projectRoot = findProjectRoot()
+        val mainScreen = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/MainScreen.kt")
+        assertTrue("MainScreen.kt must exist", mainScreen.exists())
+        assertFalse(mainScreen.readText().contains("ActiveTransferBanner("))
     }
 
     @Test

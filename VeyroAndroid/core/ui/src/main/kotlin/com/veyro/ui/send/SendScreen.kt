@@ -1,10 +1,6 @@
 package com.veyro.ui.send
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,68 +10,53 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.veyro.core.designsystem.components.VeyroButton
-import com.veyro.core.designsystem.components.VeyroCard
-import com.veyro.core.designsystem.components.VeyroGlassCard
-import com.veyro.core.designsystem.components.VeyroOutlineButton
-import com.veyro.core.designsystem.components.VeyroProgressBar
 import com.veyro.core.designsystem.components.VeyroSectionHeader
-import com.veyro.core.designsystem.components.VeyroTextButton
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroCyanContainer
-import com.veyro.core.designsystem.theme.VeyroCyanGlow
-import com.veyro.core.designsystem.theme.VeyroExtras
-import com.veyro.core.designsystem.theme.VeyroGlassBorder
-import com.veyro.core.designsystem.theme.VeyroMetricStyle
-import com.veyro.core.designsystem.theme.VeyroMetricSubStyle
-import com.veyro.core.designsystem.theme.VeyroTeal
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
+import com.veyro.core.designsystem.icons.VeyroIcons
 import com.veyro.core.link.OutgoingFile
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.fingerprint
 import com.veyro.ui.format.formatBytes
 
 /**
- * Send screen — redesigned with a futuristic aesthetic.
+ * Send: pick files, pick a paired device, send - three steps (REQ-U01), restyled as Material 3
+ * cards and list items to match the Sefirah-style screens.
  *
- * Layout:
- *   [File picker card]     ← add files, show selection
- *   [Send to section]      ← device list
- *   [Progress card]         ← shows during transfer
- *   [Outcome card]          ← shows result after transfer
- *   [Send CTA]             ← primary button
+ * [initialTarget] preselects a device when Send is opened from a device card or its settings.
  */
 @Composable
 public fun SendScreen(
     viewModel: SendViewModel,
     onPickFiles: () -> Unit,
     modifier: Modifier = Modifier,
+    initialTarget: String? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -84,12 +65,15 @@ public fun SendScreen(
         onStopOrDispose { viewModel.stopDiscovery() }
     }
 
+    LaunchedEffect(initialTarget) {
+        DeviceId.parseOrNull(initialTarget)?.let(viewModel::selectTarget)
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // File picker card
         item {
             FilePickerCard(
                 selected = state.selected,
@@ -100,34 +84,46 @@ public fun SendScreen(
             )
         }
 
-        // Target section header
-        item {
-            VeyroSectionHeader("Send to")
-        }
+        item { VeyroSectionHeader("Send to") }
 
         if (state.devices.isEmpty()) {
             item {
-                VeyroGlassCard {
-                    Text(
-                        text = "No paired devices found. Pair a device first from the Home or Devices tab.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = VeyroTextSecondary,
-                    )
-                }
+                Text(
+                    text = "No paired devices. Pair a device first from Home or Devices.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
             }
         } else {
-            items(state.devices, key = { it.deviceId.value }) { device ->
-                val isSelected = state.target == device.deviceId
-                DeviceTargetCard(
-                    name = device.name,
-                    fingerprint = device.deviceId.fingerprint(),
-                    isSelected = isSelected,
-                    onClick = { viewModel.selectTarget(device.deviceId) },
-                )
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        state.devices.forEach { device ->
+                            val isSelected = state.target == device.deviceId
+                            ListItem(
+                                modifier = Modifier.selectable(
+                                    selected = isSelected,
+                                    role = Role.RadioButton,
+                                    onClick = { viewModel.selectTarget(device.deviceId) },
+                                ),
+                                leadingContent = { RadioButton(selected = isSelected, onClick = null) },
+                                headlineContent = { Text(device.name) },
+                                supportingContent = {
+                                    Text(
+                                        text = device.deviceId.fingerprint(),
+                                        fontFamily = FontFamily.Monospace,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            )
+                        }
+                    }
+                }
             }
         }
 
-        // Progress card
         state.progress?.let { progress ->
             item {
                 ProgressCard(
@@ -139,43 +135,41 @@ public fun SendScreen(
             }
         }
 
-        // Outcome card
         state.outcome?.let { message ->
             item {
-                OutcomeCard(message = message)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                ) {
+                    Text(message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
+                }
             }
         }
 
-        // Bottom CTA
         item {
             Spacer(modifier = Modifier.height(4.dp))
             if (state.isSending) {
-                VeyroOutlineButton(
-                    text = "Cancel transfer",
-                    onClick = viewModel::cancel,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                OutlinedButton(onClick = viewModel::cancel, modifier = Modifier.fillMaxWidth()) {
+                    Text("Cancel transfer")
+                }
             } else {
-                VeyroButton(
-                    text = when {
-                        state.target == null -> "Choose a device"
-                        state.selected.isEmpty() -> "Choose files"
-                        else -> "Send ${formatBytes(state.totalBytes)}"
-                    },
+                Button(
                     onClick = viewModel::send,
                     enabled = state.canSend,
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    Text(
+                        when {
+                            state.target == null -> "Choose a device"
+                            state.selected.isEmpty() -> "Choose files"
+                            else -> "Send ${formatBytes(state.totalBytes)}"
+                        },
+                    )
+                }
             }
         }
-
-        item { Spacer(modifier = Modifier.height(80.dp)) }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Sub-cards
-// ---------------------------------------------------------------------------
 
 @Composable
 private fun FilePickerCard(
@@ -185,62 +179,27 @@ private fun FilePickerCard(
     onRemoveFile: (Int) -> Unit,
     onClearFiles: () -> Unit,
 ) {
-    VeyroCard(glow = selected.isNotEmpty()) {
-        Column {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                // File icon
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(VeyroCyanContainer)
-                        .border(1.dp, VeyroCyan.copy(alpha = 0.3f), RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        tint = VeyroCyan,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(VeyroIcons.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
+                    Text("Files", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "Files",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = if (selected.isEmpty()) "None selected"
-                        else "${selected.size} file(s) · ${formatBytes(totalBytes)}",
+                        text = if (selected.isEmpty()) "None selected" else "${selected.size} file(s), ${formatBytes(totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (selected.isEmpty()) VeyroTextSecondary else VeyroCyan,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-
                 if (selected.isNotEmpty()) {
-                    VeyroTextButton(
-                        text = "Clear",
-                        onClick = onClearFiles,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    TextButton(onClick = onClearFiles) { Text("Clear", color = MaterialTheme.colorScheme.error) }
                 }
             }
 
-            // File list
             if (selected.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 selected.take(4).forEachIndexed { index, file ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Text(
                             text = file.effectiveName,
                             style = MaterialTheme.typography.bodySmall,
@@ -248,16 +207,8 @@ private fun FilePickerCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        IconButton(
-                            onClick = { onRemoveFile(index) },
-                            modifier = Modifier.size(28.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Remove",
-                                tint = VeyroTextSecondary,
-                                modifier = Modifier.size(16.dp),
-                            )
+                        IconButton(onClick = { onRemoveFile(index) }) {
+                            Icon(VeyroIcons.Close, contentDescription = "Remove ${file.effectiveName}", modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -265,83 +216,14 @@ private fun FilePickerCard(
                     Text(
                         text = "and ${selected.size - 4} more",
                         style = MaterialTheme.typography.labelSmall,
-                        color = VeyroTextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            VeyroOutlineButton(
-                text = if (selected.isEmpty()) "Choose files" else "Add more files",
-                onClick = onPickFiles,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun DeviceTargetCard(
-    name: String,
-    fingerprint: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    VeyroCard(
-        selected = isSelected,
-        onClick = onClick,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Selection indicator
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isSelected) VeyroCyan else VeyroGlassBorder,
-                    )
-                    .then(
-                        if (isSelected) {
-                            Modifier.border(2.dp, VeyroCyanGlow, CircleShape)
-                        } else Modifier,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (isSelected) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(12.dp),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = fingerprint,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = VeyroTextSecondary,
-                )
-            }
-
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = "Selected",
-                    tint = VeyroCyan,
-                    modifier = Modifier.size(20.dp),
-                )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(onClick = onPickFiles, modifier = Modifier.fillMaxWidth()) {
+                Text(if (selected.isEmpty()) "Choose files" else "Add more files")
             }
         }
     }
@@ -354,59 +236,24 @@ private fun ProgressCard(
     totalBytes: Long,
     bytesPerSecond: Long,
 ) {
-    VeyroCard(glow = true) {
-        Column {
-            Text(
-                text = "Sending",
-                style = MaterialTheme.typography.labelMedium,
-                color = VeyroCyan,
-                fontWeight = FontWeight.SemiBold,
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Sending", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(currentItemName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LinearProgressIndicator(
+                progress = { if (totalBytes > 0) (bytesTransferred.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f },
+                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = currentItemName,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            VeyroProgressBar(
-                progress = if (totalBytes > 0) bytesTransferred.toFloat() / totalBytes else 0f,
-                showShimmer = true,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = formatBytes(bytesTransferred),
-                    style = VeyroMetricSubStyle,
-                    color = VeyroCyan,
+                    "${formatBytes(bytesTransferred)} / ${formatBytes(totalBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
                 )
-                Text(
-                    text = " / ${formatBytes(totalBytes)}",
-                    style = VeyroMetricSubStyle,
-                    color = VeyroTextSecondary,
-                )
-                Spacer(modifier = Modifier.weight(1f))
                 if (bytesPerSecond > 0) {
-                    Text(
-                        text = "${formatBytes(bytesPerSecond)}/s",
-                        style = VeyroMetricSubStyle,
-                        color = VeyroTextSecondary,
-                    )
+                    Text("${formatBytes(bytesPerSecond)}/s", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun OutcomeCard(message: String) {
-    VeyroGlassCard {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
     }
 }

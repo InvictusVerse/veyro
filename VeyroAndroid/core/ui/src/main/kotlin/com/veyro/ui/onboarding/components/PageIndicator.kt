@@ -22,12 +22,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.theme.VeyroCyan
 
 /**
  * Onboarding progress dots: the current page is a wide pill, the others small dots.
  *
- * Veyro changes: Veyro colours, spaced rather than stretched, and one accessibility label for
+ * Veyro changes: theme primary colour, spaced rather than stretched, and one accessibility label for
  * the whole row ("Step 2 of 5") instead of unlabelled boxes.
  */
 @Composable
@@ -35,7 +34,7 @@ internal fun PageIndicator(
     pageCount: Int,
     selectedPage: Int,
     modifier: Modifier = Modifier,
-    selectedColor: Color = VeyroCyan,
+    selectedColor: Color = MaterialTheme.colorScheme.primary,
     unselectedColor: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     Row(

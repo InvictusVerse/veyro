@@ -10,26 +10,23 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,22 +35,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.components.VeyroCard
-import com.veyro.core.designsystem.components.VeyroTextButton
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroTeal
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
+import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
  * Page (c): the optional companion features, each off until switched on.
  *
- * Kept from Sefirah: one row per grant with a granted check or a Grant action, re-reading state on
- * resume, and detecting a sideloaded install to explain Android 13's "restricted settings".
+ * Kept from Sefirah: the elevated card of list items with a granted check or a Grant action,
+ * the "optional" group label, re-reading state on resume, and detecting a sideloaded install to
+ * explain Android 13's "restricted settings".
  *
  * Veyro changes: rows are features, not permissions. Turning a switch on stores the choice and
  * then asks for exactly what that feature still lacks: the runtime permissions first, then the
@@ -91,48 +85,63 @@ internal fun FeaturesPage(
     }
 
     OnboardingPage(
-        icon = Icons.Default.Settings,
+        icon = VeyroIcons.SettingsAlert,
         title = "Choose what to share",
-        subtitle = "All optional. Turn on what you want now, or change it later in Settings.",
+        subtitle = "All optional. Turn on what you want now, or change it later on the device's settings.",
     ) {
-        features.forEach { state ->
-            FeatureCard(
-                state = state,
-                showRestrictedHint = sideloaded && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
-                onToggle = { on ->
-                    onToggle(state.feature, on)
-                    if (on) requestWhatIsMissing(state.access)
-                },
-                onGrant = { requestWhatIsMissing(state.access) },
-                onOpenAppInfo = { openAppInfo(context) },
-            )
+        Text(
+            text = "Optional",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+        )
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Column {
+                features.forEachIndexed { index, state ->
+                    if (index > 0) HorizontalDivider()
+                    FeatureItem(
+                        state = state,
+                        showRestrictedHint = sideloaded && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
+                        onToggle = { on ->
+                            onToggle(state.feature, on)
+                            if (on) requestWhatIsMissing(state.access)
+                        },
+                        onGrant = { requestWhatIsMissing(state.access) },
+                        onOpenAppInfo = { openAppInfo(context) },
+                    )
+                }
+            }
         }
     }
 }
 
-private data class FeatureCopy(val icon: ImageVector, val title: String, val why: String)
+private data class FeatureCopy(val title: String, val why: String)
 
 private fun OnboardingFeature.text(): FeatureCopy = when (this) {
     OnboardingFeature.NOTIFICATIONS -> FeatureCopy(
-        Icons.Default.Notifications,
         "Notifications",
         "See your phone's notifications on the PC and reply from there.",
     )
     OnboardingFeature.MEDIA -> FeatureCopy(
-        Icons.Default.PlayArrow,
         "Media",
         "Control what is playing on your phone from the PC.",
     )
     OnboardingFeature.MESSAGES_AND_CALLS -> FeatureCopy(
-        Icons.Default.Email,
         "Messages and calls",
         "Read and send texts and handle calls from the PC.",
     )
     OnboardingFeature.RING_AND_SOUND -> FeatureCopy(
-        Icons.Default.Phone,
         "Ring and sound mode",
         "Ring a lost phone and switch silent or Do Not Disturb from the PC.",
     )
+}
+
+@Composable
+private fun OnboardingFeature.icon(): ImageVector = when (this) {
+    OnboardingFeature.NOTIFICATIONS -> VeyroIcons.Notifications
+    OnboardingFeature.MEDIA -> VeyroIcons.PlayCircle
+    OnboardingFeature.MESSAGES_AND_CALLS -> VeyroIcons.Chat
+    OnboardingFeature.RING_AND_SOUND -> VeyroIcons.VolumeUp
 }
 
 private fun SpecialAccess.label(): String = when (this) {
@@ -141,7 +150,7 @@ private fun SpecialAccess.label(): String = when (this) {
 }
 
 @Composable
-private fun FeatureCard(
+private fun FeatureItem(
     state: FeatureState,
     showRestrictedHint: Boolean,
     onToggle: (Boolean) -> Unit,
@@ -149,33 +158,31 @@ private fun FeatureCard(
     onOpenAppInfo: () -> Unit,
 ) {
     val copy = state.feature.text()
-    VeyroCard(modifier = Modifier.fillMaxWidth(), selected = state.enabled) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .toggleable(value = state.enabled, role = Role.Switch, onValueChange = onToggle),
-        ) {
-            Icon(copy.icon, contentDescription = null, tint = VeyroCyan, modifier = Modifier.size(26.dp))
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(copy.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(copy.why, style = MaterialTheme.typography.bodySmall, color = VeyroTextSecondary)
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            // The Row is the toggle target; the Switch only renders the state.
-            Switch(checked = state.enabled, onCheckedChange = null)
-        }
-
-        if (state.enabled) {
-            Spacer(modifier = Modifier.size(10.dp))
-            AccessStatus(
-                access = state.access,
-                showRestrictedHint = showRestrictedHint,
-                onGrant = onGrant,
-                onOpenAppInfo = onOpenAppInfo,
+    ListItem(
+        modifier = Modifier.toggleable(value = state.enabled, role = Role.Switch, onValueChange = onToggle),
+        leadingContent = {
+            Icon(state.feature.icon(), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        },
+        headlineContent = { Text(text = copy.title, style = MaterialTheme.typography.titleMedium) },
+        supportingContent = {
+            Text(
+                text = copy.why,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
+        },
+        // The row is the toggle target; the Switch only renders the state.
+        trailingContent = { Switch(checked = state.enabled, onCheckedChange = null) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+    )
+
+    if (state.enabled) {
+        AccessStatus(
+            access = state.access,
+            showRestrictedHint = showRestrictedHint,
+            onGrant = onGrant,
+            onOpenAppInfo = onOpenAppInfo,
+        )
     }
 }
 
@@ -186,11 +193,14 @@ private fun AccessStatus(
     onGrant: () -> Unit,
     onOpenAppInfo: () -> Unit,
 ) {
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
     if (access.granted) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = VeyroTeal, modifier = Modifier.size(18.dp))
+        Row(modifier = rowModifier, verticalAlignment = Alignment.CenterVertically) {
+            Icon(VeyroIcons.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Access granted", style = MaterialTheme.typography.bodySmall, color = VeyroTeal)
+            Text("Access granted", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
         return
     }
@@ -198,16 +208,14 @@ private fun AccessStatus(
         addAll(access.missingLabels)
         access.specialAccess?.takeIf { !access.specialGranted }?.let { add(it.label()) }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier = rowModifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Info, contentDescription = null, tint = VeyroCyan, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Needs access: ${missing.joinToString(", ")}",
+                text = "Needs: ${missing.joinToString(", ")}",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
             )
-            VeyroTextButton(text = "Grant", onClick = onGrant)
+            TextButton(onClick = onGrant) { Text("Grant") }
         }
         val needsSpecial = access.specialAccess != null && !access.specialGranted
         if (showRestrictedHint && needsSpecial) {
@@ -216,9 +224,9 @@ private fun AccessStatus(
                     "restricted, open App info, tap the three-dot menu, choose \"Allow restricted " +
                     "settings\", then tap Grant again.",
                 style = MaterialTheme.typography.bodySmall,
-                color = VeyroTextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            VeyroTextButton(text = "Open App info", onClick = onOpenAppInfo)
+            TextButton(onClick = onOpenAppInfo) { Text("App info") }
         }
     }
 }

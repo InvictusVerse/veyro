@@ -29,6 +29,38 @@ Adapted files (Veyro path <- Sefirah path):
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/WelcomePage.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/WelcomeStep.kt`
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/FeaturesPage.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/PermissionStep.kt`
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/components/PageIndicator.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/components/PageIndicator.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/theme/Theme.kt` <- `app/src/main/java/com/castle/sefirah/ui/theme/Theme.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/theme/Type.kt` <- `app/src/main/java/com/castle/sefirah/ui/theme/Type.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/Padding.kt` <- `core/presentation/src/main/java/sefirah/presentation/components/Constants.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/Modifiers.kt` <- `core/presentation/src/main/java/sefirah/presentation/util/Modifier.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/FlowingPageIndicator.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/FlowingPageIndicator.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/WavySlider.kt` <- `core/presentation/src/main/java/sefirah/presentation/components/WavySlider.kt` (Sefirah credits PixelPlay's WavyMusicSlider, MIT)
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/PullRefresh.kt` <- `core/presentation/src/main/java/sefirah/presentation/components/PullRefresh.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/EmptyScreen.kt` <- `core/presentation/src/main/java/sefirah/presentation/screens/EmptyScreen.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/VeyroDetailScaffold.kt` <- `app/src/main/java/com/castle/sefirah/presentation/devices/MediaSessionSettingsScreen.kt` (top bar pattern)
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/preference/BasePreferenceWidget.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/components/BasePreferenceWidget.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/preference/TextPreferenceWidget.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/components/TextPrefrenceWidget.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/preference/SwitchPreferenceWidget.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/components/SwitchPreference.kt`
+- `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/preference/PreferenceItem.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/components/PreferenceItem.kt`
+- `VeyroAndroid/core/designsystem/src/main/res/drawable/ic_sym_*.xml` (51 icons) <- `core/common/src/main/res/drawable/ic_*.xml` (the glyphs are Google Material Symbols, Apache-2.0)
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/components/DeviceCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/common/components/DeviceCard.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/HomeScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/HomeScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/SwipeableDevicesCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/SwipeableDevicesCard.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/DeviceControlCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/DeviceControlCard.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/MediaCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/MediaCard.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/VolumeSlider.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/VolumeSlider.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/PcVolumeCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/AudioDeviceBottomSheet.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/devices/DevicesScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/devices/DeviceScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/devices/DeviceSettingsScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/devices/DeviceSettingsScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/devices/MediaSettingsScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/devices/MediaSessionSettingsScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/devices/MessagesSettingsScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/devices/SmsSettingsScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/settings/SettingsScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/SettingsScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/settings/LogoHeader.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/components/LogoHeader.kt`
+- `VeyroAndroid/app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt` <- `app/src/main/java/com/castle/sefirah/navigation/graphs/RootNavGraph.kt`, `app/src/main/java/com/castle/sefirah/navigation/graphs/DevicesNavGraph.kt`
+- `VeyroAndroid/app/src/main/kotlin/com/veyro/navigation/MainScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/main/MainScreen.kt`, `app/src/main/java/com/castle/sefirah/navigation/graphs/MainNavGraph.kt`
+- `VeyroAndroid/app/src/main/kotlin/com/veyro/navigation/NavigationTransitions.kt` <- `app/src/main/java/com/castle/sefirah/navigation/transitions/NavigationTransitions.kt`
+- `VeyroAndroid/app/src/main/kotlin/com/veyro/navigation/AppTopBar.kt` <- `core/presentation/src/main/java/sefirah/presentation/components/AppTopBar.kt`
+- `VeyroAndroid/app/src/main/kotlin/com/veyro/navigation/SearchBar.kt` <- `core/presentation/src/main/java/sefirah/presentation/components/SearchBar.kt`
 - `VeyroWindows/src/Veyro/Views/OnboardingPage.xaml` <- `src/Sefirah/Views/Onboarding/WelcomePage.xaml`
 - `VeyroWindows/src/Veyro/Views/OnboardingPage.xaml.cs` <- `src/Sefirah/Views/Onboarding/WelcomePage.xaml.cs`
 - `VeyroWindows/src/Veyro/UserControls/PairingView.xaml` <- `src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml`

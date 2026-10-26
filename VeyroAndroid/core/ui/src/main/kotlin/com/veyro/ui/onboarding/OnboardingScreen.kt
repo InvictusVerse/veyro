@@ -3,40 +3,45 @@
 package com.veyro.ui.onboarding
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.veyro.core.designsystem.components.VeyroButton
-import com.veyro.core.designsystem.components.VeyroTextButton
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
 import com.veyro.ui.onboarding.components.PageIndicator
 
 /**
- * First-run onboarding host (ADR-030): Welcome, Device name, Features, Pair, Done.
+ * First-run onboarding host (ADR-030): Welcome, Device name, Features, Pair, Done, in Sefirah's
+ * pager with the page indicator and the primary button in the bottom bar.
  *
- * Veyro changes from Sefirah's pager: the current page lives in [OnboardingViewModel] rather than
- * in pager state, so rotation and process recreation keep the place and Back always means "the
- * previous page". Optional pages get a Skip action, and the primary button's label follows the
- * page.
+ * Veyro changes from Sefirah's pager: the current page lives in [OnboardingViewModel] and the pager
+ * follows it (swiping is off), so rotation keeps the place and Back always means "the previous
+ * page". Only the current page and the one being left are composed, so the Pair page starts its
+ * discovery when it is reached and not while the user is still on Features. Optional pages get a
+ * Skip action and the primary button's label follows the page.
  *
  * [viewModelFactory] builds the regular PairingViewModel the Pair page reuses.
  */
@@ -48,6 +53,14 @@ public fun OnboardingScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    val pagerState = rememberPagerState(initialPage = state.stepIndex) { state.stepCount }
+
+    LaunchedEffect(state.stepIndex) {
+        if (pagerState.currentPage != state.stepIndex) {
+            pagerState.animateScrollToPage(page = state.stepIndex)
+        }
+    }
+
     BackHandler(enabled = state.canGoBack) { viewModel.back() }
 
     // Grants happen in system screens; re-read whenever the user comes back.
@@ -58,63 +71,83 @@ public fun OnboardingScreen(
 
     Scaffold(
         modifier = modifier,
+        topBar = {
+            Spacer(modifier = Modifier.statusBarsPadding().padding(16.dp))
+        },
         bottomBar = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                    .padding(horizontal = 30.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PageIndicator(pageCount = state.stepCount, selectedPage = state.stepIndex)
+                PageIndicator(
+                    modifier = Modifier.width(100.dp),
+                    pageCount = state.stepCount,
+                    selectedPage = state.stepIndex,
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (state.step == OnboardingStep.FEATURES) {
-                        VeyroTextButton(text = "Skip", onClick = viewModel::skip, color = VeyroTextSecondary)
+                        TextButton(onClick = viewModel::skip) {
+                            Text(
+                                text = "Skip",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                        }
                     }
-                    val primary = primaryLabel(state)
-                    VeyroButton(
-                        text = primary,
-                        onClick = if (state.step == OnboardingStep.PAIR && state.paired == null) {
-                            viewModel::skip
-                        } else {
-                            viewModel::next
-                        },
+                    val skipsPairing = state.step == OnboardingStep.PAIR && state.paired == null
+                    TextButton(
+                        onClick = if (skipsPairing) viewModel::skip else viewModel::next,
                         enabled = state.step != OnboardingStep.DEVICE_NAME || state.deviceName.isNotBlank(),
-                        height = 44.dp,
-                    )
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                        ),
+                        shape = RoundedCornerShape(size = 6.dp),
+                    ) {
+                        Text(
+                            text = primaryLabel(state),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                    }
                 }
             }
         },
-    ) { padding ->
+    ) { paddingValues ->
         Box(
             modifier = Modifier
-                .padding(padding)
+                .padding(paddingValues)
                 .fillMaxSize(),
         ) {
-            AnimatedContent(
-                targetState = state.step,
-                transitionSpec = {
-                    val forward = targetState.ordinal > initialState.ordinal
-                    (slideInHorizontally { if (forward) it / 4 else -it / 4 } + fadeIn()) togetherWith
-                        (slideOutHorizontally { if (forward) -it / 4 else it / 4 } + fadeOut())
-                },
-                label = "onboardingStep",
-            ) { step ->
-                when (step) {
-                    OnboardingStep.WELCOME -> WelcomePage()
-                    OnboardingStep.DEVICE_NAME -> DeviceNamePage(
-                        name = state.deviceName,
-                        onNameChange = viewModel::setDeviceNameDraft,
-                        onDone = viewModel::next,
-                    )
-                    OnboardingStep.FEATURES -> FeaturesPage(
-                        features = state.features,
-                        onToggle = viewModel::setFeatureEnabled,
-                        onAccessChanged = viewModel::refreshAccess,
-                    )
-                    OnboardingStep.PAIR -> PairPage(viewModelFactory = viewModelFactory)
-                    OnboardingStep.DONE -> DonePage(paired = state.paired)
+            HorizontalPager(
+                state = pagerState,
+                userScrollEnabled = false,
+                beyondViewportPageCount = 0,
+            ) { index ->
+                val composeIt = index == state.stepIndex || index == pagerState.settledPage
+                if (composeIt) {
+                    when (OnboardingStep.entries[index]) {
+                        OnboardingStep.WELCOME -> WelcomePage()
+                        OnboardingStep.DEVICE_NAME -> DeviceNamePage(
+                            name = state.deviceName,
+                            onNameChange = viewModel::setDeviceNameDraft,
+                            onDone = viewModel::next,
+                        )
+                        OnboardingStep.FEATURES -> FeaturesPage(
+                            features = state.features,
+                            onToggle = viewModel::setFeatureEnabled,
+                            onAccessChanged = viewModel::refreshAccess,
+                        )
+                        // The Pair page belongs to the pairing flow and is hosted here unchanged.
+                        OnboardingStep.PAIR -> PairPage(viewModelFactory = viewModelFactory)
+                        OnboardingStep.DONE -> DonePage(paired = state.paired)
+                    }
+                } else {
+                    Box(Modifier.fillMaxSize())
                 }
             }
         }

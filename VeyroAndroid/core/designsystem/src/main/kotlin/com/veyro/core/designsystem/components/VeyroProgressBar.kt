@@ -25,22 +25,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroCyanDark
-import com.veyro.core.designsystem.theme.VeyroCyanGlow
-import com.veyro.core.designsystem.theme.VeyroExtras
 import com.veyro.core.designsystem.theme.VeyroMetricSubStyle
-import com.veyro.core.designsystem.theme.VeyroTeal
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
 
-private val ProgressTrackHeight = 8.dp
-private val ProgressTrackRadius = RoundedCornerShape(4.dp)
+private val ProgressTrackHeight = 6.dp
+private val ProgressTrackRadius = RoundedCornerShape(50)
 
 /**
- * Futuristic linear progress bar with a cyan gradient fill and animated shimmer.
+ * Linear progress bar in the Material 3 style: rounded track, primary fill. The shimmer is off by
+ * default now; it is kept as an option for callers that asked for it.
  *
  * @param progress  0f..1f
  * @param showShimmer  If true, a traveling highlight sweeps across the fill to suggest activity.
@@ -49,9 +45,9 @@ private val ProgressTrackRadius = RoundedCornerShape(4.dp)
 public fun VeyroProgressBar(
     progress: Float,
     modifier: Modifier = Modifier,
-    showShimmer: Boolean = true,
+    showShimmer: Boolean = false,
     height: Dp = ProgressTrackHeight,
-    fillColor: Brush = Brush.horizontalGradient(listOf(VeyroCyan, VeyroCyanGlow)),
+    fillColor: Brush = SolidColor(MaterialTheme.colorScheme.primary),
 ) {
     val shimmerOffset by animateShimmer(showShimmer)
 
@@ -60,7 +56,7 @@ public fun VeyroProgressBar(
             .fillMaxWidth()
             .height(height)
             .clip(ProgressTrackRadius)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
         contentAlignment = Alignment.CenterStart,
     ) {
         // Fill
@@ -120,7 +116,6 @@ public fun VeyroTransferProgress(
 
         VeyroProgressBar(
             progress = fraction,
-            showShimmer = true,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -137,14 +132,14 @@ public fun VeyroTransferProgress(
             Text(
                 text = " / ${formatBytesUI(totalBytes)}",
                 style = VeyroMetricSubStyle,
-                color = VeyroTextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.weight(1f))
             if (bytesPerSecond > 0) {
                 Text(
                     text = "${formatBytesUI(bytesPerSecond)}/s",
                     style = VeyroMetricSubStyle,
-                    color = VeyroTextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

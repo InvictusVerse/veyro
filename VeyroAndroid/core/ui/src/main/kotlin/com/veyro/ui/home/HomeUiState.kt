@@ -5,6 +5,47 @@ import com.veyro.core.model.DeviceId
 import com.veyro.core.model.NetworkDiagnosis
 import com.veyro.core.model.NetworkTransport
 import com.veyro.core.model.PeerDevice
+import com.veyro.core.model.Platform
+import com.veyro.core.model.TrustState
+import com.veyro.core.model.TrustedPeer
+
+/** Where a paired device stands right now, for the device cards (Home and Devices). */
+public enum class ConnectionStatus {
+    /** The live session is with this device. */
+    CONNECTED,
+
+    /** A connect attempt started from the card is running. */
+    CONNECTING,
+
+    /** Discovery currently sees it, so Connect can be tried. */
+    NEARBY,
+
+    /** Paired, but not seen on the network. */
+    OFFLINE,
+}
+
+/**
+ * One paired device as the Sefirah-style cards show it: name, connection state and, for the
+ * connected PC, the battery it reports (`devStatus`, ADR-026).
+ */
+public data class PairedDeviceUi(
+    val deviceId: DeviceId,
+    val name: String,
+    val platform: Platform,
+    val status: ConnectionStatus,
+    val battery: Int? = null,
+    val charging: Boolean? = null,
+    /** The last Connect from the card for this device failed. */
+    val connectFailed: Boolean = false,
+    val lastConnectedEpochMillis: Long = 0L,
+    val pairedAtEpochMillis: Long = 0L,
+) {
+    val isConnected: Boolean get() = status == ConnectionStatus.CONNECTED
+
+    /** Connect can only be tried for a device discovery currently sees. */
+    val canToggleConnection: Boolean
+        get() = status == ConnectionStatus.CONNECTED || status == ConnectionStatus.NEARBY
+}
 
 /**
  * Everything the hub renders.
@@ -37,6 +78,15 @@ public data class HomeUiState(
 
     /** The connected PC's own status (battery etc.), when it reports one. */
     val pcStatus: LinkMessage.DeviceStatus? = null,
+
+    /** Paired devices from the trust store, revoked ones excluded. */
+    val pairedPeers: List<TrustedPeer> = emptyList(),
+
+    /** Device a Connect from the card is running for. */
+    val connectingId: DeviceId? = null,
+
+    /** Device whose last Connect from the card failed. */
+    val failedId: DeviceId? = null,
 ) {
     /** The PC session the media card shows: the playing one, else the first. */
     val pcMediaSession: LinkMessage.MediaSessionInfo?
@@ -47,12 +97,41 @@ public data class HomeUiState(
         pcStatus?.takeIf { connectedPeerId != null && device.deviceId == connectedPeerId }
 
     val trustedDevices: List<PeerDevice>
-        get() = devices.filter { it.trust == com.veyro.core.model.TrustState.TRUSTED }
+        get() = devices.filter { it.trust == TrustState.TRUSTED }
 
     val otherDevices: List<PeerDevice>
-        get() = devices.filterNot { it.trust == com.veyro.core.model.TrustState.TRUSTED }
+        get() = devices.filterNot { it.trust == TrustState.TRUSTED }
 
     /** Show the diagnosis panel only when there is genuinely something wrong to report. */
     val shouldExplainEmptiness: Boolean
         get() = devices.isEmpty() && searchedLongEnough
+
+    /** Paired devices for the cards, the connected one first. */
+    val pairedDevices: List<PairedDeviceUi>
+        get() = pairedPeers
+            .map { peer ->
+                val connected = connectedPeerId == peer.deviceId
+                val status = when {
+                    connected -> ConnectionStatus.CONNECTED
+                    connectingId == peer.deviceId -> ConnectionStatus.CONNECTING
+                    devices.any { it.deviceId == peer.deviceId && it.endpoints.isNotEmpty() } -> ConnectionStatus.NEARBY
+                    else -> ConnectionStatus.OFFLINE
+                }
+                PairedDeviceUi(
+                    deviceId = peer.deviceId,
+                    name = peer.name,
+                    platform = peer.platform,
+                    status = status,
+                    battery = if (connected) pcStatus?.battery else null,
+                    charging = if (connected) pcStatus?.charging else null,
+                    connectFailed = failedId == peer.deviceId && !connected,
+                    lastConnectedEpochMillis = peer.lastConnectedEpochMillis,
+                    pairedAtEpochMillis = peer.pairedAtEpochMillis,
+                )
+            }
+            .sortedBy { if (it.isConnected) 0 else 1 }
+
+    /** The connected device's card, if any, for the quick actions. */
+    val connectedDevice: PairedDeviceUi?
+        get() = pairedDevices.firstOrNull { it.isConnected }
 }

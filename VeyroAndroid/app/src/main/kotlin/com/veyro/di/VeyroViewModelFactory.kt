@@ -35,6 +35,9 @@ public class VeyroViewModelFactory(
             pcStatus = container.deviceStatusPublisher.peerStatus,
             connectedPeerId = container.connectedPeerId,
             sendMediaCommand = { container.mediaMirror.sendMediaCommand(it) },
+            trustedPeers = container.trustStore.peers,
+            connectPeer = { id, name, endpoints -> container.connectionManager.connect(id, name, endpoints) },
+            disconnectPeer = { container.connectionManager.disconnect() },
         ) as T
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) -> DevicesViewModel(

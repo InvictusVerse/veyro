@@ -15,10 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,16 +27,13 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.components.VeyroCard
-import com.veyro.core.designsystem.components.VeyroIconBadge
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroCyanContainer
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
+import com.veyro.core.designsystem.components.padding
+import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
- * Shared page frame: scrollable (landscape and large fonts), an icon-and-title header, then
- * the page body. Veyro change: Sefirah's header row is reused by every page instead of only
- * the first, and the title is marked as a heading for screen readers.
+ * Shared page frame, Sefirah's step header: a 48dp primary icon next to the title, then the body.
+ * Veyro changes: reused by every page (the Pair page included), scrollable for landscape and large
+ * fonts, an optional subtitle, and the title is marked as a heading for screen readers.
  */
 @Composable
 internal fun OnboardingPage(
@@ -52,58 +46,72 @@ internal fun OnboardingPage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = MaterialTheme.padding.medium),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            VeyroIconBadge(
-                icon = icon,
+            Icon(
+                imageVector = icon,
                 contentDescription = null,
-                size = 52.dp,
-                iconSize = 28.dp,
-                backgroundColor = VeyroCyanContainer,
-                iconColor = VeyroCyan,
+                modifier = Modifier
+                    .padding(bottom = MaterialTheme.padding.small)
+                    .size(48.dp),
+                tint = MaterialTheme.colorScheme.primary,
             )
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() },
             )
         }
         subtitle?.let {
-            Text(text = it, style = MaterialTheme.typography.bodyMedium, color = VeyroTextSecondary)
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Spacer(modifier = Modifier.height(4.dp))
         content()
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 
-/** Page (a): what Veyro is, in three short promises. Written for Veyro. */
+/**
+ * Page (a): what Veyro is. Veyro changes: the store and download buttons are replaced by three
+ * short promises, since Veyro for Windows is not published to a store yet.
+ */
 @Composable
 internal fun WelcomePage() {
     OnboardingPage(
-        icon = Icons.Default.Share,
+        icon = VeyroIcons.RocketLaunch,
         title = "Welcome to Veyro",
-        subtitle = "Your phone and your PC, working together: files both ways, notifications, " +
-            "media, messages and calls on the PC.",
     ) {
-        VeyroCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = "Your phone and your PC, working together: files both ways, notifications, " +
+                        "media, messages and calls on the PC.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Promise(
-                    icon = Icons.Default.Share,
+                    icon = VeyroIcons.Wifi,
                     title = "Stays on your network",
                     text = "Devices talk to each other directly over your Wi-Fi. Nothing goes " +
                         "through the internet or a server.",
                 )
                 Promise(
-                    icon = Icons.Default.Lock,
+                    icon = VeyroIcons.Lock,
                     title = "Encrypted end to end",
                     text = "Every connection is encrypted, and only devices you paired can connect.",
                 )
                 Promise(
-                    icon = Icons.Default.Person,
+                    icon = VeyroIcons.QrCodeScanner,
                     title = "No account",
                     text = "No sign-up and no cloud. Pairing is done once, by scanning a code.",
                 )
@@ -112,7 +120,7 @@ internal fun WelcomePage() {
         Text(
             text = "You will need Veyro for Windows on your PC. It takes about a minute.",
             style = MaterialTheme.typography.bodySmall,
-            color = VeyroTextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -120,11 +128,11 @@ internal fun WelcomePage() {
 @Composable
 private fun Promise(icon: ImageVector, title: String, text: String) {
     Row(verticalAlignment = Alignment.Top) {
-        Icon(icon, contentDescription = null, tint = VeyroCyan, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(text = title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(text = text, style = MaterialTheme.typography.bodySmall, color = VeyroTextSecondary)
+            Text(text = text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

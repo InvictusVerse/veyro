@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -15,13 +15,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroCyanContainer
-import com.veyro.core.designsystem.theme.VeyroRed
-import com.veyro.core.designsystem.theme.VeyroRedContainer
-import com.veyro.core.designsystem.theme.VeyroTeal
-import com.veyro.core.designsystem.theme.VeyroTealContainer
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
 
 /**
  * A rounded-rect icon badge with a tinted background.
@@ -42,7 +35,7 @@ public fun VeyroIconBadge(
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(CircleShape)
             .background(backgroundColor),
         contentAlignment = Alignment.Center,
     ) {
@@ -70,8 +63,8 @@ public fun VeyroConnectedBadge(
         modifier = modifier,
         size = size,
         iconSize = iconSize,
-        backgroundColor = VeyroCyanContainer,
-        iconColor = VeyroCyan,
+        backgroundColor = MaterialTheme.colorScheme.primaryContainer,
+        iconColor = MaterialTheme.colorScheme.onPrimaryContainer,
     )
 }
 
@@ -90,8 +83,8 @@ public fun VeyroErrorBadge(
         modifier = modifier,
         size = size,
         iconSize = iconSize,
-        backgroundColor = VeyroRedContainer,
-        iconColor = VeyroRed,
+        backgroundColor = MaterialTheme.colorScheme.errorContainer,
+        iconColor = MaterialTheme.colorScheme.onErrorContainer,
     )
 }
 
@@ -110,8 +103,8 @@ public fun VeyroSuccessBadge(
         modifier = modifier,
         size = size,
         iconSize = iconSize,
-        backgroundColor = VeyroTealContainer,
-        iconColor = VeyroTeal,
+        backgroundColor = MaterialTheme.colorScheme.tertiaryContainer,
+        iconColor = MaterialTheme.colorScheme.onTertiaryContainer,
     )
 }
 
@@ -131,6 +124,6 @@ public fun VeyroNeutralBadge(
         size = size,
         iconSize = iconSize,
         backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-        iconColor = VeyroTextSecondary,
+        iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }

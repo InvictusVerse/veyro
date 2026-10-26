@@ -1,110 +1,72 @@
+// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/settings/SettingsScreen.kt, GPL-3.0.
+// Modified for Veyro.
 package com.veyro.ui.settings
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.veyro.core.designsystem.components.VeyroButton
-import com.veyro.core.designsystem.components.VeyroCard
-import com.veyro.core.designsystem.components.VeyroDangerButton
-import com.veyro.core.designsystem.components.VeyroGlassCard
-import com.veyro.core.designsystem.components.VeyroOutlineButton
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroCyanContainer
-import com.veyro.core.designsystem.theme.VeyroCyanGlow
-import com.veyro.core.designsystem.theme.VeyroCyanMuted
-import com.veyro.core.designsystem.theme.VeyroExtras
-import com.veyro.core.designsystem.theme.VeyroGlassBorder
-import com.veyro.core.designsystem.theme.VeyroMetricSubStyle
-import com.veyro.core.designsystem.theme.VeyroRed
-import com.veyro.core.designsystem.theme.VeyroRedContainer
-import com.veyro.core.designsystem.theme.VeyroTeal
-import com.veyro.core.designsystem.theme.VeyroTealContainer
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
-import com.veyro.core.designsystem.theme.VeyroViolet
-import com.veyro.core.designsystem.theme.VeyroVioletContainer
+import com.veyro.core.common.Diagnostics
+import com.veyro.core.designsystem.components.padding
+import com.veyro.core.designsystem.components.preference.SwitchPreferenceWidget
+import com.veyro.core.designsystem.components.preference.TextPreferenceWidget
+import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.ui.devices.NotificationAccessRow
+import com.veyro.ui.devices.RenameDialog
+import com.veyro.ui.devices.openAppInfo
+import com.veyro.ui.devices.openPolicyAccess
 
 /**
- * Settings screen — redesigned with a futuristic aesthetic.
+ * Settings as a Sefirah-style preference list under the app logo.
  *
- * Sections:
- *   [Problem cards]     ← shown when identity/trust errors exist
- *   [Identity hero]     ← fingerprint display with dramatic presentation
- *   [Device name]       ← editable name
- *   [Discovery]         ← always-discoverable toggle
- *   [Notifications]     ← mirror-to-PC toggle and notification access row
- *   [Media and control] ← share-media toggle, PC ring/sound-mode toggle, DND access row
- *   [Messages, calls]   ← messages-and-calls toggle, missing-permissions row
- *   [Danger zone]       ← identity reset
- *   [Debug panel]       ← diagnostics + log tail
+ * Veyro changes: the rows are Veyro's - device name, the identity fingerprint, paired-device count,
+ * always-discoverable, the three system grants the companion features depend on, identity reset
+ * (confirmed) and the diagnostics panel with the in-app log tail. Storage location, recycle bin,
+ * action labels and "stop service" have no Veyro counterpart. The companion feature switches
+ * themselves are on each device's settings screen, as in Sefirah.
  */
 @Composable
 public fun SettingsScreen(
     viewModel: SettingsViewModel,
     modifier: Modifier = Modifier,
+    /** Opens the Devices tab from the paired-device count row. */
+    onOpenDevices: () -> Unit = {},
     /** Asks the Activity to request the messaging runtime permissions (ADR-027). */
     onRequestMessagingPermissions: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var showResetConfirm by remember { mutableStateOf(false) }
-    var showDebug by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    // Notification access is granted in system settings, so re-check whenever the user returns.
+    var showDeviceNameDialog by rememberSaveable { mutableStateOf(false) }
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
+    var showDebug by rememberSaveable { mutableStateOf(false) }
+
+    // Grants happen in system settings, so re-check whenever the user returns.
     LifecycleResumeEffect(Unit) {
         viewModel.refreshNotificationAccess()
         onPauseOrDispose { }
@@ -115,151 +77,155 @@ public fun SettingsScreen(
     }
 
     if (state.isLoading) {
-        Box(
-            modifier = modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) { CircularProgressIndicator(color = VeyroCyan) }
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
         return
     }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.Top,
     ) {
-        // Error cards
+        item { LogoHeader() }
+
         state.identityError?.let { message ->
-            item { ProblemCard(title = "Identity unavailable", message = message, icon = Icons.Default.Lock) }
+            item { ProblemCard(title = "Identity unavailable", message = message) }
         }
         state.trustStoreError?.let { message ->
-            item { ProblemCard(title = "Paired devices could not be verified", message = message, icon = Icons.Default.Warning) }
+            item { ProblemCard(title = "Paired devices could not be verified", message = message) }
         }
 
-        // Identity hero card
         item {
-            IdentityHeroCard(
-                fingerprint = state.fingerprint,
-                deviceId = state.deviceId,
-                pairedCount = state.pairedDeviceCount,
+            TextPreferenceWidget(
+                title = "Device name",
+                subtitle = state.deviceName,
+                icon = VeyroIcons.Mobile,
+                onPreferenceClick = { showDeviceNameDialog = true },
             )
         }
 
-        // Device name
         item {
-            NameSection(
-                currentName = state.deviceName,
-                onSave = viewModel::setDeviceName,
+            TextPreferenceWidget(
+                title = "Device fingerprint",
+                subtitle = state.fingerprint + "\nID: " + state.deviceId,
+                subtitleStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                icon = VeyroIcons.Lock,
             )
         }
 
-        // Discovery toggle
         item {
-            DiscoverySection(
-                alwaysDiscoverable = state.alwaysDiscoverable,
-                onToggle = viewModel::setAlwaysDiscoverable,
+            val count = state.pairedDeviceCount
+            TextPreferenceWidget(
+                title = "Paired devices",
+                subtitle = "$count paired device${if (count != 1) "s" else ""}",
+                icon = VeyroIcons.Desktop,
+                onPreferenceClick = onOpenDevices,
             )
         }
 
-        // Notification mirroring (ADR-025)
         item {
-            NotificationMirrorSection(
-                enabled = state.notificationMirrorEnabled,
-                accessGranted = state.notificationAccessGranted,
-                onToggle = viewModel::setNotificationMirrorEnabled,
-                onOpenAccessSettings = {
-                    try {
-                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    } catch (_: ActivityNotFoundException) {
-                        // Some builds hide the screen; the row's subtitle still says what is missing.
-                    }
+            SwitchPreferenceWidget(
+                title = "Always discoverable",
+                subtitle = "Off by default. When off, Veyro only sends packets while the app is open or a transfer is running.",
+                icon = VeyroIcons.Wifi,
+                checked = state.alwaysDiscoverable,
+                onCheckedChanged = viewModel::setAlwaysDiscoverable,
+            )
+        }
+
+        item { SectionLabel("Permissions") }
+
+        item { NotificationAccessRow(granted = state.notificationAccessGranted) }
+
+        item {
+            TextPreferenceWidget(
+                title = if (state.policyAccessGranted) "Do Not Disturb access granted" else "Do Not Disturb access needed",
+                subtitle = if (state.policyAccessGranted) {
+                    "Tap to review it in system settings."
+                } else {
+                    "Ringing works without it. Changing the ringer mode or Do Not Disturb from the PC needs it."
+                },
+                icon = if (state.policyAccessGranted) VeyroIcons.Check else VeyroIcons.Warning,
+                iconTint = if (state.policyAccessGranted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                onPreferenceClick = { openPolicyAccess(context) },
+            )
+        }
+
+        item {
+            val missing = state.missingMessagingPermissions
+            TextPreferenceWidget(
+                title = if (missing.isEmpty()) "Messages and calls permissions granted" else "Messages and calls permissions missing",
+                subtitle = if (missing.isEmpty()) {
+                    "Tap to review them in App info."
+                } else {
+                    "Missing: ${missing.joinToString(", ")}. Tap to grant them."
+                },
+                icon = if (missing.isEmpty()) VeyroIcons.Check else VeyroIcons.Warning,
+                iconTint = if (missing.isEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                onPreferenceClick = {
+                    if (missing.isEmpty()) openAppInfo(context) else onRequestMessagingPermissions()
                 },
             )
         }
 
-        // Media sharing and phone control (ADR-026)
+        item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+
         item {
-            PhoneControlSection(
-                mediaShareEnabled = state.mediaShareEnabled,
-                notificationAccessGranted = state.notificationAccessGranted,
-                onMediaShareToggle = viewModel::setMediaShareEnabled,
-                deviceControlAllowed = state.deviceControlAllowed,
-                policyAccessGranted = state.policyAccessGranted,
-                onDeviceControlToggle = viewModel::setDeviceControlAllowed,
-                onOpenPolicyAccessSettings = {
-                    try {
-                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-                    } catch (_: ActivityNotFoundException) {
-                        // Some builds hide the screen; the row's subtitle still says what is missing.
-                    }
-                },
+            TextPreferenceWidget(
+                title = if (state.resetInProgress) "Resetting identity..." else "Reset identity",
+                subtitle = "Creates a new key pair. Every paired device stops recognising this phone " +
+                    "and must be paired again. This cannot be undone.",
+                icon = VeyroIcons.RestartAlt,
+                iconTint = MaterialTheme.colorScheme.error,
+                onPreferenceClick = if (state.resetInProgress) null else ({ showResetConfirm = true }),
             )
         }
 
-        // Messages and calls (ADR-027)
         item {
-            MessagesAndCallsSection(
-                enabled = state.messagesAndCallsEnabled,
-                missingPermissions = state.missingMessagingPermissions,
-                onToggle = { on ->
-                    viewModel.setMessagesAndCallsEnabled(on)
-                    if (on) onRequestMessagingPermissions()
-                },
-                onOpenAppSettings = {
-                    try {
-                        context.startActivity(
-                            Intent(
-                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.fromParts("package", context.packageName, null),
-                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    } catch (_: ActivityNotFoundException) {
-                        // Some builds hide the screen; the row's subtitle still says what is missing.
-                    }
-                },
+            SwitchPreferenceWidget(
+                title = "Show diagnostics",
+                subtitle = "Build facts and recent log lines",
+                icon = VeyroIcons.BugReport,
+                checked = showDebug,
+                onCheckedChanged = { showDebug = it },
             )
         }
 
-        // Danger zone
-        item {
-            DangerZoneSection(
-                pairedCount = state.pairedDeviceCount,
-                resetInProgress = state.resetInProgress,
-                onResetClick = { showResetConfirm = true },
-            )
+        if (showDebug) {
+            item {
+                DebugPanel(
+                    diagnostics = state.diagnostics,
+                    logDump = state.logDump,
+                    onClearLog = viewModel::clearLog,
+                    onRefresh = viewModel::refreshDiagnostics,
+                )
+            }
         }
-
-        // Debug panel
-        item {
-            DebugSection(
-                showDebug = showDebug,
-                onToggleDebug = { showDebug = it },
-                diagnostics = state.diagnostics,
-                logDump = state.logDump,
-                onClearLog = viewModel::clearLog,
-                onRefresh = viewModel::refreshDiagnostics,
-            )
-        }
-
-        item { Spacer(modifier = Modifier.height(80.dp)) }
     }
 
-    // Reset confirmation dialog
+    if (showDeviceNameDialog) {
+        RenameDialog(
+            currentName = state.deviceName,
+            title = "Rename this phone",
+            supportingText = "Shown to other devices. Max 32 bytes.",
+            onDismiss = { showDeviceNameDialog = false },
+            onRename = {
+                viewModel.setDeviceName(it)
+                showDeviceNameDialog = false
+            },
+        )
+    }
+
     if (showResetConfirm) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = {
-                Text(
-                    "Reset identity?",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
+            title = { Text("Reset identity?") },
             text = {
                 Text(
-                    "This device will get a new key pair. All ${state.pairedDeviceCount} paired device(s) will stop recognising it and must be paired again.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = VeyroTextSecondary,
+                    "This device will get a new key pair. All ${state.pairedDeviceCount} paired device(s) " +
+                        "will stop recognising it and must be paired again.",
                 )
             },
             confirmButton = {
@@ -268,663 +234,95 @@ public fun SettingsScreen(
                         showResetConfirm = false
                         viewModel.resetIdentity()
                     },
-                ) {
-                    Text("Reset identity", color = VeyroRed)
-                }
+                ) { Text("Reset identity", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { showResetConfirm = false }) {
-                    Text("Cancel", color = VeyroTextSecondary)
-                }
+                TextButton(onClick = { showResetConfirm = false }) { Text("Cancel") }
             },
         )
     }
 }
 
-// ---------------------------------------------------------------------------
-// Sections
-// ---------------------------------------------------------------------------
-
 @Composable
-private fun IdentityHeroCard(
-    fingerprint: String,
-    deviceId: String,
-    pairedCount: Int,
-) {
-    VeyroCard(glow = true) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // Shield icon
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(VeyroVioletContainer)
-                    .border(1.dp, VeyroViolet.copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = VeyroViolet,
-                    modifier = Modifier.size(36.dp),
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Device fingerprint",
-                style = MaterialTheme.typography.labelMedium,
-                color = VeyroTextSecondary,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Fingerprint display
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                    .border(0.5.dp, VeyroGlassBorder, RoundedCornerShape(14.dp))
-                    .padding(16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = fingerprint,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified,
-                    ),
-                    color = VeyroViolet,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Device ID
-            Text(
-                text = "ID: $deviceId",
-                style = MaterialTheme.typography.labelSmall,
-                color = VeyroTextSecondary,
-                fontFamily = FontFamily.Monospace,
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-            HorizontalDivider(color = VeyroGlassBorder)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Paired count
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Star,
-                    contentDescription = null,
-                    tint = VeyroTeal,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "$pairedCount paired device${if (pairedCount != 1) "s" else ""}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = VeyroTeal,
-                )
-            }
-        }
-    }
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(
+            start = MaterialTheme.padding.medium,
+            end = MaterialTheme.padding.medium,
+            top = MaterialTheme.padding.medium,
+            bottom = MaterialTheme.padding.small,
+        ),
+    )
 }
 
 @Composable
-private fun NameSection(
-    currentName: String,
-    onSave: (String) -> Unit,
-) {
-    var editing by remember(currentName) { mutableStateOf(currentName) }
-    val hasChanged = editing.isNotBlank() && editing != currentName
-
-    VeyroGlassCard {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = VeyroCyanMuted,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "This device",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = VeyroCyanMuted,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = editing,
-                onValueChange = { editing = it },
-                label = { Text("Device name") },
-                supportingText = {
-                    Text("Shown to other devices. Max 32 bytes.")
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = VeyroCyan.copy(alpha = 0.6f),
-                    unfocusedBorderColor = VeyroGlassBorder,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            VeyroButton(
-                text = "Save name",
-                onClick = { onSave(editing) },
-                enabled = hasChanged,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun DiscoverySection(
-    alwaysDiscoverable: Boolean,
-    onToggle: (Boolean) -> Unit,
-) {
-    VeyroGlassCard {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Always discoverable",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Off by default. When off, Veyro only sends packets while the app is open or a transfer is running.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = VeyroTextSecondary,
-                )
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            ToggleSwitch(
-                checked = alwaysDiscoverable,
-                onCheckedChange = onToggle,
-            )
-        }
-    }
-}
-
-@Composable
-private fun NotificationMirrorSection(
-    enabled: Boolean,
-    accessGranted: Boolean,
-    onToggle: (Boolean) -> Unit,
-    onOpenAccessSettings: () -> Unit,
-) {
-    VeyroGlassCard {
-        Column {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Mirror notifications to PC",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Off by default. Shows this phone's notifications on a connected PC, " +
-                            "where you can reply, run their actions or dismiss them.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroTextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                ToggleSwitch(checked = enabled, onCheckedChange = onToggle)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = VeyroGlassBorder)
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(
-                        onClickLabel = "Open notification access settings",
-                        role = Role.Button,
-                        onClick = onOpenAccessSettings,
-                    )
-                    .padding(vertical = 12.dp),
-            ) {
-                Icon(
-                    imageVector = if (accessGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = if (accessGranted) VeyroTeal else VeyroRed.copy(alpha = 0.8f),
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (accessGranted) "Notification access granted" else "Notification access needed",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (accessGranted) {
-                            "Tap to review it in system settings."
-                        } else {
-                            "Tap to allow Veyro in system settings. On Android 13 and later, an app " +
-                                "installed outside an app store may first need \"Allow restricted " +
-                                "settings\" from its App info menu."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroTextSecondary,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PhoneControlSection(
-    mediaShareEnabled: Boolean,
-    notificationAccessGranted: Boolean,
-    onMediaShareToggle: (Boolean) -> Unit,
-    deviceControlAllowed: Boolean,
-    policyAccessGranted: Boolean,
-    onDeviceControlToggle: (Boolean) -> Unit,
-    onOpenPolicyAccessSettings: () -> Unit,
-) {
-    VeyroGlassCard {
-        Column {
-            SwitchRow(
-                title = "Share media with PC",
-                subtitle = "Off by default. Shows what is playing on this phone on a connected PC, " +
-                    "which can then play, pause, skip, seek and set the volume." +
-                    if (notificationAccessGranted) "" else " Needs notification access (above).",
-                checked = mediaShareEnabled,
-                onCheckedChange = onMediaShareToggle,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = VeyroGlassBorder)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            SwitchRow(
-                title = "Allow PC to ring and change sound mode",
-                subtitle = "Off by default. Lets a connected PC ring this phone at full volume to " +
-                    "find it, and switch its ringer mode or Do Not Disturb.",
-                checked = deviceControlAllowed,
-                onCheckedChange = onDeviceControlToggle,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = VeyroGlassBorder)
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(
-                        onClickLabel = "Open Do Not Disturb access settings",
-                        role = Role.Button,
-                        onClick = onOpenPolicyAccessSettings,
-                    )
-                    .padding(vertical = 12.dp),
-            ) {
-                Icon(
-                    imageVector = if (policyAccessGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = if (policyAccessGranted) VeyroTeal else VeyroRed.copy(alpha = 0.8f),
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (policyAccessGranted) "Do Not Disturb access granted" else "Do Not Disturb access needed",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (policyAccessGranted) {
-                            "Tap to review it in system settings."
-                        } else {
-                            "Ringing works without it. Changing the ringer mode or Do Not Disturb " +
-                                "from the PC needs it; tap to allow Veyro in system settings."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroTextSecondary,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MessagesAndCallsSection(
-    enabled: Boolean,
-    missingPermissions: List<String>,
-    onToggle: (Boolean) -> Unit,
-    onOpenAppSettings: () -> Unit,
-) {
-    val allGranted = missingPermissions.isEmpty()
-    VeyroGlassCard {
-        Column {
-            SwitchRow(
-                title = "Messages and calls on PC",
-                subtitle = "Off by default. Lets a connected PC read and send this phone's SMS, " +
-                    "see incoming calls, answer, decline or place them, and read the call log. " +
-                    "Call audio stays on the phone.",
-                checked = enabled,
-                onCheckedChange = onToggle,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = VeyroGlassBorder)
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(
-                        onClickLabel = "Open app permission settings",
-                        role = Role.Button,
-                        onClick = onOpenAppSettings,
-                    )
-                    .padding(vertical = 12.dp),
-            ) {
-                Icon(
-                    imageVector = if (allGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = if (allGranted) VeyroTeal else VeyroRed.copy(alpha = 0.8f),
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (allGranted) "All permissions granted" else "Permissions missing",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (allGranted) {
-                            "Tap to review them in system settings."
-                        } else {
-                            "Missing: ${missingPermissions.joinToString(", ")}. Tap to grant them in " +
-                                "system settings. On Android 13 and later, an app installed outside " +
-                                "an app store may first need \"Allow restricted settings\" from its " +
-                                "App info menu."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroTextSecondary,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth(),
+private fun ProblemCard(title: String, message: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = VeyroTextSecondary,
-            )
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        ToggleSwitch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-@Composable
-private fun DangerZoneSection(
-    pairedCount: Int,
-    resetInProgress: Boolean,
-    onResetClick: () -> Unit,
-) {
-    VeyroGlassCard {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = VeyroRed.copy(alpha = 0.7f),
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Danger zone",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = VeyroRed.copy(alpha = 0.7f),
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Resetting your identity creates a new key pair. Every paired device will stop recognising this one and must be paired again. This cannot be undone.",
-                style = MaterialTheme.typography.bodySmall,
-                color = VeyroTextSecondary,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            VeyroDangerButton(
-                text = if (resetInProgress) "Resetting..." else "Reset identity",
-                onClick = onResetClick,
-                enabled = !resetInProgress,
-                modifier = Modifier.fillMaxWidth(),
-            )
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(message, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
+/** The diagnostics facts and the log tail, shown under the "Show diagnostics" switch. */
 @Composable
-private fun DebugSection(
-    showDebug: Boolean,
-    onToggleDebug: (Boolean) -> Unit,
-    diagnostics: com.veyro.core.common.Diagnostics?,
+private fun DebugPanel(
+    diagnostics: Diagnostics?,
     logDump: String,
     onClearLog: () -> Unit,
     onRefresh: () -> Unit,
 ) {
-    VeyroGlassCard {
-        Column {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Show diagnostics",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Build facts and recent log lines",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroTextSecondary,
-                    )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            diagnostics?.sections?.forEach { section ->
+                Text(section.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                section.facts.forEach { fact ->
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                        Text(
+                            text = fact.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(0.4f),
+                        )
+                        Text(
+                            text = fact.value,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = if (fact.isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(0.6f),
+                        )
+                    }
                 }
-                ToggleSwitch(checked = showDebug, onCheckedChange = onToggleDebug)
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             }
 
-            if (showDebug && diagnostics != null) {
-                Spacer(modifier = Modifier.height(16.dp))
-
-                diagnostics.sections.forEach { section ->
-                    Text(
-                        text = section.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    section.facts.forEach { fact ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = fact.label,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = VeyroTextSecondary,
-                                modifier = Modifier.weight(0.4f),
-                            )
-                            Text(
-                                text = fact.value,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = if (fact.isProblem) VeyroRed else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(0.6f),
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-
-                HorizontalDivider(color = VeyroGlassBorder)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Recent log",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    TextButton(onClick = onClearLog) {
-                        Text("Clear", color = VeyroTextSecondary)
-                    }
-                    TextButton(onClick = onRefresh) {
-                        Text("Refresh", color = VeyroCyan)
-                    }
-                }
-
-                Text(
-                    text = logDump.ifEmpty { "(no log lines recorded)" },
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    color = VeyroTextSecondary,
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Recent log", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClearLog) { Text("Clear") }
+                TextButton(onClick = onRefresh) { Text("Refresh") }
             }
+            Text(
+                text = logDump.ifEmpty { "(no log lines recorded)" },
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Problem card
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ProblemCard(
-    title: String,
-    message: String,
-    icon: ImageVector,
-) {
-    VeyroCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(VeyroRedContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = VeyroRed,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = VeyroTextSecondary,
-                )
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Toggle switch
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ToggleSwitch(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Switch(
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = VeyroCyan,
-            checkedTrackColor = VeyroCyanContainer,
-            uncheckedThumbColor = VeyroTextSecondary,
-            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    )
 }

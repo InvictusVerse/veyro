@@ -1,114 +1,84 @@
 package com.veyro.core.designsystem.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.theme.VeyroExtras
-import com.veyro.core.designsystem.theme.VeyroGlassBorder
 
 /**
- * Futuristic glassmorphic card.
+ * Veyro's card, now a plain Material 3 [Card] in the style of Sefirah's screens: tonal container,
+ * large shape, no glow or gradient. The signature is unchanged so existing callers keep working.
  *
- * Dark-mode: semi-transparent glass with a subtle border edge-glow.
- * Light-mode: slightly elevated with a soft tint.
- *
- * @param selected  If true, shows a cyan-tinted selected state (used for device selection).
- * @param glow     If true, adds a soft cyan halo at the top — useful for active/hero cards.
- * @param contentPadding  Inner padding. Defaults to 20.dp.
+ * @param selected  Uses the primary container, for a chosen item (a send target, a feature that is on).
+ * @param glow      Kept for source compatibility; now draws a thin primary outline on hero cards.
+ * @param contentPadding  Inner padding. Defaults to 16.dp, as in Sefirah.
  */
 @Composable
 public fun VeyroCard(
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     glow: Boolean = false,
-    contentPadding: Dp = 20.dp,
+    contentPadding: Dp = 16.dp,
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shape = RoundedCornerShape(20.dp)
-    val grad = VeyroExtras.gradients
-
-    Box(modifier = modifier) {
-        // Glow halo at top — draws behind the card
-        if (glow) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 1.dp)
-                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                    .background(brush = grad.cyanGlow)
-                    .padding(top = 0.dp),
-            )
-        }
-
-        // Card body
-        val cardColor = when {
-            selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-            else -> MaterialTheme.colorScheme.surface
-        }
-
-        val borderColor = when {
-            selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-            glow -> MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-            else -> VeyroGlassBorder
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(shape)
-                .background(
-                    brush = if (selected) grad.cardSelected else grad.card,
-                    shape = shape,
-                )
-                .border(
-                    width = if (selected || glow) 1.dp else 0.5.dp,
-                    color = borderColor,
-                    shape = shape,
-                )
-                .then(
-                    if (onClick != null) {
-                        Modifier.clickable(onClick = onClick)
-                    } else Modifier,
-                )
-                .padding(contentPadding),
-            content = content,
+    val colors = CardDefaults.cardColors(
+        containerColor = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        contentColor = if (selected) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+    )
+    val border = if (glow && !selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)) else null
+    val body: @Composable ColumnScope.() -> Unit = {
+        Column(modifier = Modifier.fillMaxWidth().padding(contentPadding), content = content)
+    }
+    if (onClick != null) {
+        Card(
+            onClick = onClick,
+            modifier = modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = colors,
+            border = border,
+            content = body,
+        )
+    } else {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = colors,
+            border = border,
+            content = body,
         )
     }
 }
 
-/**
- * A simple VeyroCard wrapper for content that doesn't need to configure selected/glow.
- */
+/** A [VeyroCard] for content that needs neither the selected nor the hero look. */
 @Composable
 public fun VeyroGlassCard(
     modifier: Modifier = Modifier,
-    contentPadding: Dp = 20.dp,
+    contentPadding: Dp = 16.dp,
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     VeyroCard(modifier, selected = false, glow = false, contentPadding, onClick, content)
 }
 
-/**
- * Hero card — used for the main status card on a screen (e.g. "Receiving" on ReceiveScreen).
- * Has the top glow halo and slightly more vertical padding.
- */
+/** Hero card - the main status card on a screen. */
 @Composable
 public fun VeyroHeroCard(
     modifier: Modifier = Modifier,
@@ -116,11 +86,7 @@ public fun VeyroHeroCard(
     subtitle: String? = null,
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
-    VeyroCard(
-        modifier = modifier,
-        glow = true,
-        contentPadding = 20.dp,
-    ) {
+    VeyroCard(modifier = modifier, glow = true) {
         if (title != null) {
             Text(
                 text = title,
@@ -140,17 +106,15 @@ public fun VeyroHeroCard(
     }
 }
 
-/**
- * Section header label — used above a group of VeyroCards.
- */
+/** Section header above a group of cards, in the primary colour like Sefirah's group labels. */
 @Composable
 public fun VeyroSectionHeader(
     text: String,
     modifier: Modifier = Modifier,
 ) {
     Text(
-        text = text.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier.padding(start = 4.dp, top = 16.dp, bottom = 8.dp),
     )
