@@ -47,6 +47,8 @@ public class FileSettingsStore(
         val deviceControlAllowed: Boolean = false,
         // ADR-027, same rule.
         val messagesAndCallsEnabled: Boolean = false,
+        // ADR-034, same rule.
+        val photosEnabled: Boolean = false,
         // ADR-030. Defaulted false so a pre-onboarding file decodes; existing installs with a
         // trusted peer are migrated to true by the onboarding gate, not here.
         val onboardingComplete: Boolean = false,
@@ -113,6 +115,13 @@ public class FileSettingsStore(
 
     override suspend fun setMessagesAndCallsEnabled(enabled: Boolean) {
         update { it.copy(messagesAndCallsEnabled = enabled) }
+    }
+
+    override val photosEnabled: Flow<Boolean> =
+        state.asStateFlow().map { it.photosEnabled }
+
+    override suspend fun setPhotosEnabled(enabled: Boolean) {
+        update { it.copy(photosEnabled = enabled) }
     }
 
     override val onboardingComplete: Flow<Boolean> =

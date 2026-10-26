@@ -33,5 +33,7 @@ public class VeyroApplication : Application() {
         // until "Messages and calls on PC" is switched on.
         container.smsBridge.start()
         container.callBridge.start()
+        // ADR-034. Same rule, behind "Photos on PC".
+        container.photoBridge.start()
     }
 }

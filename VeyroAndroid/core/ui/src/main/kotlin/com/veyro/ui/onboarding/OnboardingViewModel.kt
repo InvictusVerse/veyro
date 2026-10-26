@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
 public enum class OnboardingStep { WELCOME, DEVICE_NAME, FEATURES, PAIR, DONE }
 
 /** The optional companion features offered on the Features page. */
-public enum class OnboardingFeature { NOTIFICATIONS, MEDIA, MESSAGES_AND_CALLS, RING_AND_SOUND }
+public enum class OnboardingFeature { NOTIFICATIONS, MEDIA, MESSAGES_AND_CALLS, PHOTOS, RING_AND_SOUND }
 
 /** A system screen a feature needs the user to visit (not a runtime permission dialog). */
 public enum class SpecialAccess { NOTIFICATION_LISTENER, NOTIFICATION_POLICY }
@@ -129,6 +129,9 @@ public class OnboardingViewModel(
         settingsStore.messagesAndCallsEnabled
             .onEach { on -> setEnabledInState(OnboardingFeature.MESSAGES_AND_CALLS, on) }
             .launchIn(viewModelScope)
+        settingsStore.photosEnabled
+            .onEach { on -> setEnabledInState(OnboardingFeature.PHOTOS, on) }
+            .launchIn(viewModelScope)
         settingsStore.deviceControlAllowed
             .onEach { on -> setEnabledInState(OnboardingFeature.RING_AND_SOUND, on) }
             .launchIn(viewModelScope)
@@ -213,6 +216,7 @@ public class OnboardingViewModel(
                 OnboardingFeature.NOTIFICATIONS -> settingsStore.setNotificationMirrorEnabled(enabled)
                 OnboardingFeature.MEDIA -> settingsStore.setMediaShareEnabled(enabled)
                 OnboardingFeature.MESSAGES_AND_CALLS -> settingsStore.setMessagesAndCallsEnabled(enabled)
+                OnboardingFeature.PHOTOS -> settingsStore.setPhotosEnabled(enabled)
                 OnboardingFeature.RING_AND_SOUND -> settingsStore.setDeviceControlAllowed(enabled)
             }
         }

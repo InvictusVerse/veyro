@@ -38,6 +38,12 @@ public data class SettingsUiState(
     /** Labels of the runtime permissions that feature still lacks; empty when all are granted. */
     val missingMessagingPermissions: List<String> = emptyList(),
 
+    /** Serve recent photos to a connected PC (ADR-034). */
+    val photosEnabled: Boolean = false,
+
+    /** Whether the photo read permission is held. Photos are served only with it. */
+    val photosPermissionGranted: Boolean = false,
+
     /**
      * Set when the identity could not be loaded at all. This is the "your identity was lost"
      * state from `05-SECURITY.md` section 7, and it must be shown rather than hidden behind a

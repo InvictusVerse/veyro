@@ -70,6 +70,8 @@ public fun VeyroNavHost(
     modifier: Modifier = Modifier,
     /** Runtime permissions need the Activity, like the picker (ADR-027). */
     onRequestMessagingPermissions: () -> Unit = {},
+    /** The photo read permission, requested when "Photos on PC" is turned on (ADR-034). */
+    onRequestPhotosPermission: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -167,6 +169,7 @@ public fun VeyroNavHost(
                     onOpenMediaSettings = { navController.navigate(VeyroDestination.DeviceMedia) },
                     onOpenMessagesSettings = { navController.navigate(VeyroDestination.DeviceMessages) },
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
+                    onRequestPhotosPermission = onRequestPhotosPermission,
                 )
             }
 

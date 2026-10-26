@@ -62,6 +62,12 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
+    <!-- Photos on the PC (ADR-034). Runtime-requested only when the user turns on "Photos on PC"
+         (off by default); only camera-roll and screenshot images are ever read. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <!-- The permissions above would otherwise imply telephony hardware is required. Without it,
          the feature simply serves empty lists. -->
     <uses-feature

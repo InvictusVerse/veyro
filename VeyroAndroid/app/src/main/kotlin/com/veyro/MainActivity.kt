@@ -23,6 +23,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.veyro.core.common.VeyroLog
 import com.veyro.ui.onboarding.OnboardingScreen
 import com.veyro.ui.onboarding.OnboardingViewModel
+import com.veyro.core.companion.AndroidPhotoSource
 import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.designsystem.theme.VeyroTheme
 import com.veyro.core.protocol.RelativePath
@@ -101,6 +102,7 @@ public class MainActivity : ComponentActivity() {
                             // restricting the picker would only stop the user sending what they wanted.
                             onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
                             onRequestMessagingPermissions = ::requestMessagingPermissions,
+                            onRequestPhotosPermission = ::requestPhotosPermission,
                         )
                     }
                 }
@@ -141,6 +143,16 @@ public class MainActivity : ComponentActivity() {
         if (needed.isEmpty()) return
         VeyroLog.i(TAG) { "Requesting ${needed.size} messaging permission(s)" }
         requestPermissions.launch(needed.toTypedArray())
+    }
+
+    /**
+     * Requested only when the user turns on "Photos on PC" (ADR-034): `READ_MEDIA_IMAGES` on
+     * API 33+, `READ_EXTERNAL_STORAGE` below. The switch re-reads the grant when the screen resumes.
+     */
+    private fun requestPhotosPermission() {
+        if (AndroidPhotoSource.isGranted(this)) return
+        VeyroLog.i(TAG) { "Requesting the photo permission" }
+        requestPermissions.launch(arrayOf(AndroidPhotoSource.permission()))
     }
 
     /**

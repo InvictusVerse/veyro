@@ -36,6 +36,7 @@ public object VeyroIcons {
     public val Folder: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_folder)
     public val History: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_history)
     public val HomeFill: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_home_fill)
+    public val Image: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_image)
     public val Info: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_info_fill)
     public val KeyboardArrowDown: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_keyboard_arrow_down)
     public val KeyboardArrowUp: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_keyboard_arrow_up)

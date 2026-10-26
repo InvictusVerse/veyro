@@ -102,9 +102,10 @@ public class ConnectionManager(
      * Invoked once per established connection, on both the inbound and outbound side.
      *
      * This is how transfer plugs in without `ConnectionManager` depending on the transfer runner: the
-     * coordinator sets this to "if inbound, receive". The sender does not use it - it drives the
-     * send itself through [activeConnection] - so the driver is a no-op there. Set once, after
-     * construction, before any connection.
+     * coordinator sets this to its receive loop, which runs on every authenticated session whoever
+     * dialled, because the PC sends files over the phone's own session too. Outgoing sends drive
+     * themselves through per-transfer mailboxes, so both coexist. Set once, after construction,
+     * before any connection.
      */
     public var sessionDriver: (suspend (connection: PeerConnection, inbound: Boolean) -> Unit)? = null
 
@@ -235,6 +236,12 @@ public class ConnectionManager(
     private val pairingWindows = PairingRegistry()
     private val mutex = Mutex()
 
+    /** Guards [_activeConnection] against [sideSessions] in [claimSlot] / [releaseSlot]. */
+    private val slotLock = Any()
+
+    /** Live sessions with the active peer that run alongside [activeConnection], not instead of it. */
+    private val sideSessions = ArrayList<PeerConnection>()
+
     private var server: ConnectionServer? = null
 
     private val _pendingInbound = MutableStateFlow<PendingInbound?>(null)
@@ -315,14 +322,16 @@ public class ConnectionManager(
 
         // Guard against simultaneous connection attempts causing session confusion
         val active = _activeConnection.value
+        // A live session with this same peer. It is kept, not superseded: the PC may dial a second
+        // connection just for a transfer, and closing the first would take every companion
+        // feature down with it (ADR-035). Decided below, once trust is known.
+        var liveSamePeer: PeerConnection? = null
         if (active != null) {
             if (!active.isConnected) {
                 VeyroLog.i(TAG) { "[$connId] Clearing inactive connection from active slot" }
                 _activeConnection.value = null
             } else if (active.peerDeviceId == preamble.id) {
-                VeyroLog.i(TAG) { "[$connId] Inbound connection from already-connected peer (${preamble.id}); closing older redundant session" }
-                scope.launch { active.close("superseded-by-inbound") }
-                _activeConnection.value = null
+                liveSamePeer = active
             } else {
                 VeyroLog.w(TAG) { "[$connId] Inbound connection rejected: session already active with another peer (${active.peerDeviceId})" }
                 sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_BUSY, "already-connected"), connId)
@@ -369,9 +378,18 @@ public class ConnectionManager(
 
         val known = trustedPeer(preamble.id)?.takeUnless { it.revoked }
         if (known != null) {
+            if (liveSamePeer != null) {
+                VeyroLog.i(TAG) { "[$connId] Second session from already-connected peer (${preamble.id}); keeping the existing one and running this alongside it" }
+            }
             sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_SESSION), connId)
             runConnection(ws, known, encrypt = true, inbound = true, connId = connId, remoteHost = remoteHost, localHost = localHost)
             return
+        }
+        val stale = liveSamePeer
+        if (stale != null) {
+            // No longer trusted (revoked mid-session): the old session has no standing either.
+            VeyroLog.i(TAG) { "[$connId] Inbound connection from untrusted peer with a live session (${preamble.id}); closing the old session" }
+            scope.launch { stale.close("superseded-by-inbound") }
         }
 
         when (preamble.pair) {
@@ -1455,8 +1473,8 @@ public class ConnectionManager(
     public fun disconnect() {
         cancelInboundPairing()
         cancelOutboundPairing()
-        val session = _activeConnection.value
-        if (session != null) {
+        val sessions = synchronized(slotLock) { sideSessions.toList() + listOfNotNull(_activeConnection.value) }
+        for (session in sessions) {
             scope.launch {
                 try {
                     session.close("user-disconnect")
@@ -1494,24 +1512,63 @@ public class ConnectionManager(
             localHost = localHost,
         )
         val readJob = session.start()
-        _activeConnection.value = session
-        _events.value = ConnectionEvent.Connected(peer.deviceId.value, peer.name)
-        VeyroLog.i(TAG) { "[$connId] Session established with ${peer.name} (remoteHost=$remoteHost, localHost=$localHost)" }
+        val primary = claimSlot(session)
+        if (primary) {
+            _events.value = ConnectionEvent.Connected(peer.deviceId.value, peer.name)
+        }
+        VeyroLog.i(TAG) { "[$connId] Session established with ${peer.name} (remoteHost=$remoteHost, localHost=$localHost, primary=$primary)" }
 
         sendHello(session, selfId)
 
-        // The receiver auto-listens for an offer; the sender's driver is a no-op (it sends via the
-        // activeSession the UI drives). Launched alongside the read loop so a stalled transfer
-        // dies with the socket rather than outliving it.
+        // Every authenticated session listens for offers, whoever dialled (the PC sends files over
+        // the phone's own session too). The phone's own sends drive themselves through mailboxes.
+        // Launched alongside the read loop so a stalled transfer dies with the socket rather than
+        // outliving it.
         val driverJob = sessionDriver?.let { driver ->
             scope.launch { runCatching { driver(session, inbound) } }
         }
 
         readJob.join()
         driverJob?.cancel()
-        _activeConnection.value = null
-        _events.value = ConnectionEvent.Disconnected
+        if (releaseSlot(session)) {
+            _events.value = ConnectionEvent.Disconnected
+        }
         VeyroLog.i(TAG) { "[$connId] Session closed with ${peer.name} (inbound=$inbound, isConnected=${session.isConnected})" }
+    }
+
+    /**
+     * Puts [session] in the active slot, unless a live session with the same peer already holds
+     * it; then [session] runs alongside as a side session (a PC transfer connection) and the
+     * companion features stay on the existing one. Returns true when [session] is the active one.
+     */
+    private fun claimSlot(session: PeerConnection): Boolean = synchronized(slotLock) {
+        val current = _activeConnection.value
+        if (current != null && current !== session && current.isConnected && current.peerDeviceId == session.peerDeviceId) {
+            sideSessions += session
+            false
+        } else {
+            _activeConnection.value = session
+            true
+        }
+    }
+
+    /**
+     * Removes [session] from the slots. If it was the active one and a live side session with the
+     * same peer remains, that one is promoted, so a PC that redialled keeps its companion
+     * features. Returns true when the peer is now disconnected.
+     */
+    private fun releaseSlot(session: PeerConnection): Boolean = synchronized(slotLock) {
+        sideSessions.remove(session)
+        if (_activeConnection.value !== session) return@synchronized false
+        val heir = sideSessions.firstOrNull { it.isConnected && it.peerDeviceId == session.peerDeviceId }
+        if (heir != null) {
+            sideSessions.remove(heir)
+            _activeConnection.value = heir
+            false
+        } else {
+            _activeConnection.value = null
+            true
+        }
     }
 
     /**

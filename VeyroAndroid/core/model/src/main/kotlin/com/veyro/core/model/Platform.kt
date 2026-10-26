@@ -59,6 +59,7 @@ public value class Capabilities(public val bits: Int) {
             Capability.DEVICE_STATUS,
             Capability.MESSAGING,
             Capability.CALLS,
+            Capability.PHOTOS,
         )
     }
 }

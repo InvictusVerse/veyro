@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.ConnectException
@@ -198,6 +199,120 @@ class ConnectionManagerTest {
         val ok = manager.connect("00000000000000000000000000", "Remote Device", endpoints)
 
         assertTrue(ok)
+    }
+
+    // ── A second session from the same peer (ADR-035) ─────────────────────────────────────
+    //
+    // These replace the old "superseded-by-inbound" rule, under which a PC dialling a separate
+    // connection for a transfer closed the phone's companion session. A trusted peer's second
+    // session now runs alongside the first; only an untrusted one still replaces it.
+
+    private val officePc: TrustedPeer = run {
+        val pk = ByteArray(32) { 5 }
+        TrustedPeer(
+            deviceId = DeviceId.fromPublicKey(pk),
+            staticPublicKey = pk,
+            pairingSecret = ByteArray(32) { 9 },
+            name = "Office PC",
+            platform = com.veyro.core.model.Platform.WINDOWS,
+            pairedAtEpochMillis = 1L,
+        )
+    }
+
+    private suspend fun dialIn(manager: ConnectionManager, ws: FakeDefaultWebSocketSession, id: String) {
+        ws.incomingChannel.send(
+            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(id, "Office PC", platform = "windows"))),
+        )
+        manager.handleInbound(ws)
+    }
+
+    @Test
+    fun `second inbound session from a connected trusted peer keeps the companion session alive`() = runTest(testDispatcher) {
+        val manager = testManager(ConnectionClient(), trusted = officePc)
+        val driven = mutableListOf<PeerConnection>()
+        manager.sessionDriver = { connection, _ -> driven += connection }
+
+        val companionWs = FakeDefaultWebSocketSession()
+        val companionJob = launch { dialIn(manager, companionWs, officePc.deviceId.value) }
+        val companion = manager.activeConnection.value
+        assertNotNull(companion)
+
+        val transferWs = FakeDefaultWebSocketSession()
+        val transferJob = launch { dialIn(manager, transferWs, officePc.deviceId.value) }
+
+        val ack = LinkJson.codec.decodeFromString(
+            LinkPreambleAck.serializer(),
+            (transferWs.outgoingChannel.receive() as Frame.Text).readText(),
+        )
+        assertEquals("the transfer connection is admitted as a session", LinkPreambleAck.MODE_SESSION, ack.mode)
+        assertTrue("the companion session must not be closed by the second one", companion!!.isConnected)
+        assertSame("companion features stay on the first session", companion, manager.activeConnection.value)
+        assertEquals("each session gets exactly one receive driver", 2, driven.size)
+        assertTrue(driven[1] !== companion)
+
+        // The transfer connection ends: the companion session is untouched and nothing reports a disconnect.
+        transferWs.incomingChannel.close()
+        transferJob.join()
+        assertTrue(companion.isConnected)
+        assertSame(companion, manager.activeConnection.value)
+        assertTrue(manager.events.value is ConnectionManager.ConnectionEvent.Connected)
+
+        companionWs.incomingChannel.close()
+        companionJob.join()
+        assertNull(manager.activeConnection.value)
+        assertEquals(ConnectionManager.ConnectionEvent.Disconnected, manager.events.value)
+    }
+
+    @Test
+    fun `when the first session drops a live second session from the same peer is promoted`() = runTest(testDispatcher) {
+        val manager = testManager(ConnectionClient(), trusted = officePc)
+        val firstWs = FakeDefaultWebSocketSession()
+        val firstJob = launch { dialIn(manager, firstWs, officePc.deviceId.value) }
+        val first = manager.activeConnection.value
+        val secondWs = FakeDefaultWebSocketSession()
+        val secondJob = launch { dialIn(manager, secondWs, officePc.deviceId.value) }
+        assertSame(first, manager.activeConnection.value)
+
+        // A PC that restarted redials; its old session then dies. The redial must carry on.
+        firstWs.incomingChannel.close()
+        firstJob.join()
+        val promoted = manager.activeConnection.value
+        assertNotNull(promoted)
+        assertTrue(promoted !== first)
+        assertTrue(promoted!!.isConnected)
+        assertTrue("no disconnect while the peer is still connected", manager.events.value !is ConnectionManager.ConnectionEvent.Disconnected)
+
+        secondWs.incomingChannel.close()
+        secondJob.join()
+        assertNull(manager.activeConnection.value)
+    }
+
+    @Test
+    fun `an untrusted peer reconnecting still replaces its old session`() = runTest(testDispatcher) {
+        var trusted: TrustedPeer? = officePc
+        val manager = ConnectionManager(
+            dispatchers = dispatchers,
+            scope = CoroutineScope(testDispatcher),
+            localDeviceId = { localId },
+            localDeviceName = { "Local Device" },
+            localPublicKey = { localPk },
+            trustedPeer = { trusted },
+            saveTrustedPeer = {},
+            client = ConnectionClient(),
+        )
+        val firstWs = FakeDefaultWebSocketSession()
+        val firstJob = launch { dialIn(manager, firstWs, officePc.deviceId.value) }
+        val first = manager.activeConnection.value
+        assertNotNull(first)
+
+        trusted = null // revoked while connected
+        val secondWs = FakeDefaultWebSocketSession()
+        val secondJob = launch { dialIn(manager, secondWs, officePc.deviceId.value) }
+        firstJob.join()
+        assertFalse("a revoked peer's old session has no standing", first!!.isConnected)
+
+        manager.respondToInbound(false)
+        secondJob.join()
     }
 
     @Test

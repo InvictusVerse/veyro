@@ -56,7 +56,12 @@ import com.veyro.core.companion.CallBridge
 import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.companion.SmsBridge
 import com.veyro.core.companion.AndroidNotificationSource
+import com.veyro.core.companion.AndroidPhotoSource
 import com.veyro.core.companion.CompanionLink
+import com.veyro.core.companion.PeerConnectionLink
+import com.veyro.core.companion.PhotoBridge
+import com.veyro.core.companion.PhotoSender
+import com.veyro.core.link.SendResult
 import com.veyro.core.companion.DeviceStatusPublisher
 import com.veyro.core.companion.MediaMirror
 import com.veyro.core.companion.NotificationMirror
@@ -434,6 +439,29 @@ public class VeyroContainer(context: Context) {
         )
     }
 
+    // ── Companion: photos (ADR-034) ─────────────────────────────────────────────────────────
+
+    /**
+     * Recent camera photos and screenshots for the PC, behind "Photos on PC" (off by default).
+     * Originals go back over the very session that asked, as a transfer answering the request.
+     * Follows the session only once something else opened it.
+     */
+    public val photoBridge: PhotoBridge by lazy {
+        PhotoBridge(
+            links = companionLinks,
+            enabled = flow { emitAll(settingsStore.photosEnabled) },
+            source = AndroidPhotoSource(appContext, dispatchers),
+            sender = PhotoSender { link, file, requestId ->
+                val connection = (link as? PeerConnectionLink)?.connection ?: return@PhotoSender false
+                transferCoordinator.sendRequested(connection, file, requestId) is SendResult.Success
+            },
+            scope = appScope,
+        )
+    }
+
+    /** Whether the photo read permission is held, for the Settings row. */
+    public fun isPhotosPermissionGranted(): Boolean = AndroidPhotoSource.isGranted(appContext)
+
     /** User-facing labels of the messaging permissions not granted yet, for the Settings row. */
     public fun missingMessagingPermissions(): List<String> =
         MessagingPermissions.missing(appContext).mapNotNull { MessagingPermissions.ALL[it] }
@@ -466,6 +494,13 @@ public class VeyroContainer(context: Context) {
             FeatureAccess(
                 missingPermissions = missing,
                 missingLabels = missing.mapNotNull { MessagingPermissions.ALL[it] },
+            )
+        }
+        OnboardingFeature.PHOTOS -> {
+            val missing = !isPhotosPermissionGranted()
+            FeatureAccess(
+                missingPermissions = if (missing) listOf(AndroidPhotoSource.permission()) else emptyList(),
+                missingLabels = if (missing) listOf("Photos") else emptyList(),
             )
         }
         OnboardingFeature.RING_AND_SOUND -> FeatureAccess(

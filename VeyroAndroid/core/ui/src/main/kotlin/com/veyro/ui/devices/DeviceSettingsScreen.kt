@@ -83,6 +83,8 @@ public fun DeviceSettingsScreen(
     onOpenMessagesSettings: () -> Unit,
     /** Asks the Activity to request the messaging runtime permissions (ADR-027). */
     onRequestMessagingPermissions: () -> Unit,
+    /** Asks the Activity to request the photo read permission (ADR-034). */
+    onRequestPhotosPermission: () -> Unit = {},
 ) {
     val trust by devicesViewModel.state.collectAsStateWithLifecycle()
     val home by homeViewModel.state.collectAsStateWithLifecycle()
@@ -223,6 +225,21 @@ public fun DeviceSettingsScreen(
                         if (on && !allGranted) onRequestMessagingPermissions()
                     },
                     onContentClick = onOpenMessagesSettings,
+                )
+            }
+
+            item {
+                val granted = settings.photosPermissionGranted
+                SwitchPreferenceWidget(
+                    title = "Photos on PC",
+                    subtitle = "Show this phone's recent camera photos and screenshots on the PC, which " +
+                        "can open, copy or save them." + if (granted) "" else " Needs photo access.",
+                    icon = VeyroIcons.Image,
+                    checked = settings.photosEnabled && granted,
+                    onCheckedChanged = { on ->
+                        settingsViewModel.setPhotosEnabled(on)
+                        if (on && !granted) onRequestPhotosPermission()
+                    },
                 )
             }
 

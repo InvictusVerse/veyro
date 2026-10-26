@@ -261,6 +261,8 @@ public class TransferRunner(
         senderName: String,
         transferId: String = UUID.randomUUID().toString(),
         onProgress: ((bytesSent: Long, totalBytes: Long, item: TransferItem, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)? = null,
+        /** Set when this send answers a peer request (`photoFetch`, ADR-034); goes on the offer. */
+        requestId: String? = null,
         resolveFile: (TransferItem) -> File,
     ): SendOutcome = withContext(dispatchers.io) {
         cancelled = false
@@ -292,6 +294,7 @@ public class TransferRunner(
                     totalBytes = totalBytes,
                     senderName = senderName,
                     preferredRoutes = preferredRoutes,
+                    requestId = requestId,
                 ),
             )
             VeyroLog.i(TAG) { "[$transferId] TransferOffer sent (preferredRoutes=$preferredRoutes), awaiting receiver decision..." }
@@ -472,7 +475,7 @@ public class TransferRunner(
 
                     val source = resolveFile(item)
                     if (!source.isFile) {
-                        VeyroLog.e(TAG) { "[$transferId] Source file missing for item #${item.index} (${item.relativePath})" }
+                        VeyroLog.e(TAG) { "[$transferId] Source file missing for item #${item.index}" }
                         results += ItemResult(
                             item.index, item.relativePath, 0,
                             VerificationResult.WRITE_FAILED, "source missing",

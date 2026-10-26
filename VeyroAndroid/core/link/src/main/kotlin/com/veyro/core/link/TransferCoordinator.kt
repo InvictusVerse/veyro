@@ -31,6 +31,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.InputStream
 import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.LinkedHashSet
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -65,6 +66,7 @@ public class TransferCoordinator(
         private const val OFFER_TIMEOUT_MS = 60_000L
         private const val CONNECT_WAIT_MS = 15_000L
         private const val DISCOVERY_WAIT_MS = 5_000L
+        private const val RECEIVE_RETRY_DELAY_MS = 250L
     }
 
     public val progress: Flow<TransferProgress> = runner.progress
@@ -106,154 +108,185 @@ public class TransferCoordinator(
         @Volatile var accepted = false
     }
 
+    /** Sessions that already have a receive loop; one loop per session, never two. */
+    private val drivenSessions: MutableSet<PeerConnection> =
+        Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap()))
+
     init {
-        // The receiver half. Every inbound session gets a receive loop that waits for an offer and
-        // routes the authorization question to the UI. The sender's own sessions pass inbound=false
-        // and are ignored here - the sender drives its own send.
+        // The receiver half. Every authenticated session gets a receive loop that waits for an
+        // offer and routes the authorization question to the UI - whoever dialled, because the PC
+        // sends files over the phone's own persistent session too (ADR-035). This coexists with
+        // the phone's own sends on the same session: receiveOffer() only ever yields incoming
+        // TransferOffers, while a send waits on its own transfer's mailbox.
         connectionManager.sessionDriver = driver@{ connection, inbound ->
-            if (!inbound) return@driver
-            VeyroLog.i(TAG) { "Receiver session driver started for ${connection.peerDeviceId}" }
-            while (connection.isConnected) {
-                val results = runCatching {
-                    runner.receive(
-                        session = connection,
-                        destinationDir = destinationProvider().also { it.mkdirs() },
-                        authorize = { offer -> authorize(connection, offer) },
-                        publisher = storagePublisher,
-                        onProgress = { bytesRecv, totalBytes, item, stage, speedBps, etaSec ->
-                            val now = System.currentTimeMillis()
-                            val started = _activeTransfer.value?.startedAtEpochMillis ?: now
-                            val count = _activeTransfer.value?.totalFiles ?: 1
-                            val currentIdx = item?.index ?: (_activeTransfer.value?.currentFileIndex ?: 0)
-                            val name = item?.fileName ?: (_activeTransfer.value?.currentFileName ?: "")
-                            _activeTransfer.value = _activeTransfer.value?.copy(
-                                currentFileName = name,
-                                currentFileIndex = currentIdx,
-                                bytesTransferred = bytesRecv,
-                                totalBytes = totalBytes,
-                                bytesPerSecond = speedBps,
-                                etaSeconds = etaSec,
-                                stage = stage,
-                                statusText = when (stage) {
-                                    TransferStage.AWAITING_CONSENT -> "Awaiting confirmation..."
-                                    TransferStage.TRANSFERRING -> "Receiving $name (${currentIdx + 1}/$count)"
-                                    TransferStage.VERIFYING -> "Verifying SHA-256 integrity..."
-                                    TransferStage.PUBLISHING -> "Saving to MediaStore..."
-                                    TransferStage.COMPLETED -> "Transfer completed"
-                                    TransferStage.CANCELLED -> "Transfer cancelled"
-                                    TransferStage.FAILED -> "Transfer failed"
-                                    else -> stage.name
-                                },
-                                elapsedMillis = (now - started).coerceAtLeast(0L),
-                            )
-                        },
-                    )
-                }
-                val failure = results.exceptionOrNull()
-                if (failure != null) {
-                    if (failure is CancellationException) break
-                    val current = _activeTransfer.value
-                    if (current?.stage != TransferStage.COMPLETED) {
-                        VeyroLog.w(TAG, failure) { "Receive cycle ended with error: ${failure.message}" }
-                        _activeTransfer.value = _activeTransfer.value?.copy(
-                            stage = TransferStage.FAILED,
-                            statusText = "Receive failed: ${failure.message}",
-                            errorMessage = failure.message,
-                        )
-                    }
-                    break
-                }
-                val receiveResult = results.getOrNull()
-                if (receiveResult.isNullOrEmpty() && !connection.isConnected) {
-                    val current = _activeTransfer.value
-                    if (current != null && !current.isTerminal) {
-                        _activeTransfer.value = _activeTransfer.value?.copy(
-                            stage = TransferStage.FAILED,
-                            statusText = "Transfer interrupted: Connection lost",
-                            errorMessage = "Connection lost before transfer completed",
-                        )
-                    }
-                    break
-                }
-                activeTransfers.clear()
-                VeyroLog.i(TAG) { "Receive cycle completed (${receiveResult?.size ?: 0} items processed); waiting for next offer" }
-
-                if (!receiveResult.isNullOrEmpty()) {
-                    val peerId = connection.peerDeviceId?.let { DeviceId.parseOrNull(it) ?: DeviceId(it) }
-                        ?: DeviceId("0000000000000000")
-                    val allOk = receiveResult.all { it.isVerified }
-                    val anyOk = receiveResult.any { it.isVerified }
-                    val finalState = when {
-                        allOk -> TransferState.COMPLETED
-                        anyOk -> TransferState.COMPLETED_WITH_ERRORS
-                        else -> TransferState.FAILED
-                    }
-                    val primaryUri = receiveResult.firstOrNull { it.destinationUri != null }?.destinationUri
-
-                    _activeTransfer.value = _activeTransfer.value?.copy(
-                        stage = TransferStage.RECORDING_HISTORY,
-                        statusText = "Saving transfer history...",
-                    )
-
-                    val transferRecord = Transfer(
-                        id = receiveResult.transferId,
-                        peerDeviceId = peerId,
-                        peerDisplayName = receiveResult.senderName,
-                        direction = TransferDirection.RECEIVE,
-                        items = receiveResult.map { itemRes ->
-                            TransferItem(
-                                index = itemRes.itemIndex,
-                                relativePath = itemRes.relativePath,
-                                sizeBytes = itemRes.bytesWritten,
-                                lastModifiedEpochMillis = System.currentTimeMillis(),
-                                isDirectory = false,
-                                destinationUri = itemRes.destinationUri,
-                                verification = itemRes.verification,
-                            )
-                        },
-                        totalBytes = receiveResult.sumOf { it.bytesWritten },
-                        state = finalState,
-                        startedAtEpochMillis = receiveResult.startedAtEpochMillis,
-                        finishedAtEpochMillis = System.currentTimeMillis(),
-                        destinationUri = primaryUri,
-                    )
-
-                    val wasNewlyCompleted = completedTransfers.add(receiveResult.transferId)
-
-                    if (wasNewlyCompleted && onTransferCompleted != null) {
-                        try {
-                            onTransferCompleted.invoke(transferRecord)
-                            VeyroLog.i(TAG) {
-                                "[${receiveResult.transferId}] Persisted history record: peer=${peerId.value} (${receiveResult.senderName}), state=$finalState, items=${receiveResult.size}, bytes=${transferRecord.totalBytes}, uri=$primaryUri"
-                            }
-                        } catch (t: Throwable) {
-                            VeyroLog.e(TAG, t) {
-                                "[${receiveResult.transferId}] Failed to persist history record: ${t.message}"
-                            }
-                        }
-                    }
-
-                    _activeTransfer.value = _activeTransfer.value?.copy(
-                        stage = if (allOk) TransferStage.COMPLETED else TransferStage.FAILED,
-                        statusText = if (allOk) "Received ${receiveResult.size} file(s) (Verified)" else "Transfer completed with errors",
-                        destinationUri = primaryUri,
-                        isVerified = allOk,
-                        bytesTransferred = receiveResult.sumOf { it.bytesWritten },
-                        route = receiveResult.route,
-                    )
-                }
+            if (!drivenSessions.add(connection)) {
+                VeyroLog.w(TAG) { "Receiver session driver already running for ${connection.peerDeviceId}; not starting a second" }
+                return@driver
             }
-            activeTransfers.clear()
-            val terminalCheck = _activeTransfer.value
-            if (terminalCheck != null && !terminalCheck.isTerminal) {
-                _activeTransfer.value = terminalCheck.copy(
-                    stage = TransferStage.FAILED,
-                    statusText = "Transfer ended: Connection closed",
-                    errorMessage = "Connection closed",
+            try {
+                receiveLoop(connection, inbound)
+            } finally {
+                drivenSessions.remove(connection)
+            }
+        }
+    }
+
+    private suspend fun receiveLoop(connection: PeerConnection, inbound: Boolean) {
+        VeyroLog.i(TAG) { "Receiver session driver started for ${connection.peerDeviceId} (inbound=$inbound)" }
+        // The transfer this loop last authorized; only that one is this loop's to mark failed.
+        var handledId: String? = null
+        while (connection.isConnected) {
+            val results = runCatching {
+                runner.receive(
+                    session = connection,
+                    destinationDir = destinationProvider().also { it.mkdirs() },
+                    authorize = { offer ->
+                        handledId = offer.transferId
+                        authorize(connection, offer)
+                    },
+                    publisher = storagePublisher,
+                    onProgress = { bytesRecv, totalBytes, item, stage, speedBps, etaSec ->
+                        val now = System.currentTimeMillis()
+                        val started = _activeTransfer.value?.startedAtEpochMillis ?: now
+                        val count = _activeTransfer.value?.totalFiles ?: 1
+                        val currentIdx = item?.index ?: (_activeTransfer.value?.currentFileIndex ?: 0)
+                        val name = item?.fileName ?: (_activeTransfer.value?.currentFileName ?: "")
+                        _activeTransfer.value = _activeTransfer.value?.copy(
+                            currentFileName = name,
+                            currentFileIndex = currentIdx,
+                            bytesTransferred = bytesRecv,
+                            totalBytes = totalBytes,
+                            bytesPerSecond = speedBps,
+                            etaSeconds = etaSec,
+                            stage = stage,
+                            statusText = when (stage) {
+                                TransferStage.AWAITING_CONSENT -> "Awaiting confirmation..."
+                                TransferStage.TRANSFERRING -> "Receiving $name (${currentIdx + 1}/$count)"
+                                TransferStage.VERIFYING -> "Verifying SHA-256 integrity..."
+                                TransferStage.PUBLISHING -> "Saving to MediaStore..."
+                                TransferStage.COMPLETED -> "Transfer completed"
+                                TransferStage.CANCELLED -> "Transfer cancelled"
+                                TransferStage.FAILED -> "Transfer failed"
+                                else -> stage.name
+                            },
+                            elapsedMillis = (now - started).coerceAtLeast(0L),
+                        )
+                    },
                 )
             }
-            VeyroLog.i(TAG) { "Receiver session driver terminated for ${connection.peerDeviceId}" }
+            val failure = results.exceptionOrNull()
+            if (failure != null) {
+                if (failure is CancellationException) break
+                activeTransfers.clear()
+                val current = _activeTransfer.value
+                if (current != null && current.transferId == handledId && current.stage != TransferStage.COMPLETED) {
+                    VeyroLog.w(TAG, failure) { "Receive cycle ended with error: ${failure.message}" }
+                    _activeTransfer.value = current.copy(
+                        stage = TransferStage.FAILED,
+                        statusText = "Receive failed: ${failure.message}",
+                        errorMessage = failure.message,
+                    )
+                }
+                // One failed transfer does not end the session (04-PROTOCOL.md 6.4): keep
+                // serving offers for as long as the connection is up.
+                if (connection.isConnected) {
+                    // Paced, so a failure that repeats before any offer cannot spin the loop.
+                    kotlinx.coroutines.delay(RECEIVE_RETRY_DELAY_MS)
+                    continue
+                }
+                break
+            }
+            val receiveResult = results.getOrNull()
+            if (receiveResult.isNullOrEmpty() && !connection.isConnected) {
+                val current = _activeTransfer.value
+                if (current != null && current.transferId == handledId && !current.isTerminal) {
+                    _activeTransfer.value = _activeTransfer.value?.copy(
+                        stage = TransferStage.FAILED,
+                        statusText = "Transfer interrupted: Connection lost",
+                        errorMessage = "Connection lost before transfer completed",
+                    )
+                }
+                break
+            }
+            activeTransfers.clear()
+            VeyroLog.i(TAG) { "Receive cycle completed (${receiveResult?.size ?: 0} items processed); waiting for next offer" }
+
+            if (!receiveResult.isNullOrEmpty()) {
+                val peerId = connection.peerDeviceId?.let { DeviceId.parseOrNull(it) ?: DeviceId(it) }
+                    ?: DeviceId("0000000000000000")
+                val allOk = receiveResult.all { it.isVerified }
+                val anyOk = receiveResult.any { it.isVerified }
+                val finalState = when {
+                    allOk -> TransferState.COMPLETED
+                    anyOk -> TransferState.COMPLETED_WITH_ERRORS
+                    else -> TransferState.FAILED
+                }
+                val primaryUri = receiveResult.firstOrNull { it.destinationUri != null }?.destinationUri
+
+                _activeTransfer.value = _activeTransfer.value?.copy(
+                    stage = TransferStage.RECORDING_HISTORY,
+                    statusText = "Saving transfer history...",
+                )
+
+                val transferRecord = Transfer(
+                    id = receiveResult.transferId,
+                    peerDeviceId = peerId,
+                    peerDisplayName = receiveResult.senderName,
+                    direction = TransferDirection.RECEIVE,
+                    items = receiveResult.map { itemRes ->
+                        TransferItem(
+                            index = itemRes.itemIndex,
+                            relativePath = itemRes.relativePath,
+                            sizeBytes = itemRes.bytesWritten,
+                            lastModifiedEpochMillis = System.currentTimeMillis(),
+                            isDirectory = false,
+                            destinationUri = itemRes.destinationUri,
+                            verification = itemRes.verification,
+                        )
+                    },
+                    totalBytes = receiveResult.sumOf { it.bytesWritten },
+                    state = finalState,
+                    startedAtEpochMillis = receiveResult.startedAtEpochMillis,
+                    finishedAtEpochMillis = System.currentTimeMillis(),
+                    destinationUri = primaryUri,
+                )
+
+                val wasNewlyCompleted = completedTransfers.add(receiveResult.transferId)
+
+                if (wasNewlyCompleted && onTransferCompleted != null) {
+                    try {
+                        onTransferCompleted.invoke(transferRecord)
+                        VeyroLog.i(TAG) {
+                            "[${receiveResult.transferId}] Persisted history record: peer=${peerId.value} (${receiveResult.senderName}), state=$finalState, items=${receiveResult.size}, bytes=${transferRecord.totalBytes}, uri=$primaryUri"
+                        }
+                    } catch (t: Throwable) {
+                        VeyroLog.e(TAG, t) {
+                            "[${receiveResult.transferId}] Failed to persist history record: ${t.message}"
+                        }
+                    }
+                }
+
+                _activeTransfer.value = _activeTransfer.value?.copy(
+                    stage = if (allOk) TransferStage.COMPLETED else TransferStage.FAILED,
+                    statusText = if (allOk) "Received ${receiveResult.size} file(s) (Verified)" else "Transfer completed with errors",
+                    destinationUri = primaryUri,
+                    isVerified = allOk,
+                    bytesTransferred = receiveResult.sumOf { it.bytesWritten },
+                    route = receiveResult.route,
+                )
+            }
         }
+        activeTransfers.clear()
+        val terminalCheck = _activeTransfer.value
+        // Only the receive this loop ran: a send on another session is not this loop's to fail.
+        if (terminalCheck != null && terminalCheck.transferId == handledId && !terminalCheck.isTerminal) {
+            _activeTransfer.value = terminalCheck.copy(
+                stage = TransferStage.FAILED,
+                statusText = "Transfer ended: Connection closed",
+                errorMessage = "Connection closed",
+            )
+        }
+        VeyroLog.i(TAG) { "Receiver session driver terminated for ${connection.peerDeviceId}" }
     }
 
     public suspend fun destinationDirectory(): File = destinationProvider().also { it.mkdirs() }
@@ -567,6 +600,49 @@ public class TransferCoordinator(
                 errorMessage = t.message ?: "Connection lost",
             )
             SendResult.Failed(t.message ?: "Connection lost")
+        } finally {
+            runCatching { File(stagingDir, transferId).deleteRecursively() }
+        }
+    }
+
+    /**
+     * Sends [file] over [session] as the answer to a request the peer made (`photoFetch`,
+     * 04-PROTOCOL.md 6.4): the offer carries [requestId], which the peer accepts without a prompt.
+     *
+     * Uses the same staging path as [sendTo], so a `content://` source works, but stays quiet: no
+     * banner and no history entry, since the user acted on the PC, not here. File names are never
+     * logged.
+     */
+    public suspend fun sendRequested(
+        session: PeerConnection,
+        file: OutgoingFile,
+        requestId: String,
+    ): SendResult = withContext(dispatchers.io) {
+        val transferId = UUID.randomUUID().toString().take(8)
+        try {
+            val staged = try {
+                stage(transferId, listOf(file))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                VeyroLog.w(TAG) { "[$transferId] Requested send: staging failed (${t.javaClass.simpleName})" }
+                return@withContext SendResult.Failed("Could not read the requested file")
+            }
+            val outcome = runner.send(
+                session = session,
+                items = staged.items,
+                senderName = localName(),
+                transferId = transferId,
+                requestId = requestId,
+                resolveFile = { item -> staged.files.getValue(item.index) },
+            )
+            VeyroLog.i(TAG) { "[$transferId] Requested send finished: ${outcome.javaClass.simpleName}" }
+            when (outcome) {
+                is TransferRunner.SendOutcome.Done -> SendResult.Success(outcome.results)
+                TransferRunner.SendOutcome.Declined -> SendResult.Declined
+                TransferRunner.SendOutcome.Cancelled -> SendResult.Cancelled
+                is TransferRunner.SendOutcome.Failed -> SendResult.Failed(outcome.reason)
+            }
         } finally {
             runCatching { File(stagingDir, transferId).deleteRecursively() }
         }

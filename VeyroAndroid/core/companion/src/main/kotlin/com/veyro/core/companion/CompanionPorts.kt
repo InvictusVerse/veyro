@@ -57,8 +57,11 @@ public interface CompanionLink {
     public val peerDeviceId: String? get() = null
 }
 
-/** Adapts a live [PeerConnection]. A data class so two adapters of one connection are equal. */
-public data class PeerConnectionLink(private val connection: PeerConnection) : CompanionLink {
+/**
+ * Adapts a live [PeerConnection]. A data class so two adapters of one connection are equal.
+ * [connection] is public so `:app` can route a photo original over this same session (ADR-034).
+ */
+public data class PeerConnectionLink(public val connection: PeerConnection) : CompanionLink {
     override val peerDeviceId: String? get() = connection.peerDeviceId
     override val peerCapabilities: Flow<Capabilities> get() = connection.peerCapabilities
     override val incoming: Flow<LinkMessage> get() = connection.incoming.map { it.payload }

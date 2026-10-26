@@ -130,6 +130,10 @@ private fun OnboardingFeature.text(): FeatureCopy = when (this) {
         "Messages and calls",
         "Read and send texts and handle calls from the PC.",
     )
+    OnboardingFeature.PHOTOS -> FeatureCopy(
+        "Photos",
+        "See recent camera photos and screenshots on the PC and open or save them there.",
+    )
     OnboardingFeature.RING_AND_SOUND -> FeatureCopy(
         "Ring and sound mode",
         "Ring a lost phone and switch silent or Do Not Disturb from the PC.",
@@ -141,6 +145,7 @@ private fun OnboardingFeature.icon(): ImageVector = when (this) {
     OnboardingFeature.NOTIFICATIONS -> VeyroIcons.Notifications
     OnboardingFeature.MEDIA -> VeyroIcons.PlayCircle
     OnboardingFeature.MESSAGES_AND_CALLS -> VeyroIcons.Chat
+    OnboardingFeature.PHOTOS -> VeyroIcons.Image
     OnboardingFeature.RING_AND_SOUND -> VeyroIcons.VolumeUp
 }
 

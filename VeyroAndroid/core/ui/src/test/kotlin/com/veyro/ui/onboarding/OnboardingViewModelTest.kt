@@ -46,6 +46,9 @@ class OnboardingViewModelTest {
         override val mediaShareEnabled: Flow<Boolean> = media
         override val deviceControlAllowed: Flow<Boolean> = control
         override val messagesAndCallsEnabled: Flow<Boolean> = messages
+        val photos = MutableStateFlow(false)
+        override val photosEnabled: Flow<Boolean> = photos
+        override suspend fun setPhotosEnabled(enabled: Boolean) { photos.value = enabled }
         override val onboardingComplete: Flow<Boolean> = done
         override suspend fun setDeviceName(name: String) { this.name.value = name }
         override suspend fun setDestinationDir(dir: File?) = Unit
@@ -203,7 +206,9 @@ class OnboardingViewModelTest {
         model.setFeatureEnabled(OnboardingFeature.MEDIA, true)
         model.setFeatureEnabled(OnboardingFeature.MESSAGES_AND_CALLS, true)
         model.setFeatureEnabled(OnboardingFeature.RING_AND_SOUND, true)
+        model.setFeatureEnabled(OnboardingFeature.PHOTOS, true)
         assertTrue(settings.notif.value && settings.media.value && settings.messages.value && settings.control.value)
+        assertTrue(settings.photos.value)
         assertTrue(model.state.value.features.all { it.enabled })
 
         model.setFeatureEnabled(OnboardingFeature.MEDIA, false)
