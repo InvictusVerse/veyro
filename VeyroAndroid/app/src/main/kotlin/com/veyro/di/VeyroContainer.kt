@@ -1,7 +1,12 @@
 package com.veyro.di
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
+import com.veyro.ui.onboarding.FeatureAccess
+import com.veyro.ui.onboarding.OnboardingFeature
+import com.veyro.ui.onboarding.SpecialAccess
 import com.veyro.core.common.AndroidLogSink
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.CompositeLogSink
@@ -432,6 +437,42 @@ public class VeyroContainer(context: Context) {
     /** User-facing labels of the messaging permissions not granted yet, for the Settings row. */
     public fun missingMessagingPermissions(): List<String> =
         MessagingPermissions.missing(appContext).mapNotNull { MessagingPermissions.ALL[it] }
+
+    /**
+     * What an onboarding feature still needs from the system (ADR-030), read fresh each call.
+     * Each feature lists only its own grants, so turning one on asks for nothing else.
+     */
+    public fun onboardingFeatureAccess(feature: OnboardingFeature): FeatureAccess = when (feature) {
+        OnboardingFeature.NOTIFICATIONS -> {
+            // Mirroring needs the listener; POST_NOTIFICATIONS lets Veyro post its own alerts
+            // (incoming files, transfer progress) on Android 13+.
+            val needsPost = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            FeatureAccess(
+                missingPermissions = if (needsPost) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList(),
+                missingLabels = if (needsPost) listOf("Show notifications") else emptyList(),
+                specialAccess = SpecialAccess.NOTIFICATION_LISTENER,
+                specialGranted = isNotificationAccessGranted(),
+            )
+        }
+        OnboardingFeature.MEDIA -> FeatureAccess(
+            // Other apps' media sessions are read on behalf of the notification listener.
+            specialAccess = SpecialAccess.NOTIFICATION_LISTENER,
+            specialGranted = isNotificationAccessGranted(),
+        )
+        OnboardingFeature.MESSAGES_AND_CALLS -> {
+            val missing = MessagingPermissions.missing(appContext)
+            FeatureAccess(
+                missingPermissions = missing,
+                missingLabels = missing.mapNotNull { MessagingPermissions.ALL[it] },
+            )
+        }
+        OnboardingFeature.RING_AND_SOUND -> FeatureAccess(
+            specialAccess = SpecialAccess.NOTIFICATION_POLICY,
+            specialGranted = isPolicyAccessGranted(),
+        )
+    }
 
     /**
      * Where received files land.

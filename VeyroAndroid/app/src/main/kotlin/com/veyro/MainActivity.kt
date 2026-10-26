@@ -11,7 +11,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.veyro.core.common.VeyroLog
+import com.veyro.ui.onboarding.OnboardingScreen
+import com.veyro.ui.onboarding.OnboardingViewModel
 import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.designsystem.theme.VeyroTheme
 import com.veyro.core.protocol.RelativePath
@@ -59,21 +70,40 @@ public class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        requestRequiredPermissions()
 
         val container = (application as VeyroApplication).container
         val factory = VeyroViewModelFactory(container)
 
         setContent {
             VeyroTheme {
-                VeyroNavHost(
-                    viewModelFactory = factory,
-                    transferCoordinator = container.transferCoordinator,
-                    // `*/*` rather than a type list: Veyro transfers arbitrary files, and
-                    // restricting the picker would only stop the user sending what they wanted.
-                    onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
-                    onRequestMessagingPermissions = ::requestMessagingPermissions,
-                )
+                // First run shows onboarding instead of the main UI (ADR-030). The gate is
+                // decided once by the ViewModel, so rotation keeps whichever is showing.
+                val onboarding = viewModel<OnboardingViewModel>(factory = factory)
+                val onboardingState by onboarding.state.collectAsStateWithLifecycle()
+                val showOnboarding = onboardingState.gate == OnboardingViewModel.Gate.REQUIRED &&
+                    !onboardingState.completed
+
+                when {
+                    onboardingState.gate == OnboardingViewModel.Gate.LOADING -> Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background),
+                    )
+                    showOnboarding -> OnboardingScreen(viewModel = onboarding, viewModelFactory = factory)
+                    else -> {
+                        // Launch-time permissions wait until onboarding is out of the way, so the
+                        // first screen a new user sees is not a system dialog.
+                        LaunchedEffect(Unit) { requestRequiredPermissions() }
+                        VeyroNavHost(
+                            viewModelFactory = factory,
+                            transferCoordinator = container.transferCoordinator,
+                            // `*/*` rather than a type list: Veyro transfers arbitrary files, and
+                            // restricting the picker would only stop the user sending what they wanted.
+                            onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
+                            onRequestMessagingPermissions = ::requestMessagingPermissions,
+                        )
+                    }
+                }
                 InboundPairingDialog(connectionManager = container.connectionManager)
                 InboundTransferDialog(transferCoordinator = container.transferCoordinator)
             }

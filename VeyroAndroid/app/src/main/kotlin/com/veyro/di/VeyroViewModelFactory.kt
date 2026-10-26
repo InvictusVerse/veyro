@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.history.HistoryViewModel
 import com.veyro.ui.home.HomeViewModel
+import com.veyro.ui.onboarding.OnboardingViewModel
 import com.veyro.ui.pairing.PairingViewModel
 import com.veyro.ui.receive.ReceiveViewModel
 import com.veyro.ui.send.SendViewModel
@@ -61,6 +62,12 @@ public class VeyroViewModelFactory(
 
         modelClass.isAssignableFrom(HistoryViewModel::class.java) -> HistoryViewModel(
             store = container.historyStore,
+        ) as T
+
+        modelClass.isAssignableFrom(OnboardingViewModel::class.java) -> OnboardingViewModel(
+            settingsStore = container.settingsStore,
+            trustedPeers = container.trustStore.peers,
+            featureAccess = container::onboardingFeatureAccess,
         ) as T
 
         modelClass.isAssignableFrom(SettingsViewModel::class.java) -> SettingsViewModel(

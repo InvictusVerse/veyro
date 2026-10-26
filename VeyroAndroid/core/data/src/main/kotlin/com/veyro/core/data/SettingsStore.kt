@@ -30,4 +30,9 @@ public interface SettingsStore {
     public val messagesAndCallsEnabled: Flow<Boolean>
 
     public suspend fun setMessagesAndCallsEnabled(enabled: Boolean)
+
+    /** First-run onboarding finished or skipped (ADR-030). False until then, and for old files. */
+    public val onboardingComplete: Flow<Boolean>
+
+    public suspend fun setOnboardingComplete(complete: Boolean)
 }

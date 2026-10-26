@@ -10,7 +10,10 @@ import com.veyro.core.model.Endpoint
 import com.veyro.core.model.Platform
 import com.veyro.core.model.PeerDevice
 import com.veyro.core.model.TrustState
+import com.veyro.core.model.fingerprint
+import com.veyro.core.protocol.PairingQrCode
 import com.veyro.core.protocol.Vlp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,6 +41,7 @@ import kotlinx.coroutines.launch
 public class PairingViewModel(
     private val deviceRepository: DeviceRepository,
     private val connectionManager: ConnectionManager,
+    private val nowEpochSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
 ) : ViewModel() {
 
     public data class Candidate(
@@ -63,13 +67,23 @@ public class PairingViewModel(
 
         val status: String? = null,
         val error: String? = null,
-    )
+
+        /** Scan-to-pair progress (ADR-030). */
+        val qr: QrPairingState = QrPairingState.Idle,
+
+        /** "Enter code instead" was chosen, or the scanner is unavailable: explain the list path. */
+        val showCodeEntryHint: Boolean = false,
+    ) {
+        val qrBusy: Boolean
+            get() = qr is QrPairingState.Connecting || qr is QrPairingState.Securing
+    }
 
     private val _state = MutableStateFlow(UiState())
     public val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var subscription: DiscoverySubscription? = null
     private var countdown: kotlinx.coroutines.Job? = null
+    private var qrJob: Job? = null
 
     init {
         deviceRepository.devices
@@ -99,6 +113,8 @@ public class PairingViewModel(
 
         connectionManager.events
             .onEach { event ->
+                // A scan-to-pair attempt reports through its own card; do not show it twice.
+                if (qrJob?.isActive == true) return@onEach
                 when (event) {
                     is ConnectionManager.ConnectionEvent.Paired ->
                         _state.value = _state.value.copy(status = "Paired with ${event.peer.name}", error = null)
@@ -160,6 +176,77 @@ public class PairingViewModel(
     public fun clearStatus() {
         _state.value = _state.value.copy(status = null, error = null)
         connectionManager.clearEvent()
+    }
+
+    // ── Scan to pair (ADR-030) ─────────────────────────────────────────────────────────────
+
+    /**
+     * Runs [scan] in the ViewModel scope so a rotation while the scanner is open does not lose
+     * the result. [scan] is the Play services scanner in production.
+     */
+    public fun scanQr(scan: suspend () -> QrScanOutcome) {
+        if (_state.value.qrBusy) return
+        viewModelScope.launch { onScanOutcome(scan()) }
+    }
+
+    /** Handles one scan result. The raw text is parsed here and never logged or stored. */
+    public fun onScanOutcome(outcome: QrScanOutcome) {
+        when (outcome) {
+            QrScanOutcome.Cancelled -> Unit
+            QrScanOutcome.Unavailable -> {
+                _state.value = _state.value.copy(
+                    qr = QrPairingState.Failed(QrPairingError.SCANNER_UNAVAILABLE),
+                    showCodeEntryHint = true,
+                )
+                startSearching()
+            }
+            is QrScanOutcome.Scanned -> when (val result = PairingQrCode.parse(outcome.raw, nowEpochSeconds())) {
+                is PairingQrCode.Result.Invalid ->
+                    _state.value = _state.value.copy(qr = QrPairingState.Failed(QrPairingError.from(result.error)))
+                is PairingQrCode.Result.Valid -> pairWithScannedCode(result.qr)
+            }
+        }
+    }
+
+    /** "Enter code instead": the list-plus-typed-code path, which needs discovery running. */
+    public fun showCodeEntry() {
+        _state.value = _state.value.copy(showCodeEntryHint = true)
+        startSearching()
+    }
+
+    public fun dismissQrStatus() {
+        if (_state.value.qrBusy) return
+        _state.value = _state.value.copy(qr = QrPairingState.Idle)
+    }
+
+    private fun pairWithScannedCode(qr: PairingQrCode) {
+        qrJob?.cancel()
+        _state.value = _state.value.copy(qr = QrPairingState.Connecting(qr.name), status = null, error = null)
+        // Scanned endpoints first, then any discovery has seen for the same id. Discovery is
+        // untrusted, but here it only adds addresses; the identity check decides who is real.
+        val discovered = _state.value.candidates.firstOrNull { it.deviceId == qr.deviceId }?.endpoints.orEmpty()
+        val endpoints = (qr.endpoints + discovered).distinct()
+        qrJob = viewModelScope.launch {
+            connectionManager.pairWithCode(
+                peerDeviceId = qr.deviceId.value,
+                peerName = qr.name ?: "your PC",
+                endpoints = endpoints,
+                code = qr.code,
+            ).collect { progress ->
+                val next = when (progress) {
+                    ConnectionManager.CodePairingProgress.Connecting -> QrPairingState.Connecting(qr.name)
+                    ConnectionManager.CodePairingProgress.Securing -> QrPairingState.Securing(qr.name)
+                    is ConnectionManager.CodePairingProgress.Paired ->
+                        QrPairingState.Paired(progress.peer.name, progress.peer.deviceId.fingerprint())
+                    is ConnectionManager.CodePairingProgress.AlreadyPaired ->
+                        QrPairingState.Paired(progress.peerName, qr.deviceId.fingerprint())
+                    is ConnectionManager.CodePairingProgress.Failed ->
+                        QrPairingState.Failed(QrPairingError.from(progress.failure))
+                }
+                _state.value = _state.value.copy(qr = next)
+            }
+            connectionManager.clearEvent()
+        }
     }
 
     private fun List<PeerDevice>.toCandidates(): List<Candidate> = map { peer ->

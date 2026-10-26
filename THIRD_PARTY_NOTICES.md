@@ -25,6 +25,10 @@ Adapted files (Veyro path <- Sefirah path):
 - `VeyroWindows/src/Veyro/Views/CallWindow.cs` <- `src/Sefirah/Views/WindowViews/CallWindow.xaml.cs`
 - `VeyroWindows/src/Veyro/UserControls/CallView.xaml` <- `src/Sefirah/UserControls/CallView.xaml`
 - `VeyroWindows/src/Veyro/UserControls/CallView.xaml.cs` <- `src/Sefirah/UserControls/CallView.xaml.cs`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/OnboardingScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/OnboardingScreen.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/WelcomePage.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/WelcomeStep.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/FeaturesPage.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/PermissionStep.kt`
+- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/onboarding/components/PageIndicator.kt` <- `app/src/main/java/com/castle/sefirah/presentation/onboarding/components/PageIndicator.kt`
 - `VeyroWindows/src/Veyro/Views/OnboardingPage.xaml` <- `src/Sefirah/Views/Onboarding/WelcomePage.xaml`
 - `VeyroWindows/src/Veyro/Views/OnboardingPage.xaml.cs` <- `src/Sefirah/Views/Onboarding/WelcomePage.xaml.cs`
 - `VeyroWindows/src/Veyro/UserControls/PairingView.xaml` <- `src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml`

@@ -19,9 +19,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -117,6 +119,56 @@ public class ConnectionManager(
 
     /** Legacy alias for backwards compatibility. */
     public typealias LinkEvent = ConnectionEvent
+
+    /**
+     * Progress of a pairing started from a scanned QR code ([pairWithCode], ADR-030).
+     *
+     * Emitted in order: [Connecting], then [Securing] once the PC answered in pairing mode, then
+     * exactly one terminal value ([Paired], [AlreadyPaired] or [Failed]).
+     */
+    public sealed interface CodePairingProgress {
+        public data object Connecting : CodePairingProgress
+        public data object Securing : CodePairingProgress
+        public data class Paired(val peer: TrustedPeer) : CodePairingProgress
+
+        /** The PC already trusts this phone and a normal session opened instead. */
+        public data class AlreadyPaired(val peerName: String) : CodePairingProgress
+        public data class Failed(val failure: CodePairingFailure, val message: String) : CodePairingProgress
+    }
+
+    public enum class CodePairingFailure {
+        /** No endpoint accepted a connection, or the peer never answered the preamble. */
+        UNREACHABLE,
+
+        /** The PC refused or is busy (pairing window closed, another session). */
+        NOT_ACCEPTING,
+
+        /** The PIN bootstrap failed: wrong or stale code, or the PC rejected it. */
+        CODE_REJECTED,
+
+        /** `DeviceId(publicKeyB64)` from `pairOk` is not the scanned id. Nothing was stored. */
+        IDENTITY_MISMATCH,
+
+        /** Anything else (local persistence failure, lost pairing, protocol error). */
+        OTHER,
+    }
+
+    /** What one dial attempt ended in. Internal so `connect` keeps its Boolean contract. */
+    private sealed interface DialOutcome {
+        val isSuccess: Boolean
+
+        data object Session : DialOutcome {
+            override val isSuccess: Boolean = true
+        }
+
+        data class Paired(val peer: TrustedPeer) : DialOutcome {
+            override val isSuccess: Boolean = true
+        }
+
+        data class Failed(val failure: CodePairingFailure) : DialOutcome {
+            override val isSuccess: Boolean = false
+        }
+    }
 
     private val pairingWindows = PairingRegistry()
     private val mutex = Mutex()
@@ -446,12 +498,72 @@ public class ConnectionManager(
         peerName: String,
         endpoints: List<Endpoint>,
         forceReconnect: Boolean = false,
-    ): Boolean = mutex.withLock {
+    ): Boolean = dial(
+        peerDeviceId = peerDeviceId,
+        peerName = peerName,
+        endpoints = endpoints,
+        forceReconnect = forceReconnect,
+        presetCode = null,
+        expectedPeerId = null,
+        onSecuring = {},
+    ).isSuccess
+
+    /**
+     * Pairs with a PC whose QR code was scanned (04-PROTOCOL.md section 4.2, ADR-030).
+     *
+     * Same dial and same PIN bootstrap as [connect], with two differences: the scanned [code] is
+     * used instead of prompting, and after `pairOk` the peer's public key must hash to
+     * [peerDeviceId]. A device answering at the scanned address with any other identity is
+     * dropped before anything is persisted. [code] is never logged.
+     */
+    public fun pairWithCode(
+        peerDeviceId: String,
+        peerName: String,
+        endpoints: List<Endpoint>,
+        code: String,
+    ): Flow<CodePairingProgress> = channelFlow {
+        send(CodePairingProgress.Connecting)
+        if (code.length != 6 || !code.all { it in '0'..'9' }) {
+            send(CodePairingProgress.Failed(CodePairingFailure.CODE_REJECTED, "The pairing code is not valid"))
+            return@channelFlow
+        }
+        val outcome = dial(
+            peerDeviceId = peerDeviceId,
+            peerName = peerName,
+            endpoints = endpoints,
+            forceReconnect = false,
+            presetCode = code,
+            expectedPeerId = peerDeviceId,
+            onSecuring = { send(CodePairingProgress.Securing) },
+        )
+        send(
+            when (outcome) {
+                is DialOutcome.Paired -> CodePairingProgress.Paired(outcome.peer)
+                DialOutcome.Session -> CodePairingProgress.AlreadyPaired(
+                    trustedPeer(peerDeviceId)?.name ?: peerName,
+                )
+                is DialOutcome.Failed -> CodePairingProgress.Failed(
+                    outcome.failure,
+                    (_events.value as? ConnectionEvent.Failed)?.reason ?: "Pairing failed",
+                )
+            },
+        )
+    }
+
+    private suspend fun dial(
+        peerDeviceId: String,
+        peerName: String,
+        endpoints: List<Endpoint>,
+        forceReconnect: Boolean,
+        presetCode: String?,
+        expectedPeerId: String?,
+        onSecuring: suspend () -> Unit,
+    ): DialOutcome = mutex.withLock {
         val connId = "out-" + UUID.randomUUID().toString().take(8)
         if (endpoints.isEmpty()) {
             VeyroLog.w(TAG) { "[$connId] Connect failed: no address for $peerName" }
             _events.value = ConnectionEvent.Failed("No address for $peerName")
-            return false
+            return DialOutcome.Failed(CodePairingFailure.UNREACHABLE)
         }
         val active = _activeConnection.value
         if (active != null) {
@@ -465,7 +577,7 @@ public class ConnectionManager(
                     _activeConnection.value = null
                 } else {
                     VeyroLog.i(TAG) { "[$connId] Connect reused existing active session with $peerName ($peerDeviceId)" }
-                    return true
+                    return DialOutcome.Session
                 }
             } else if (forceReconnect) {
                 VeyroLog.i(TAG) { "[$connId] Force reconnect requested; closing session with different peer (${active.peerDeviceId})" }
@@ -474,7 +586,7 @@ public class ConnectionManager(
             } else {
                 VeyroLog.w(TAG) { "[$connId] Connect aborted: session already active with another peer (${active.peerDeviceId})" }
                 _events.value = ConnectionEvent.Failed("Already connected to a peer")
-                return false
+                return DialOutcome.Failed(CodePairingFailure.NOT_ACCEPTING)
             }
         }
         startListening()
@@ -483,7 +595,7 @@ public class ConnectionManager(
         val dialSuccess = dialAny(endpoints, connId) ?: run {
             VeyroLog.w(TAG) { "[$connId] Connect failed: could not reach $peerName on any endpoint" }
             _events.value = ConnectionEvent.Failed("Could not reach $peerName")
-            return false
+            return DialOutcome.Failed(CodePairingFailure.UNREACHABLE)
         }
         val ws = dialSuccess.ws
         val remoteHost = dialSuccess.remoteHost
@@ -506,7 +618,7 @@ public class ConnectionManager(
             ws.close(CloseReason(CloseReason.Codes.PROTOCOL_ERROR, "no-ack"))
             VeyroLog.w(TAG) { "[$connId] Handshake failed: no preamble ack received from $peerName within ${ACK_TIMEOUT_MS}ms" }
             _events.value = ConnectionEvent.Failed("$peerName did not answer")
-            return false
+            return DialOutcome.Failed(CodePairingFailure.UNREACHABLE)
         }
         VeyroLog.i(TAG) { "[$connId] Client acknowledgement received: mode=${ack.mode}, reason=${ack.reason}" }
 
@@ -519,16 +631,17 @@ public class ConnectionManager(
                     VeyroLog.w(TAG) { "[$connId] Handshake failed: remote peer expects session mode but local pairing secret is missing" }
                     ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "no-secret"))
                     _events.value = ConnectionEvent.Failed("Pairing was lost. Pair with $peerName again.")
-                    false
+                    DialOutcome.Failed(CodePairingFailure.OTHER)
                 } else {
                     scope.launch { runConnection(ws, known, encrypt = true, inbound = false, connId = connId, remoteHost = remoteHost) }
-                    true
+                    DialOutcome.Session
                 }
             }
 
             LinkPreambleAck.MODE_PAIRING -> {
                 VeyroLog.i(TAG) { "[$connId] Proceeding with outbound pairing exchange with $peerName" }
-                runOutboundPairing(ws, peerDeviceId, peerName, connId, remoteHost = remoteHost)
+                if (presetCode != null) onSecuring()
+                runOutboundPairing(ws, peerDeviceId, peerName, connId, remoteHost, presetCode, expectedPeerId)
             }
 
             else -> {
@@ -537,31 +650,44 @@ public class ConnectionManager(
                 _events.value = ConnectionEvent.Failed(
                     ack.reason ?: "$peerName is not accepting connections right now",
                 )
-                false
+                DialOutcome.Failed(CodePairingFailure.NOT_ACCEPTING)
             }
         }
     }
 
+    /**
+     * Runs the initiator side of PIN pairing.
+     *
+     * [presetCode] non-null means a scanned QR code supplies the PIN, so the user is not prompted.
+     * [expectedPeerId] non-null adds the ADR-030 check: the key in `pairOk` must hash to it.
+     */
     private suspend fun runOutboundPairing(
         ws: DefaultWebSocketSession,
         peerDeviceId: String,
         peerName: String,
         connId: String,
         remoteHost: String? = null,
-    ): Boolean {
-        _pendingOutbound.value = PendingOutbound(peerDeviceId, peerName)
-        val pinDeferred = CompletableDeferred<String?>()
-        outboundPin = pinDeferred
+        presetCode: String? = null,
+        expectedPeerId: String? = null,
+    ): DialOutcome {
+        val pin = if (presetCode != null) {
+            presetCode
+        } else {
+            _pendingOutbound.value = PendingOutbound(peerDeviceId, peerName)
+            val pinDeferred = CompletableDeferred<String?>()
+            outboundPin = pinDeferred
 
-        val pin = withTimeoutOrNull(PairingRegistry.PIN_TTL_MS) { pinDeferred.await() }
-        outboundPin = null
-        _pendingOutbound.value = null
+            val typed = withTimeoutOrNull(PairingRegistry.PIN_TTL_MS) { pinDeferred.await() }
+            outboundPin = null
+            _pendingOutbound.value = null
+            typed
+        }
 
         if (pin.isNullOrBlank()) {
             VeyroLog.w(TAG) { "[$connId] Outbound pairing cancelled: empty PIN or user cancelled" }
             ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "no-pin"))
             _events.value = ConnectionEvent.Failed("Pairing cancelled")
-            return false
+            return DialOutcome.Failed(CodePairingFailure.OTHER)
         }
 
         val selfId = localDeviceId()
@@ -602,13 +728,13 @@ public class ConnectionManager(
                     VeyroLog.w(TAG) { "[$connId] Handshake failed: invalid session secret in PairOk" }
                     session.close("bad-secret")
                     _events.value = ConnectionEvent.Failed("The other device sent an invalid key")
-                    return false
+                    return DialOutcome.Failed(CodePairingFailure.OTHER)
                 }
                 val id = DeviceId.parseOrNull(payload.deviceId) ?: run {
                     VeyroLog.w(TAG) { "[$connId] Handshake failed: invalid device ID in PairOk" }
                     session.close("bad-id")
                     _events.value = ConnectionEvent.Failed("Invalid peer device ID")
-                    return false
+                    return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
                 }
                 val peerPk = payload.publicKeyB64?.let {
                     runCatching { Base64.getDecoder().decode(it) }.getOrNull()
@@ -617,7 +743,15 @@ public class ConnectionManager(
                     VeyroLog.w(TAG) { "[$connId] Handshake failed: refusing to pair with a peer whose deviceId does not match its public key" }
                     session.close("identity-mismatch")
                     _events.value = ConnectionEvent.Failed("Peer identity does not match public key")
-                    return false
+                    return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
+                }
+                // ADR-030: whoever answered at the scanned address must be the PC whose id was in
+                // the QR code. A self-consistent but different identity is someone else.
+                if (expectedPeerId != null && DeviceId.fromPublicKey(peerPk).value != expectedPeerId) {
+                    VeyroLog.w(TAG) { "[$connId] Handshake failed: peer public key does not match the scanned device id; nothing stored" }
+                    session.close("identity-mismatch")
+                    _events.value = ConnectionEvent.Failed("This is not the PC whose code was scanned")
+                    return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
                 }
                 val peer = TrustedPeer(
                     deviceId = id,
@@ -633,7 +767,7 @@ public class ConnectionManager(
                     VeyroLog.e(TAG, t) { "[$connId] Trust persistence failed: could not save trusted peer (${t.message})" }
                     session.close("persistence-failed")
                     _events.value = ConnectionEvent.Failed("Could not save pairing on this device")
-                    return false
+                    return DialOutcome.Failed(CodePairingFailure.OTHER)
                 }
                 session.rekey(FrameCrypto.sessionKeyFromBytes(secret))
                 VeyroLog.i(TAG) { "[$connId] Cryptographic authentication completed (pairing-mode, peer=${payload.deviceName})" }
@@ -650,14 +784,14 @@ public class ConnectionManager(
                     _events.value = ConnectionEvent.Disconnected
                     VeyroLog.i(TAG) { "[$connId] Session closed with ${payload.deviceName} (outbound, isConnected=${session.isConnected})" }
                 }
-                true
+                DialOutcome.Paired(peer)
             }
 
             is LinkMessage.PairFail -> {
                 VeyroLog.w(TAG) { "[$connId] Pairing rejected by peer: ${payload.reason}" }
                 session.close("pair-fail")
                 _events.value = ConnectionEvent.Failed(payload.reason)
-                false
+                DialOutcome.Failed(CodePairingFailure.CODE_REJECTED)
             }
 
             else -> {
@@ -665,7 +799,7 @@ public class ConnectionManager(
                 session.close("pair-timeout")
                 // The overwhelmingly likely cause, and the one the user can act on.
                 _events.value = ConnectionEvent.Failed("The PIN did not match. Check it and try again.")
-                false
+                DialOutcome.Failed(CodePairingFailure.CODE_REJECTED)
             }
         }
     }

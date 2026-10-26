@@ -42,9 +42,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,6 +66,8 @@ import com.veyro.core.designsystem.theme.VeyroViolet
 import com.veyro.core.designsystem.theme.VeyroVioletContainer
 import com.veyro.core.designsystem.theme.VeyroVioletGlow
 import com.veyro.core.link.ConnectionManager
+import com.veyro.core.model.DeviceId
+import com.veyro.core.model.fingerprint
 import kotlinx.coroutines.delay
 
 /**
@@ -126,6 +132,22 @@ public fun InboundPairingDialog(
                     color = VeyroTextSecondary,
                     textAlign = TextAlign.Center,
                 )
+
+                // The id is only what the peer claims until pairing completes; showing its
+                // fingerprint lets the user compare it with the other screen.
+                val fingerprint = remember(currentPending.peerDeviceId) {
+                    DeviceId.parseOrNull(currentPending.peerDeviceId)?.fingerprint()
+                }
+                if (fingerprint != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Device fingerprint\n$fingerprint",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = FontFamily.Monospace,
+                        color = VeyroTextSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -227,7 +249,8 @@ private fun PairingDialogIcon() {
 
 @Composable
 private fun PinDisplayGlow(pin: String) {
-    val grouped = pin.chunked(3).joinToString("  ")
+    // "123 456": two groups of three are easier to read aloud and to type than six in a row.
+    val grouped = pin.chunked(3).joinToString(" ")
 
     // Pulsing glow
     val infiniteTransition = rememberInfiniteTransition(label = "pinGlow")
@@ -259,9 +282,12 @@ private fun PinDisplayGlow(pin: String) {
     ) {
         Text(
             text = grouped,
-            style = VeyroPinStyle,
+            style = VeyroPinStyle.copy(fontSize = 44.sp, letterSpacing = 4.sp),
             color = VeyroVioletGlow,
             textAlign = TextAlign.Center,
+            modifier = Modifier.semantics {
+                contentDescription = "Pairing code ${pin.toCharArray().joinToString(" ")}"
+            },
         )
     }
 }

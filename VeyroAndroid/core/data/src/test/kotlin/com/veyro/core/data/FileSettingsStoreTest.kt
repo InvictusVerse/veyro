@@ -144,6 +144,16 @@ class FileSettingsStoreTest {
     }
 
     @Test
+    fun `onboarding is incomplete by default, also in an older file, and persists`() = runBlocking {
+        // A settings file written before ADR-030 has no such key.
+        File(dir, "settings.json").writeText("""{"version":1,"deviceName":"Old"}""")
+        assertFalse(store().onboardingComplete.first())
+        store().setOnboardingComplete(true)
+        assertTrue(store().onboardingComplete.first())
+        assertEquals("Old", store().deviceName.first())
+    }
+
+    @Test
     fun `no temporary file is left behind`() = runBlocking {
         store().setDeviceName("X")
         assertFalse(File(dir, "settings.json.tmp").exists())

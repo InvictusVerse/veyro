@@ -39,6 +39,11 @@ ktor = "3.5.2"
 zxing = "3.5.4"
 camerax = "1.6.2"
 mlkitBarcode = "17.3.0"
+# ── QR pairing (ADR-030) ───────────────────────────────────────────────────────────────────
+# Google code scanner: the scan UI runs inside Play services, so no CAMERA permission and no
+# CameraX/ML Kit model in the APK. Used only by :core:ui. 16.1.0 is the latest release on
+# Google Maven (checked 2026-10-26).
+playServicesCodeScanner = "16.1.0"
 work = "2.12.0"
 
 # ── Testing ────────────────────────────────────────────────────────────────────────────────
@@ -113,6 +118,8 @@ camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", vers
 camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+# QR pairing scanner (ADR-030). Only :core:ui may depend on this.
+play-services-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "playServicesCodeScanner" }
 
 # ── Testing ────────────────────────────────────────────────────────────────────────────────
 junit4 = { group = "junit", name = "junit", version.ref = "junit4" }

@@ -5,7 +5,10 @@
     <!-- Veyro requires NO Bluetooth and NO location permission. That is the whole point
          (ADR-001). If a future change needs either, it needs an ADR first. -->
 
-    <!-- Local network sockets. Veyro never contacts a server on the internet. -->
+    <!-- Local network sockets. Veyro's own code never contacts a server on the internet. The
+         Google code scanner used for QR pairing (ADR-030) bundles ML Kit, which may report
+         usage diagnostics to Google through Play services. -->
+
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Required for ConnectivityManager.getActiveNetwork() / NetworkCallback.
@@ -84,6 +87,12 @@
              would be undecryptable anyway, and cloning an identity to another device must not
              be possible (ProjectInfo/05-SECURITY.md section 4.4). -->
 
+        <!-- QR pairing (ADR-030): ask Play services to fetch the code-scanner UI module at
+             install time, so the first scan does not fail while it downloads. No CAMERA
+             permission: the scanner runs inside Play services. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

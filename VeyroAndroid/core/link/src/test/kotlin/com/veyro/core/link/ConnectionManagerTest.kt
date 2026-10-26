@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -763,6 +764,190 @@ class ConnectionManagerTest {
         assertTrue("Must report Failed when persistence throws", event is ConnectionManager.ConnectionEvent.Failed)
         assertEquals("Could not save pairing on this device", (event as ConnectionManager.ConnectionEvent.Failed).reason)
         assertFalse("Must never emit Paired state if persistence failed", event is ConnectionManager.ConnectionEvent.Paired)
+    }
+
+    // ── QR code pairing (ADR-030, 04-PROTOCOL.md section 4.2) ──────────────────────────────
+
+    private fun sealedPairOk(
+        key: javax.crypto.SecretKey,
+        deviceId: String,
+        publicKey: ByteArray,
+        name: String = "Office PC",
+        /** The id the frame is bound to; the dialled id, since that is who the phone expects. */
+        sender: String = deviceId,
+    ): Frame.Text {
+        val pairOk = LinkMessage.PairOk(
+            deviceId = deviceId,
+            deviceName = name,
+            platform = "windows",
+            sessionSecretB64 = Base64.getEncoder().encodeToString(ByteArray(32) { 7 }),
+            publicKeyB64 = Base64.getEncoder().encodeToString(publicKey),
+        )
+        val env = LinkEnvelope(
+            msgId = UUID.randomUUID().toString(),
+            from = sender,
+            seq = 1L,
+            ts = System.currentTimeMillis(),
+            payload = pairOk,
+        )
+        val sealed = FrameCrypto.seal(
+            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), env),
+            key,
+            encrypt = true,
+            sender,
+        )
+        return Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire()))
+    }
+
+    private val pairingAck: Frame.Text
+        get() = Frame.Text(
+            LinkJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)),
+        )
+
+    @Test
+    fun `pairWithCode uses the scanned code without prompting and persists the scanned PC`() = runTest(testDispatcher) {
+        var persistedPeer: TrustedPeer? = null
+        val pcPk = ByteArray(32) { 4 }
+        val pcId = DeviceId.fromPublicKey(pcPk).value
+        val fakeSession = FakeDefaultWebSocketSession()
+        val client = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
+        }
+        val manager = testManager(client = client, saveTrustedPeer = { persistedPeer = it })
+        val code = "246810"
+        val key = FrameCrypto.deriveBootstrapKey(code, localId, pcId)
+
+        val progress = mutableListOf<ConnectionManager.CodePairingProgress>()
+        val job = launch {
+            manager.pairWithCode(pcId, "Office PC", listOf(Endpoint("192.168.1.20", 5150)), code)
+                .collect { progress += it }
+        }
+
+        fakeSession.outgoingChannel.receive() // preamble
+        fakeSession.incomingChannel.send(pairingAck)
+        assertNull("A scanned code must not prompt for a PIN", manager.pendingOutbound.value)
+
+        // PairHello must be sealed under the key derived from the scanned code.
+        val helloFrame = fakeSession.outgoingChannel.receive() as Frame.Text
+        val helloWire = LinkJson.codec.decodeFromString(LinkWireFrame.serializer(), helloFrame.readText())
+        assertNotNull(FrameCrypto.open(helloWire.toSealed()!!, key))
+
+        fakeSession.incomingChannel.send(sealedPairOk(key, pcId, pcPk))
+        job.join()
+
+        assertEquals(ConnectionManager.CodePairingProgress.Connecting, progress[0])
+        assertEquals(ConnectionManager.CodePairingProgress.Securing, progress[1])
+        val last = progress.last()
+        assertTrue("expected Paired, got $last", last is ConnectionManager.CodePairingProgress.Paired)
+        assertEquals(pcId, persistedPeer?.deviceId?.value)
+        assertEquals(3, progress.size)
+
+        manager.disconnect()
+    }
+
+    @Test
+    fun `pairWithCode aborts without persisting when a different identity answers`() = runTest(testDispatcher) {
+        var persistedPeer: TrustedPeer? = null
+        val pcId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
+        // Someone else at the scanned address who also learned the code: their PairOk is
+        // self-consistent (id matches their own key) and sealed correctly, but it is not the PC.
+        val impostorPk = ByteArray(32) { 6 }
+        val impostorId = DeviceId.fromPublicKey(impostorPk).value
+        val fakeSession = FakeDefaultWebSocketSession()
+        val client = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
+        }
+        val manager = testManager(client = client, saveTrustedPeer = { persistedPeer = it })
+        val code = "135790"
+        val key = FrameCrypto.deriveBootstrapKey(code, localId, pcId)
+
+        val progress = mutableListOf<ConnectionManager.CodePairingProgress>()
+        val job = launch {
+            manager.pairWithCode(pcId, "Office PC", listOf(Endpoint("192.168.1.20", 5150)), code)
+                .collect { progress += it }
+        }
+        fakeSession.outgoingChannel.receive() // preamble
+        fakeSession.incomingChannel.send(pairingAck)
+        fakeSession.outgoingChannel.receive() // PairHello
+        fakeSession.incomingChannel.send(sealedPairOk(key, impostorId, impostorPk, sender = pcId))
+        job.join()
+
+        assertNull("An identity mismatch must never be persisted", persistedPeer)
+        assertNull(manager.activeConnection.value)
+        val last = progress.last()
+        assertTrue("expected Failed, got $last", last is ConnectionManager.CodePairingProgress.Failed)
+        assertEquals(
+            ConnectionManager.CodePairingFailure.IDENTITY_MISMATCH,
+            (last as ConnectionManager.CodePairingProgress.Failed).failure,
+        )
+        assertFalse(manager.events.value is ConnectionManager.ConnectionEvent.Paired)
+    }
+
+    @Test
+    fun `plain connect still accepts a self-consistent identity that differs from the dialled id`() = runTest(testDispatcher) {
+        // The scanned-id check applies only when an expected id is supplied; the typed-PIN path
+        // is unchanged by ADR-030.
+        var persistedPeer: TrustedPeer? = null
+        val dialledId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
+        val otherPk = ByteArray(32) { 6 }
+        val otherId = DeviceId.fromPublicKey(otherPk).value
+        val fakeSession = FakeDefaultWebSocketSession()
+        val client = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
+        }
+        val manager = testManager(client = client, saveTrustedPeer = { persistedPeer = it })
+        val pin = "111222"
+        val key = FrameCrypto.deriveBootstrapKey(pin, localId, dialledId)
+
+        val job = launch { manager.connect(dialledId, "PC", listOf(Endpoint("192.168.1.20", 5150))) }
+        fakeSession.outgoingChannel.receive()
+        fakeSession.incomingChannel.send(pairingAck)
+        manager.submitPin(pin)
+        fakeSession.outgoingChannel.receive()
+        fakeSession.incomingChannel.send(sealedPairOk(key, otherId, otherPk, sender = dialledId))
+        job.join()
+
+        assertEquals(otherId, persistedPeer?.deviceId?.value)
+        manager.disconnect()
+    }
+
+    @Test
+    fun `pairWithCode reports unreachable when no endpoint answers`() = runTest(testDispatcher) {
+        val failingClient = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession {
+                throw ConnectException("Connection refused")
+            }
+        }
+        val manager = testManager(failingClient)
+        val pcId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
+        val progress = manager.pairWithCode(
+            pcId,
+            "Office PC",
+            listOf(Endpoint("192.168.1.20", 5150), Endpoint("10.0.0.5", 5150)),
+            "123456",
+        ).toList()
+
+        assertEquals(ConnectionManager.CodePairingProgress.Connecting, progress.first())
+        val last = progress.last() as ConnectionManager.CodePairingProgress.Failed
+        assertEquals(ConnectionManager.CodePairingFailure.UNREACHABLE, last.failure)
+        assertEquals(2, progress.size)
+    }
+
+    @Test
+    fun `pairWithCode rejects a malformed code before dialling`() = runTest(testDispatcher) {
+        var dialled = false
+        val client = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession {
+                dialled = true
+                throw ConnectException("unexpected")
+            }
+        }
+        val manager = testManager(client)
+        val pcId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
+        val last = manager.pairWithCode(pcId, "PC", listOf(Endpoint("192.168.1.20", 5150)), "12a456")
+            .toList().last() as ConnectionManager.CodePairingProgress.Failed
+        assertEquals(ConnectionManager.CodePairingFailure.CODE_REJECTED, last.failure)
+        assertFalse(dialled)
     }
 }
 

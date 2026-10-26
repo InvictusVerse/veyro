@@ -51,4 +51,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
+    // Onboarding requests runtime permissions and handles Back (ADR-030).
+    implementation(libs.androidx.activity.compose)
+    // QR pairing (ADR-030): the scan UI runs in Play services, so no CAMERA permission. Confined
+    // to this module; nothing else may touch it.
+    implementation(libs.play.services.code.scanner)
 }
