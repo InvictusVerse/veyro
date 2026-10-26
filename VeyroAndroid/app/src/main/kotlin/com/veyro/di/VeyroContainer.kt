@@ -633,6 +633,13 @@ public class VeyroContainer(context: Context) {
             specialAccess = SpecialAccess.NOTIFICATION_POLICY,
             specialGranted = isPolicyAccessGranted(),
         )
+        // Same access Sefirah uses for its wallpaper (WallpaperManager.drawable). Before Android 11
+        // there is no such screen and the image is readable anyway.
+        OnboardingFeature.WALLPAPER -> FeatureAccess(
+            specialAccess = SpecialAccess.ALL_FILES,
+            specialGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+                android.os.Environment.isExternalStorageManager(),
+        )
     }
 
     /**

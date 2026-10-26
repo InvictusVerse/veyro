@@ -147,6 +147,11 @@ private fun OnboardingFeature.text(): FeatureCopy = when (this) {
         "Photos",
         "See recent camera photos and screenshots on the PC and open or save them there.",
     )
+    OnboardingFeature.WALLPAPER -> FeatureCopy(
+        "Wallpaper on PC",
+        "The PC shows this phone with your exact wallpaper. Android only allows that with All files " +
+            "access; without it the PC uses your wallpaper's colours.",
+    )
     OnboardingFeature.RING_AND_SOUND -> FeatureCopy(
         "Ring and sound mode",
         "Ring a lost phone and switch silent or Do Not Disturb from the PC.",
@@ -159,12 +164,14 @@ private fun OnboardingFeature.icon(): ImageVector = when (this) {
     OnboardingFeature.MEDIA -> VeyroIcons.PlayCircle
     OnboardingFeature.MESSAGES_AND_CALLS -> VeyroIcons.Chat
     OnboardingFeature.PHOTOS -> VeyroIcons.Image
+    OnboardingFeature.WALLPAPER -> VeyroIcons.Mobile
     OnboardingFeature.RING_AND_SOUND -> VeyroIcons.VolumeUp
 }
 
 private fun SpecialAccess.label(): String = when (this) {
     SpecialAccess.NOTIFICATION_LISTENER -> "Notification access"
     SpecialAccess.NOTIFICATION_POLICY -> "Do Not Disturb access"
+    SpecialAccess.ALL_FILES -> "All files access"
 }
 
 @Composable
@@ -250,12 +257,17 @@ private fun AccessStatus(
 }
 
 private fun openSpecialAccess(context: Context, access: SpecialAccess) {
-    val action = when (access) {
-        SpecialAccess.NOTIFICATION_LISTENER -> Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
-        SpecialAccess.NOTIFICATION_POLICY -> Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+    val intent = when (access) {
+        SpecialAccess.NOTIFICATION_LISTENER -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        SpecialAccess.NOTIFICATION_POLICY -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+        // Straight to Veyro's own switch rather than the list of every app.
+        SpecialAccess.ALL_FILES -> Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.fromParts("package", context.packageName, null),
+        )
     }
     try {
-        context.startActivity(Intent(action))
+        context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         // Some builds hide the screen; the card keeps saying what is missing.
         openAppInfo(context)

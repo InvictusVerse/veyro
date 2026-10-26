@@ -19,10 +19,16 @@ import kotlinx.coroutines.launch
 public enum class OnboardingStep { WELCOME, DEVICE_NAME, FEATURES, PAIR, DONE }
 
 /** The optional companion features offered on the Features page. */
-public enum class OnboardingFeature { NOTIFICATIONS, MEDIA, MESSAGES_AND_CALLS, PHOTOS, RING_AND_SOUND }
+public enum class OnboardingFeature { NOTIFICATIONS, MEDIA, MESSAGES_AND_CALLS, PHOTOS, WALLPAPER, RING_AND_SOUND }
 
 /** A system screen a feature needs the user to visit (not a runtime permission dialog). */
-public enum class SpecialAccess { NOTIFICATION_LISTENER, NOTIFICATION_POLICY }
+public enum class SpecialAccess {
+    NOTIFICATION_LISTENER,
+    NOTIFICATION_POLICY,
+
+    /** "All files access": Android 13+ gives the wallpaper image only with it (as Sefirah relies on). */
+    ALL_FILES,
+}
 
 /**
  * What a feature still needs from the system, read fresh on every resume.
@@ -132,6 +138,9 @@ public class OnboardingViewModel(
         settingsStore.photosEnabled
             .onEach { on -> setEnabledInState(OnboardingFeature.PHOTOS, on) }
             .launchIn(viewModelScope)
+        settingsStore.wallpaperShareEnabled
+            .onEach { on -> setEnabledInState(OnboardingFeature.WALLPAPER, on) }
+            .launchIn(viewModelScope)
         settingsStore.deviceControlAllowed
             .onEach { on -> setEnabledInState(OnboardingFeature.RING_AND_SOUND, on) }
             .launchIn(viewModelScope)
@@ -217,6 +226,7 @@ public class OnboardingViewModel(
                 OnboardingFeature.MEDIA -> settingsStore.setMediaShareEnabled(enabled)
                 OnboardingFeature.MESSAGES_AND_CALLS -> settingsStore.setMessagesAndCallsEnabled(enabled)
                 OnboardingFeature.PHOTOS -> settingsStore.setPhotosEnabled(enabled)
+                OnboardingFeature.WALLPAPER -> settingsStore.setWallpaperShareEnabled(enabled)
                 OnboardingFeature.RING_AND_SOUND -> settingsStore.setDeviceControlAllowed(enabled)
             }
         }

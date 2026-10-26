@@ -200,7 +200,8 @@ class OnboardingViewModelTest {
     fun `feature switches persist and are off by default`() {
         val settings = FakeSettings()
         val model = vm(settings = settings)
-        assertTrue(model.state.value.features.none { it.enabled })
+        // Wallpaper is the one feature on by default (ADR-038); the fake keeps the store default.
+        assertTrue(model.state.value.features.filter { it.feature != OnboardingFeature.WALLPAPER }.none { it.enabled })
 
         model.setFeatureEnabled(OnboardingFeature.NOTIFICATIONS, true)
         model.setFeatureEnabled(OnboardingFeature.MEDIA, true)
