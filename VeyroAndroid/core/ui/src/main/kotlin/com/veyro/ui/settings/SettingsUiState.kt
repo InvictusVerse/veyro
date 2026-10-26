@@ -17,6 +17,12 @@ public data class SettingsUiState(
     val alwaysDiscoverable: Boolean = false,
     val destinationPath: String? = null,
 
+    /** The user's choice to mirror notifications to a connected PC (ADR-025). */
+    val notificationMirrorEnabled: Boolean = false,
+
+    /** Whether the system has granted notification access. Mirroring does nothing without it. */
+    val notificationAccessGranted: Boolean = false,
+
     /**
      * Set when the identity could not be loaded at all. This is the "your identity was lost"
      * state from `05-SECURITY.md` section 7, and it must be shown rather than hidden behind a

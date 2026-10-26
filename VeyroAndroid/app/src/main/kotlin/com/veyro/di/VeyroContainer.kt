@@ -36,8 +36,15 @@ import com.veyro.core.discovery.NsdMdnsBrowser
 import com.veyro.core.discovery.UdpBeaconImpl
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.withTimeoutOrNull
+import com.veyro.core.companion.AndroidNotificationSource
+import com.veyro.core.companion.NotificationMirror
+import com.veyro.core.companion.VeyroNotificationListener
+import com.veyro.core.companion.asCompanionLink
 import java.util.concurrent.ConcurrentHashMap
 import com.veyro.core.link.ConnectionManager
 import com.veyro.core.link.TransferCoordinator
@@ -283,6 +290,35 @@ public class VeyroContainer(context: Context) {
     private companion object {
         const val LAST_KNOWN_ENDPOINT_TTL_MS = 60_000L
     }
+
+    // ── Companion: notification mirroring (ADR-025) ────────────────────────────────────────
+
+    /** Reads the bound notification listener and executes PC requests against it. */
+    public val notificationSource: AndroidNotificationSource by lazy {
+        AndroidNotificationSource(appContext, dispatchers)
+    }
+
+    /**
+     * Sends notifications to the connected PC while the user has mirroring on.
+     *
+     * Both inputs are wrapped in `flow {}` so building this touches neither the settings file nor
+     * the connection layer; they are reached only once the mirror collects them on [appScope], and
+     * the connection only while the setting is on.
+     */
+    public val notificationMirror: NotificationMirror by lazy {
+        NotificationMirror(
+            links = flow { emitAll(connectionManager.activeConnection) }
+                .map { it?.asCompanionLink() },
+            enabled = flow { emitAll(settingsStore.notificationMirrorEnabled) },
+            source = notificationSource,
+            executor = notificationSource,
+            scope = appScope,
+        )
+    }
+
+    /** Whether notification access is granted, for the Settings row. */
+    public fun isNotificationAccessGranted(): Boolean =
+        VeyroNotificationListener.isAccessGranted(appContext)
 
     /**
      * Where received files land.

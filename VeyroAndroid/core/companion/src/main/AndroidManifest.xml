@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+          Exported because the system binds it; the BIND_NOTIFICATION_LISTENER_SERVICE permission
+          means only the system can. It does nothing until the user grants notification access in
+          system settings, and nothing leaves the phone unless mirroring is also switched on.
+        -->
+        <service
+            android:name="com.veyro.core.companion.VeyroNotificationListener"
+            android:exported="true"
+            android:label="Veyro notification mirroring"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

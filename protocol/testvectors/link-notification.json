@@ -1,0 +1,25 @@
+{
+  "description": "Companion notification messages (ADR-025). Each 'json' is the LinkMessage payload exactly as LinkJson encodes it (discriminator 't', nulls omitted). Both clients must decode every entry to the listed type and re-encode it to semantically identical JSON.",
+  "vectors": [
+    {
+      "type": "notif",
+      "json": "{\"t\":\"notif\",\"key\":\"0|com.example.chat|7|null|10123\",\"kind\":\"posted\",\"pkg\":\"com.example.chat\",\"app\":\"Chat\",\"title\":\"Sam\",\"text\":\"Lunch?\",\"messages\":[{\"sender\":\"Sam\",\"text\":\"Lunch?\"}],\"ts\":1793011200000,\"group\":\"chat-sam\",\"actions\":[{\"index\":1,\"label\":\"Mark as read\"}],\"canReply\":true}"
+    },
+    {
+      "type": "notif",
+      "json": "{\"t\":\"notif\",\"key\":\"0|com.example.chat|7|null|10123\",\"kind\":\"removed\"}"
+    },
+    {
+      "type": "notifAction",
+      "json": "{\"t\":\"notifAction\",\"key\":\"0|com.example.chat|7|null|10123\",\"index\":1}"
+    },
+    {
+      "type": "notifReply",
+      "json": "{\"t\":\"notifReply\",\"key\":\"0|com.example.chat|7|null|10123\",\"text\":\"Sure, 1pm\"}"
+    },
+    {
+      "type": "notifDismiss",
+      "json": "{\"t\":\"notifDismiss\",\"key\":\"0|com.example.chat|7|null|10123\"}"
+    }
+  ]
+}

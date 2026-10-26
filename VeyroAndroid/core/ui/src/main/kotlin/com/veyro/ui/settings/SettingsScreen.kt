@@ -1,7 +1,11 @@
 package com.veyro.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
@@ -45,9 +50,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.veyro.core.designsystem.components.VeyroButton
 import com.veyro.core.designsystem.components.VeyroCard
@@ -77,6 +85,7 @@ import com.veyro.core.designsystem.theme.VeyroVioletContainer
  *   [Identity hero]     ← fingerprint display with dramatic presentation
  *   [Device name]       ← editable name
  *   [Discovery]         ← always-discoverable toggle
+ *   [Notifications]     ← mirror-to-PC toggle and notification access row
  *   [Danger zone]       ← identity reset
  *   [Debug panel]       ← diagnostics + log tail
  */
@@ -88,6 +97,13 @@ public fun SettingsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showResetConfirm by remember { mutableStateOf(false) }
     var showDebug by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    // Notification access is granted in system settings, so re-check whenever the user returns.
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshNotificationAccess()
+        onPauseOrDispose { }
+    }
 
     LaunchedEffect(showDebug) {
         if (showDebug) viewModel.refreshDiagnostics()
@@ -136,6 +152,22 @@ public fun SettingsScreen(
             DiscoverySection(
                 alwaysDiscoverable = state.alwaysDiscoverable,
                 onToggle = viewModel::setAlwaysDiscoverable,
+            )
+        }
+
+        // Notification mirroring (ADR-025)
+        item {
+            NotificationMirrorSection(
+                enabled = state.notificationMirrorEnabled,
+                accessGranted = state.notificationAccessGranted,
+                onToggle = viewModel::setNotificationMirrorEnabled,
+                onOpenAccessSettings = {
+                    try {
+                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    } catch (_: ActivityNotFoundException) {
+                        // Some builds hide the screen; the row's subtitle still says what is missing.
+                    }
+                },
             )
         }
 
@@ -387,6 +419,85 @@ private fun DiscoverySection(
                 checked = alwaysDiscoverable,
                 onCheckedChange = onToggle,
             )
+        }
+    }
+}
+
+@Composable
+private fun NotificationMirrorSection(
+    enabled: Boolean,
+    accessGranted: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onOpenAccessSettings: () -> Unit,
+) {
+    VeyroGlassCard {
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Mirror notifications to PC",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Off by default. Shows this phone's notifications on a connected PC, " +
+                            "where you can reply, run their actions or dismiss them.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = VeyroTextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                ToggleSwitch(checked = enabled, onCheckedChange = onToggle)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = VeyroGlassBorder)
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(
+                        onClickLabel = "Open notification access settings",
+                        role = Role.Button,
+                        onClick = onOpenAccessSettings,
+                    )
+                    .padding(vertical = 12.dp),
+            ) {
+                Icon(
+                    imageVector = if (accessGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (accessGranted) VeyroTeal else VeyroRed.copy(alpha = 0.8f),
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (accessGranted) "Notification access granted" else "Notification access needed",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (accessGranted) {
+                            "Tap to review it in system settings."
+                        } else {
+                            "Tap to allow Veyro in system settings. On Android 13 and later, an app " +
+                                "installed outside an app store may first need \"Allow restricted " +
+                                "settings\" from its App info menu."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = VeyroTextSecondary,
+                    )
+                }
+            }
         }
     }
 }

@@ -40,6 +40,8 @@ public class FileSettingsStore(
         val deviceName: String? = null,
         val destinationPath: String? = null,
         val alwaysDiscoverable: Boolean = false,
+        // Added after v1 with a default, so an older settings file still decodes.
+        val notificationMirrorEnabled: Boolean = false,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -60,6 +62,9 @@ public class FileSettingsStore(
     override val alwaysDiscoverable: Flow<Boolean> =
         state.asStateFlow().map { it.alwaysDiscoverable }
 
+    override val notificationMirrorEnabled: Flow<Boolean> =
+        state.asStateFlow().map { it.notificationMirrorEnabled }
+
     override suspend fun setDeviceName(name: String) {
         // The name goes into an mDNS TXT record, which is size-limited (Vlp.MAX_DISPLAY_NAME_BYTES).
         // Truncating here rather than at the advertiser means what the user sees in Settings is what
@@ -75,6 +80,10 @@ public class FileSettingsStore(
 
     override suspend fun setAlwaysDiscoverable(enabled: Boolean) {
         update { it.copy(alwaysDiscoverable = enabled) }
+    }
+
+    override suspend fun setNotificationMirrorEnabled(enabled: Boolean) {
+        update { it.copy(notificationMirrorEnabled = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

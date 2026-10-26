@@ -2,6 +2,7 @@ package com.veyro.core.link
 
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.model.Capabilities
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
 import com.veyro.core.model.Platform
@@ -752,13 +753,7 @@ public class ConnectionManager(
         _events.value = ConnectionEvent.Connected(peer.deviceId.value, peer.name)
         VeyroLog.i(TAG) { "[$connId] Session established with ${peer.name} (remoteHost=$remoteHost, localHost=$localHost)" }
 
-        session.send(
-            LinkMessage.Hello(
-                deviceId = selfId,
-                deviceName = localDeviceName(),
-                platform = Platform.ANDROID.toWire(),
-            ),
-        )
+        sendHello(session, selfId)
 
         // The receiver auto-listens for an offer; the sender's driver is a no-op (it sends via the
         // activeSession the UI drives). Launched alongside the read loop so a stalled transfer
@@ -772,6 +767,24 @@ public class ConnectionManager(
         _activeConnection.value = null
         _events.value = ConnectionEvent.Disconnected
         VeyroLog.i(TAG) { "[$connId] Session closed with ${peer.name} (inbound=$inbound, isConnected=${session.isConnected})" }
+    }
+
+    /**
+     * Opens a session by announcing this build's capability bits.
+     *
+     * An older peer ignores the field's value; the peer's own bits arrive in its `hello`/`helloAck`
+     * and are recorded on [PeerConnection.peerCapabilities]. Companion features read that, so
+     * nothing new is sent to a peer that did not advertise it (ADR-025).
+     */
+    private suspend fun sendHello(session: PeerConnection, selfId: String) {
+        session.send(
+            LinkMessage.Hello(
+                deviceId = selfId,
+                deviceName = localDeviceName(),
+                platform = Platform.ANDROID.toWire(),
+                capabilities = Capabilities.ANDROID_CURRENT.bits,
+            ),
+        )
     }
 
     // ── Plumbing ───────────────────────────────────────────────────────────────────────────

@@ -48,6 +48,8 @@ include(":core:link")
 include(":core:transfer")
 include(":core:data")
 include(":core:service")
+// Phone Link style companion features over a paired session (ADR-025). Notifications first.
+include(":core:companion")
 include(":core:designsystem")
 include(":core:ui")
 include(":core:testing")

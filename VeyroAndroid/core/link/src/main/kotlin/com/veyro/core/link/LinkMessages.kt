@@ -252,6 +252,62 @@ public sealed interface LinkMessage {
     @SerialName("pong")
     public data class Pong(val nonce: String) : LinkMessage
 
+    // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────────
+    //
+    // Only sent to a peer whose Hello/HelloAck `capabilities` include NOTIFICATION_MIRROR
+    // (0x0100). An older peer cannot decode these types, so the capability gate is what makes
+    // them non-breaking. Contents are user data: never log title, text or messages.
+
+    /** Phone to PC: a notification was posted, is already active, or was removed. */
+    @Serializable
+    @SerialName("notif")
+    public data class Notification(
+        /** `StatusBarNotification.key`. Opaque; identifies the notification in every reply. */
+        val key: String,
+        /** `posted` | `active` | `removed`. A `removed` frame carries only `key`. */
+        val kind: String,
+        val pkg: String? = null,
+        val app: String? = null,
+        val title: String? = null,
+        val text: String? = null,
+        /** Conversation lines for messaging-style notifications, oldest first. */
+        val messages: List<NotificationLine>? = null,
+        val ts: Long? = null,
+        val group: String? = null,
+        val actions: List<NotificationActionInfo>? = null,
+        /** True when the notification has a RemoteInput reply action. */
+        val canReply: Boolean? = null,
+        /** App icon as PNG, at most 96x96 and 16 KiB, base64. Absent if unavailable or too big. */
+        val iconPng: String? = null,
+    ) : LinkMessage {
+        public companion object {
+            public const val KIND_POSTED: String = "posted"
+            public const val KIND_ACTIVE: String = "active"
+            public const val KIND_REMOVED: String = "removed"
+        }
+    }
+
+    /** PC to phone: invoke action [index] (index into the phone's own `Notification.actions`). */
+    @Serializable
+    @SerialName("notifAction")
+    public data class NotificationActionRequest(val key: String, val index: Int) : LinkMessage
+
+    /** PC to phone: send [text] through the notification's RemoteInput reply action. */
+    @Serializable
+    @SerialName("notifReply")
+    public data class NotificationReplyRequest(val key: String, val text: String) : LinkMessage
+
+    /** PC to phone: dismiss the notification on the phone. */
+    @Serializable
+    @SerialName("notifDismiss")
+    public data class NotificationDismissRequest(val key: String) : LinkMessage
+
+    @Serializable
+    public data class NotificationLine(val sender: String? = null, val text: String)
+
+    @Serializable
+    public data class NotificationActionInfo(val index: Int, val label: String)
+
     @Serializable
     public data class Item(
         val index: Int,

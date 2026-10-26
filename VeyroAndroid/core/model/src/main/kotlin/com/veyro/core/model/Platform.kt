@@ -54,6 +54,7 @@ public value class Capabilities(public val bits: Int) {
             Capability.FILE_TRANSFER,
             Capability.FOLDER_TRANSFER,
             Capability.RESUME,
+            Capability.NOTIFICATION_MIRROR,
         )
     }
 }
@@ -67,4 +68,7 @@ public enum class Capability(public val bit: Int) {
     HANDOFF(0x0020),
     MULTI_STREAM(0x0040),
     COMPRESSION(0x0080),
+
+    /** Phone notifications mirrored to the peer, with actions and inline reply (ADR-025). */
+    NOTIFICATION_MIRROR(0x0100),
 }

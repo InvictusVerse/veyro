@@ -1,6 +1,7 @@
 package com.veyro.core.link
 
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.model.Capabilities
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
@@ -20,8 +21,11 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -125,6 +129,16 @@ public class PeerConnection(
 
     private val _closed = MutableSharedFlow<String>(replay = 1)
     public val closed: SharedFlow<String> = _closed.asSharedFlow()
+
+    private val _peerCapabilities = MutableStateFlow(Capabilities.NONE)
+
+    /**
+     * What the peer said it supports, from the most recent authenticated `hello`/`helloAck`.
+     *
+     * [Capabilities.NONE] until one arrives, so an older peer that never sends either - or sends
+     * `capabilities = 0` - is never sent a message type it cannot decode (ADR-025).
+     */
+    public val peerCapabilities: StateFlow<Capabilities> = _peerCapabilities.asStateFlow()
 
     private val mailboxes = ConcurrentHashMap<String, TransferMailbox>()
     private val completedTransfers = Collections.synchronizedSet(
@@ -426,11 +440,19 @@ public class PeerConnection(
                 mailboxes[payload.transferId]?.deliverCancel(payload)
             }
 
+            is LinkMessage.Hello -> {
+                _peerCapabilities.value = Capabilities(payload.capabilities)
+                handshakeChannel.trySend(envelope)
+            }
+
+            is LinkMessage.HelloAck -> {
+                _peerCapabilities.value = Capabilities(payload.capabilities)
+                handshakeChannel.trySend(envelope)
+            }
+
             is LinkMessage.PairHello,
             is LinkMessage.PairOk,
-            is LinkMessage.PairFail,
-            is LinkMessage.Hello,
-            is LinkMessage.HelloAck -> {
+            is LinkMessage.PairFail -> {
                 handshakeChannel.trySend(envelope)
             }
 

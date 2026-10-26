@@ -29,6 +29,8 @@ public class SettingsViewModel(
     private val trustStore: TrustStore,
     private val logSink: RecordingLogSink?,
     private val diagnosticsProvider: suspend () -> Diagnostics,
+    /** Whether the system has granted notification access. Re-read on every screen resume. */
+    private val notificationAccessGranted: () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -75,6 +77,19 @@ public class SettingsViewModel(
                 )
             }
             .launchIn(viewModelScope)
+
+        settingsStore.notificationMirrorEnabled
+            .onEach { _state.value = _state.value.copy(notificationMirrorEnabled = it) }
+            .launchIn(viewModelScope)
+    }
+
+    public fun setNotificationMirrorEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setNotificationMirrorEnabled(enabled) }
+    }
+
+    /** Access is granted in system settings, outside the app, so it is polled on resume. */
+    public fun refreshNotificationAccess() {
+        _state.value = _state.value.copy(notificationAccessGranted = notificationAccessGranted())
     }
 
     public fun setDeviceName(name: String) {

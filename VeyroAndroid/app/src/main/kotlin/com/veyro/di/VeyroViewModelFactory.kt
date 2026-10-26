@@ -65,6 +65,7 @@ public class VeyroViewModelFactory(
             trustStore = container.trustStore,
             logSink = container.logRecorder,
             diagnosticsProvider = { container.diagnostics() },
+            notificationAccessGranted = container::isNotificationAccessGranted,
         ) as T
 
         else -> error("Unknown ViewModel ${modelClass.name}; add it to VeyroViewModelFactory")
