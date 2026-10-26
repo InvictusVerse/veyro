@@ -71,7 +71,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     public const int LocalCapabilities =
         LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror |
         LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
-        LinkCapabilities.Messaging | LinkCapabilities.Calls | LinkCapabilities.Photos;
+        LinkCapabilities.Messaging | LinkCapabilities.Calls | LinkCapabilities.Photos |
+        LinkCapabilities.Wallpaper;
 
     /// <summary>
     /// Claims offers that answer a request this PC made (photoFetch, ADR-034). Those are accepted
@@ -676,6 +677,22 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     case LinkMessage.DeviceStatus deviceStatus:
                         registration.Capabilities |= LinkCapabilities.DeviceStatus;
                         _sessions.PublishDeviceStatus(peer.DeviceId, deviceStatus);
+                        break;
+                    // ADR-038. Only an authenticated session reaches here; trust is re-read so a
+                    // phone removed while connected cannot lock the PC.
+                    case LinkMessage.PcLock:
+                        if (_trustStore.GetPeer(peer.DeviceId) is null)
+                        {
+                            VeyroTrace.Warn("PC lock ignored: the peer is no longer trusted");
+                            break;
+                        }
+                        VeyroTrace.Info("PC lock requested");
+                        _sessions.PublishDeviceMessage(peer.DeviceId, message.Envelope.Payload);
+                        break;
+                    // Wallpaper bytes are user data: never logged.
+                    case LinkMessage.Wallpaper:
+                        registration.Capabilities |= LinkCapabilities.Wallpaper;
+                        _sessions.PublishDeviceMessage(peer.DeviceId, message.Envelope.Payload);
                         break;
                     // ADR-027, same inference. Bodies, numbers and names are never logged.
                     case LinkMessage.SimList or LinkMessage.SmsThreads or LinkMessage.SmsMessages or

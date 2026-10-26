@@ -13,8 +13,13 @@ public sealed class MainPageViewModel : BaseViewModel
     /// <summary>Shown wherever Sefirah offers scrcpy: Veyro has no screen mirroring yet.</summary>
     public const string ScreenMirrorUnavailableText = "Screen mirroring is not available yet.";
 
+    /// <summary>How long the pill says Connecting after start-up or a refresh.</summary>
+    private static readonly TimeSpan ConnectingWindow = TimeSpan.FromSeconds(15);
+
     private readonly IDeviceManager _deviceManager;
     private readonly IFileTransferService _transferService;
+    private readonly DispatcherQueueTimer? _connectingTimer;
+    private DateTimeOffset _connectingUntil = DateTimeOffset.UtcNow + ConnectingWindow;
 
     private PairedDeviceUiModel? _activeDevice;
     private ActiveTransfer? _activeTransfer;
@@ -48,6 +53,17 @@ public sealed class MainPageViewModel : BaseViewModel
     public bool HasSingleDevice => PairedDevices.Count <= 1;
 
     public bool IsDeviceConnected => Device?.IsConnected == true;
+
+    /// <summary>
+    /// Phone Link's pill (ADR-038). "Connecting" only for a short window after start-up or a
+    /// refresh, while the phone is expected to open its session; otherwise not connected is Offline.
+    /// </summary>
+    public string ConnectionPillText => Device is null ? string.Empty
+        : IsDeviceConnected ? "Connected"
+        : IsConnecting ? "Connecting" : "Offline";
+
+    public bool IsConnecting => Device is { IsConnected: false } && DateTimeOffset.UtcNow < _connectingUntil;
+    public bool IsOffline => Device is { IsConnected: false } && !IsConnecting;
 
     public string ConnectionHelpText => Device switch
     {
@@ -124,6 +140,22 @@ public sealed class MainPageViewModel : BaseViewModel
         _deviceManager.DiscoveryChanged += () => OnPropertyChanged(nameof(NetworkText));
 
         _transferService.ActiveTransferChanged += transfer => ActiveTransfer = transfer;
+
+        if (DispatcherQueue.GetForCurrentThread() is { } dispatcher)
+        {
+            _connectingTimer = dispatcher.CreateTimer();
+            _connectingTimer.IsRepeating = false;
+            _connectingTimer.Tick += (_, _) => RaiseConnectionPill();
+            _connectingTimer.Interval = ConnectingWindow;
+            _connectingTimer.Start();
+        }
+    }
+
+    private void RaiseConnectionPill()
+    {
+        OnPropertyChanged(nameof(ConnectionPillText));
+        OnPropertyChanged(nameof(IsConnecting));
+        OnPropertyChanged(nameof(IsOffline));
     }
 
     public void SwitchToNextDevice(int wheelDelta) => _deviceManager.SelectNext(wheelDelta);
@@ -132,14 +164,29 @@ public sealed class MainPageViewModel : BaseViewModel
 
     public void RequestPairing() => PairRequested?.Invoke();
 
-    public Task RefreshDiscoveryAsync() => _deviceManager.RefreshDiscoveryAsync();
+    /// <summary>
+    /// Refresh: the phone opens the link, so this re-announces the PC and re-reads discovery, then
+    /// shows Connecting for a short window.
+    /// </summary>
+    public Task RefreshDiscoveryAsync()
+    {
+        _connectingUntil = DateTimeOffset.UtcNow + ConnectingWindow;
+        RaiseConnectionPill();
+        if (_connectingTimer is not null)
+        {
+            _connectingTimer.Stop();
+            _connectingTimer.Start();
+        }
+        return _deviceManager.RefreshDiscoveryAsync();
+    }
 
     private void RaiseDeviceProperties()
     {
         foreach (string name in new[]
                  {
                      nameof(HasActiveDevice), nameof(HasNoActiveDevice), nameof(IsDeviceConnected),
-                     nameof(ConnectionHelpText), nameof(NetworkText), nameof(Fingerprint), nameof(HasFingerprint)
+                     nameof(ConnectionHelpText), nameof(NetworkText), nameof(Fingerprint), nameof(HasFingerprint),
+                     nameof(ConnectionPillText), nameof(IsConnecting), nameof(IsOffline)
                  })
         {
             OnPropertyChanged(name);

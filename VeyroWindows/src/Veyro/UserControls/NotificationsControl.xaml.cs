@@ -50,6 +50,8 @@ public sealed partial class NotificationsControl : UserControl
         if (ItemOf(sender) is { } item) await ViewModel.DismissAsync(item);
     }
 
+    private async void ClearAll_Click(object sender, RoutedEventArgs e) => await ViewModel.ClearAllAsync();
+
     private async void SendReply_Click(object sender, RoutedEventArgs e)
     {
         if (ItemOf(sender) is { } item) await ViewModel.SendReplyAsync(item);

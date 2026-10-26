@@ -76,11 +76,12 @@ public interface INotificationToastService : IDisposable
     void Initialize();
 
     /// <summary>
-    /// Incoming-files toast with Accept and Decline (ADR-036). True or false for the buttons, null
-    /// when the user clicked the toast body (Veyro is shown). Throws when toasts are unavailable;
-    /// cancelling <paramref name="ct"/> removes the toast. Counts only, never file names.
+    /// Incoming-files toast (ADR-036, ADR-038): Accept (and accept this phone's files from now on,
+    /// the pre-ticked default), Only this time, Decline. Null when the user clicked the toast body
+    /// (Veyro is shown). Throws when toasts are unavailable; cancelling <paramref name="ct"/>
+    /// removes the toast. Counts only, never file names.
     /// </summary>
-    Task<bool?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct);
+    Task<ConsentAnswer?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct);
 }
 
 /// <summary>
@@ -95,6 +96,18 @@ public interface IWindowsMediaSource : IPcMediaSource, IDisposable
 
 /// <summary>This PC's battery, published to the phone (ADR-026). Windows: PowerManager.</summary>
 public interface IWindowsBatterySource : IPcBatterySource, IDisposable
+{
+    void Start();
+}
+
+/// <summary>This PC's desktop wallpaper, published to the phone (ADR-038). Windows: SystemParametersInfo.</summary>
+public interface IWindowsWallpaperSource : IPcWallpaperSource, IDisposable
+{
+    void Start();
+}
+
+/// <summary>This PC's Wi-Fi signal, published to the phone (ADR-038). Windows: NetworkInformation.</summary>
+public interface IWindowsNetworkSource : IPcNetworkSource, IDisposable
 {
     void Start();
 }

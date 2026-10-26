@@ -1,8 +1,10 @@
 <!--
     Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/DeviceControlCenter.xaml, GPL-3.0.
-    Modified for Veyro.
+    Modified for Veyro: laid out like the Windows Phone Link device header (ADR-038) - the phone
+    drawn with its own wallpaper, name, radio and battery glyphs, a connection pill with refresh,
+    and a row of quick actions.
     Every value shown here is reported by the phone or the session registry. With no phone
-    connected the status row is empty: no battery, ringer or DND state is invented.
+    connected the status row is empty: no battery, signal, ringer or DND state is invented.
 -->
 <UserControl
     x:Class="Veyro.UserControls.DeviceControlCenter"
@@ -16,20 +18,12 @@
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <converters:BooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" Inverse="True" />
 
-        <Style x:Key="ConnectionSplitButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
-            <Setter Property="Height" Value="32" />
-            <Setter Property="MinWidth" Value="32" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="Background" Value="{ThemeResource ControlFillColorDefaultBrush}" />
-            <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
-        </Style>
-
         <Style x:Key="DeviceNameComboBoxStyle" BasedOn="{StaticResource DefaultComboBoxStyle}" TargetType="ComboBox">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="18" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="8,4,0,4" />
         </Style>
 
         <Style x:Key="FlyoutRowButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
@@ -38,6 +32,28 @@
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!--  Round icon buttons next to the pill  -->
+        <Style x:Key="PillIconButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="16" />
+        </Style>
+
+        <!--  Phone Link's square quick-action tiles  -->
+        <Style x:Key="QuickActionButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Height" Value="52" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style x:Key="QuickActionToggleStyle" BasedOn="{StaticResource DefaultToggleButtonStyle}" TargetType="ToggleButton">
+            <Setter Property="Height" Value="52" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="CornerRadius" Value="8" />
         </Style>
 
         <Storyboard x:Name="FadeInStoryboard">
@@ -58,307 +74,192 @@
         </Storyboard>
     </UserControl.Resources>
 
-    <Grid ColumnSpacing="18">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+    <Grid RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-        <!--  Phone frame. Mouse wheel switches between paired phones (as in Sefirah).  -->
-        <Grid
-            x:Name="PhoneFrameGrid"
-            Grid.Column="0"
-            Width="54"
-            Height="100"
-            VerticalAlignment="Center"
-            AutomationProperties.Name="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
-            CornerRadius="8"
-            PointerEntered="PhoneFrame_PointerEntered"
-            PointerExited="PhoneFrame_PointerExited"
-            PointerWheelChanged="PhoneFrame_PointerWheelChanged">
-            <Rectangle
-                Opacity="0.5"
-                RadiusX="4"
-                RadiusY="4"
-                Stroke="Black"
-                StrokeThickness="2">
-                <Rectangle.Fill>
-                    <SolidColorBrush Opacity="0.1" Color="{ThemeResource SystemBaseLowColor}" />
-                </Rectangle.Fill>
-            </Rectangle>
-            <Rectangle
-                Margin="2"
-                RadiusX="4"
-                RadiusY="4"
-                Stroke="Black"
-                StrokeThickness="1" />
-            <Border Margin="3" CornerRadius="4" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Offset="0" Color="#FF0070FF" />
-                        <GradientStop Offset="1" Color="#FF2E90FF" />
-                    </LinearGradientBrush>
-                </Border.Background>
-                <FontIcon
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    FontSize="18"
-                    Foreground="White"
-                    Glyph="&#xE8EA;" />
-            </Border>
-            <!--  Sefirah starts scrcpy here. Veyro has no screen mirroring yet, and says so.  -->
+        <Grid Grid.Row="0" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!--  The phone, drawn with its own wallpaper. Mouse wheel switches paired phones (as in Sefirah).  -->
             <Grid
-                x:Name="PhoneFrameOverlay"
-                Background="#80000000"
-                Opacity="0"
-                ToolTipService.ToolTip="{x:Bind ScreenMirrorText}"
-                Visibility="Collapsed">
-                <FontIcon Foreground="White" Glyph="&#xEC15;" Opacity="0.6" />
+                x:Name="PhoneFrameGrid"
+                Grid.Column="0"
+                Width="76"
+                Height="152"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
+                PointerEntered="PhoneFrame_PointerEntered"
+                PointerExited="PhoneFrame_PointerExited"
+                PointerWheelChanged="PhoneFrame_PointerWheelChanged">
+                <!--  Bezel  -->
+                <Border
+                    Background="#FF1B1B1F"
+                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="14" />
+                <Grid Margin="4" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
+                    <!--  Fallback when the phone has not sent a wallpaper  -->
+                    <Border CornerRadius="10">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Offset="0" Color="#FF2F5BEA" />
+                                <GradientStop Offset="0.55" Color="#FF4C8DF6" />
+                                <GradientStop Offset="1" Color="#FF7FC4FF" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Border CornerRadius="10" Visibility="{x:Bind StatusViewModel.HasWallpaper, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Border.Background>
+                            <ImageBrush ImageSource="{x:Bind StatusViewModel.Wallpaper, Mode=OneWay}" Stretch="UniformToFill" />
+                        </Border.Background>
+                    </Border>
+                    <!--  Front camera  -->
+                    <Ellipse
+                        Width="5"
+                        Height="5"
+                        Margin="0,6,0,0"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Top"
+                        Fill="#FF0B0B0E" />
+                </Grid>
+                <!--  Sefirah starts scrcpy here. Veyro has no screen mirroring yet, and says so.  -->
+                <Grid
+                    x:Name="PhoneFrameOverlay"
+                    Margin="4"
+                    Background="#99000000"
+                    CornerRadius="10"
+                    Opacity="0"
+                    ToolTipService.ToolTip="{x:Bind ScreenMirrorText}"
+                    Visibility="Collapsed">
+                    <FontIcon
+                        FontSize="20"
+                        Foreground="White"
+                        Glyph="&#xEC15;"
+                        Opacity="0.7" />
+                </Grid>
             </Grid>
-        </Grid>
 
-        <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Spacing="4">
-            <TextBlock
-                FontWeight="SemiBold"
-                Text="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
-                TextTrimming="CharacterEllipsis"
-                Visibility="{x:Bind ViewModel.HasSingleDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-            <ComboBox
-                Margin="-8,0,0,0"
-                AutomationProperties.Name="Phone shown in Veyro"
-                ItemsSource="{x:Bind ViewModel.PairedDevices, Mode=OneWay}"
-                SelectedItem="{x:Bind ViewModel.Device, Mode=TwoWay}"
-                Style="{StaticResource DeviceNameComboBoxStyle}"
-                Visibility="{x:Bind ViewModel.HasMultipleDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <ComboBox.ItemTemplate>
-                    <DataTemplate x:DataType="models:PairedDeviceUiModel">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Ellipse
-                                Width="8"
-                                Height="8"
-                                VerticalAlignment="Center"
-                                Fill="{ThemeResource SystemFillColorSuccessBrush}"
-                                Visibility="{x:Bind IsConnected, Mode=OneWay}" />
-                            <TextBlock Text="{x:Bind Name, Mode=OneWay}" />
-                        </StackPanel>
-                    </DataTemplate>
-                </ComboBox.ItemTemplate>
-            </ComboBox>
-
-            <!--  Phone-reported status (ADR-026). Each icon exists only once the phone reported it.  -->
             <StackPanel
-                MinHeight="32"
-                Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}"
-                Orientation="Horizontal"
-                Spacing="4">
-                <Button
-                    x:Name="AudioButton"
-                    Padding="4"
-                    AutomationProperties.Name="{x:Bind StatusViewModel.RingerLabel, Mode=OneWay}"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    ToolTipService.ToolTip="{x:Bind StatusViewModel.RingerLabel, Mode=OneWay}"
-                    Visibility="{x:Bind StatusViewModel.HasRinger, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <FontIcon Glyph="{x:Bind StatusViewModel.RingerGlyph, Mode=OneWay}" />
-                    <Button.Flyout>
-                        <Flyout x:Name="AudioFlyout" Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
-                            <StackPanel MinWidth="260" Spacing="8">
-                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Ringer" />
-                                <!--  Selections show only what the phone reports; a click is a request.  -->
-                                <Grid ColumnSpacing="4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <ToggleButton
-                                        Grid.Column="0"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Silent"
-                                        Click="RingerSilent_Click"
-                                        IsChecked="{x:Bind StatusViewModel.IsRingerSilent, Mode=OneWay}"
-                                        IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
-                                        <StackPanel Spacing="4">
-                                            <FontIcon Glyph="&#xE7ED;" />
-                                            <TextBlock FontSize="12" Text="Silent" />
-                                        </StackPanel>
-                                    </ToggleButton>
-                                    <ToggleButton
-                                        Grid.Column="1"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Vibrate"
-                                        Click="RingerVibrate_Click"
-                                        IsChecked="{x:Bind StatusViewModel.IsRingerVibrate, Mode=OneWay}"
-                                        IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
-                                        <StackPanel Spacing="4">
-                                            <FontIcon Glyph="&#xE877;" />
-                                            <TextBlock FontSize="12" Text="Vibrate" />
-                                        </StackPanel>
-                                    </ToggleButton>
-                                    <ToggleButton
-                                        Grid.Column="2"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Ring"
-                                        Click="RingerNormal_Click"
-                                        IsChecked="{x:Bind StatusViewModel.IsRingerNormal, Mode=OneWay}"
-                                        IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
-                                        <StackPanel Spacing="4">
-                                            <FontIcon Glyph="&#xEA8F;" />
-                                            <TextBlock FontSize="12" Text="Ring" />
-                                        </StackPanel>
-                                    </ToggleButton>
-                                </Grid>
-                                <TextBlock
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="Media volume is in the media card below while something plays."
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
-                </Button>
-                <FontIcon
-                    VerticalAlignment="Center"
-                    AutomationProperties.Name="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
-                    FontSize="14"
-                    Glyph="&#xE708;"
-                    ToolTipService.ToolTip="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
-                    Visibility="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                <StackPanel
-                    VerticalAlignment="Center"
-                    Orientation="Horizontal"
-                    Spacing="4"
-                    ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
-                    Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <FontIcon AutomationProperties.Name="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}" Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
-                    <TextBlock FontWeight="SemiBold" Text="{x:Bind StatusViewModel.BatteryText, Mode=OneWay}" />
-                </StackPanel>
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Spacing="8">
                 <TextBlock
-                    VerticalAlignment="Center"
-                    Style="{StaticResource CaptionTextBlockStyle}"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Waiting for phone status"
-                    Visibility="{x:Bind StatusViewModel.IsWaitingForStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-            </StackPanel>
+                    FontSize="18"
+                    FontWeight="SemiBold"
+                    MaxLines="2"
+                    Text="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind ViewModel.HasSingleDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button
-                    x:Name="DeviceActionsButton"
-                    Height="32"
-                    MinWidth="32"
-                    Padding="0"
-                    AutomationProperties.Name="Device actions"
-                    ToolTipService.ToolTip="Device actions">
-                    <FontIcon FontSize="14" Glyph="&#xF0E2;" />
-                    <Button.Flyout>
-                        <Flyout x:Name="DeviceActionsFlyout" Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
-                            <Flyout.FlyoutPresenterStyle>
-                                <Style BasedOn="{StaticResource DefaultFlyoutPresenterStyle}" TargetType="FlyoutPresenter">
-                                    <Setter Property="MinWidth" Value="320" />
-                                </Style>
-                            </Flyout.FlyoutPresenterStyle>
-                            <StackPanel Spacing="8">
-                                <Grid ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <ToggleButton
-                                        x:Name="DndToggle"
-                                        Grid.Column="0"
-                                        Padding="8,4"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Do not disturb"
-                                        Click="Dnd_Click"
-                                        IsChecked="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay}"
-                                        IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
-                                        ToolTipService.ToolTip="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}">
-                                        <FontIcon Glyph="&#xECE4;" />
-                                    </ToggleButton>
-                                    <ToggleButton
-                                        x:Name="RingToggle"
-                                        Grid.Column="1"
-                                        Padding="8,4"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="{x:Bind StatusViewModel.RingButtonText, Mode=OneWay}"
-                                        Click="Ring_Click"
-                                        IsChecked="{x:Bind StatusViewModel.IsRinging, Mode=OneWay}"
-                                        IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
-                                        ToolTipService.ToolTip="Ring the phone at full volume for up to 30 seconds">
-                                        <Grid>
-                                            <FontIcon Margin="-6,0,0,0" Glyph="&#xE8EA;" />
-                                            <FontIcon Margin="6,0,-6,0" Glyph="&#xEBC5;" />
-                                        </Grid>
-                                    </ToggleButton>
-                                </Grid>
-                                <TextBlock
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="Do not disturb and Ring work while the phone is connected."
-                                    TextWrapping="Wrap"
-                                    Visibility="{x:Bind StatusViewModel.CanControl, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
-                                <TextBlock
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                    Text="{x:Bind StatusViewModel.StatusText, Mode=OneWay}"
-                                    TextWrapping="Wrap"
-                                    Visibility="{x:Bind StatusViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-                                <StackPanel>
-                                    <Button Click="SendFilesAction_Click" Style="{StaticResource FlyoutRowButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="12">
-                                            <FontIcon Glyph="&#xE72D;" />
-                                            <TextBlock VerticalAlignment="Center" Text="Send files" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button Click="OpenReceivedFolderAction_Click" Style="{StaticResource FlyoutRowButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="12">
-                                            <FontIcon Glyph="&#xEC50;" />
-                                            <TextBlock VerticalAlignment="Center" Text="Open received files" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button Click="OpenDeviceSettingsAction_Click" Style="{StaticResource FlyoutRowButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="12">
-                                            <FontIcon Glyph="&#xE713;" />
-                                            <TextBlock VerticalAlignment="Center" Text="Device settings" />
-                                        </StackPanel>
-                                    </Button>
-                                    <!--  Sefirah has clipboard sync; Veyro does not have it yet.  -->
-                                    <Button IsEnabled="False" Style="{StaticResource FlyoutRowButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="12">
-                                            <FontIcon Glyph="&#xF0E3;" />
-                                            <TextBlock VerticalAlignment="Center" Text="Send clipboard (not available yet)" />
-                                        </StackPanel>
-                                    </Button>
-                                </StackPanel>
+                <ComboBox
+                    Margin="-8,0,0,0"
+                    MaxWidth="240"
+                    AutomationProperties.Name="Phone shown in Veyro"
+                    ItemsSource="{x:Bind ViewModel.PairedDevices, Mode=OneWay}"
+                    SelectedItem="{x:Bind ViewModel.Device, Mode=TwoWay}"
+                    Style="{StaticResource DeviceNameComboBoxStyle}"
+                    Visibility="{x:Bind ViewModel.HasMultipleDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="models:PairedDeviceUiModel">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Ellipse
+                                    Width="8"
+                                    Height="8"
+                                    VerticalAlignment="Center"
+                                    Fill="{ThemeResource SystemFillColorSuccessBrush}"
+                                    Visibility="{x:Bind IsConnected, Mode=OneWay}" />
+                                <TextBlock Text="{x:Bind Name, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
-                </Button>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
 
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <!--  Phone-reported status (ADR-026, ADR-038). Each glyph exists only once the phone reported it.  -->
+                <StackPanel
+                    MinHeight="20"
+                    Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}"
+                    Orientation="Horizontal"
+                    Spacing="10">
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="{x:Bind StatusViewModel.BluetoothLabel, Mode=OneWay}"
+                        FontSize="16"
+                        Glyph="&#xE702;"
+                        Opacity="{x:Bind StatusViewModel.BluetoothOpacity, Mode=OneWay}"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.BluetoothLabel, Mode=OneWay}"
+                        Visibility="{x:Bind StatusViewModel.HasBluetooth, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}"
+                        FontSize="16"
+                        Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}"
+                        Opacity="{x:Bind StatusViewModel.WifiOpacity, Mode=OneWay}"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}"
+                        Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}"
+                        FontSize="16"
+                        Glyph="{x:Bind StatusViewModel.CellGlyph, Mode=OneWay}"
+                        Opacity="{x:Bind StatusViewModel.CellOpacity, Mode=OneWay}"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}"
+                        Visibility="{x:Bind StatusViewModel.HasCell, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
+                        FontSize="16"
+                        Glyph="&#xE708;"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
+                        Visibility="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <StackPanel
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="4"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
+                        Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontWeight="SemiBold"
+                            Text="{x:Bind StatusViewModel.BatteryText, Mode=OneWay}" />
+                        <FontIcon
+                            VerticalAlignment="Center"
+                            AutomationProperties.Name="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
+                            FontSize="16"
+                            Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
+                    </StackPanel>
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Waiting for phone status"
+                        TextWrapping="Wrap"
+                        Visibility="{x:Bind StatusViewModel.IsWaitingForStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </StackPanel>
 
+                <!--  Connection pill, refresh, send and more  -->
+                <StackPanel Orientation="Horizontal" Spacing="6">
                     <Button
                         x:Name="ConnectionStatusButton"
-                        Grid.Column="0"
-                        Padding="12,0,12,0"
-                        AutomationProperties.Name="Connection status"
-                        BorderThickness="1,1,0,1"
-                        CornerRadius="4,0,0,4"
-                        Style="{StaticResource ConnectionSplitButtonStyle}">
+                        Height="32"
+                        Padding="12,0"
+                        AutomationProperties.Name="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}"
+                        CornerRadius="16"
+                        ToolTipService.ToolTip="Connection details">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Ellipse
-                                Width="8"
-                                Height="8"
-                                VerticalAlignment="Center"
-                                Fill="{ThemeResource SystemFillColorSuccessBrush}"
-                                Visibility="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                            <TextBlock Text="{x:Bind ViewModel.Device.ConnectionStatusText, Mode=OneWay}" />
+                            <Grid Width="8" Height="8" VerticalAlignment="Center">
+                                <Ellipse Fill="{ThemeResource SystemFillColorSuccessBrush}" Visibility="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <Ellipse Fill="{ThemeResource SystemFillColorCautionBrush}" Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <Ellipse Fill="{ThemeResource SystemFillColorNeutralBrush}" Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </Grid>
+                            <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
                         </StackPanel>
                         <Button.Flyout>
                             <Flyout x:Name="ConnectionFlyout" Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
@@ -374,29 +275,271 @@
                                     <TextBlock
                                         FontFamily="Consolas"
                                         IsTextSelectionEnabled="True"
-                                        Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}" />
+                                        Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}"
+                                        TextWrapping="Wrap" />
                                 </StackPanel>
                             </Flyout>
                         </Button.Flyout>
                     </Button>
 
-                    <!--  Sefirah reconnects here. In Veyro the phone opens the link, so this re-reads discovery.  -->
+                    <!--  The phone opens the link: this re-announces the PC so the phone reconnects.  -->
                     <Button
-                        Grid.Column="1"
-                        AutomationProperties.Name="Look for the phone on the network"
+                        AutomationProperties.Name="Reconnect"
                         Click="RefreshConnection_Click"
-                        CornerRadius="0,4,4,0"
-                        Style="{StaticResource ConnectionSplitButtonStyle}"
-                        ToolTipService.ToolTip="Look for the phone on the network">
-                        <FontIcon FontSize="14" Glyph="&#xE895;" />
+                        Style="{StaticResource PillIconButtonStyle}"
+                        ToolTipService.ToolTip="Reconnect">
+                        <FontIcon FontSize="14" Glyph="&#xE72C;" />
                     </Button>
-                </Grid>
+
+                    <!--  ADR-038: Send files opens the file picker directly, no screen in between.  -->
+                    <Button
+                        AutomationProperties.Name="Send files"
+                        Click="SendFilesAction_Click"
+                        Style="{StaticResource PillIconButtonStyle}"
+                        ToolTipService.ToolTip="Send files">
+                        <FontIcon FontSize="14" Glyph="&#xE898;" />
+                    </Button>
+
+                    <Button
+                        x:Name="DeviceActionsButton"
+                        AutomationProperties.Name="More"
+                        Style="{StaticResource PillIconButtonStyle}"
+                        ToolTipService.ToolTip="More">
+                        <FontIcon FontSize="14" Glyph="&#xE712;" />
+                        <Button.Flyout>
+                            <MenuFlyout x:Name="DeviceActionsFlyout" Placement="Bottom">
+                                <MenuFlyoutItem Click="SendFilesAction_Click" Text="Send files">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE898;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Click="OpenReceivedFolderAction_Click" Text="Open received files">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xEC50;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Click="OpenDeviceSettingsAction_Click" Text="Device settings">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE713;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                </StackPanel>
             </StackPanel>
-        </StackPanel>
+        </Grid>
+
+        <!--  Quick actions, as in Phone Link. Selections show only what the phone reports; a click is a request.  -->
+        <Grid Grid.Row="1" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ToggleButton
+                x:Name="DndToggle"
+                Grid.Column="0"
+                AutomationProperties.Name="{x:Bind StatusViewModel.DndButtonLabel, Mode=OneWay}"
+                Click="Dnd_Click"
+                IsChecked="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay}"
+                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                Style="{StaticResource QuickActionToggleStyle}"
+                ToolTipService.ToolTip="{x:Bind StatusViewModel.DndButtonLabel, Mode=OneWay}">
+                <FontIcon FontSize="20" Glyph="&#xE708;" />
+            </ToggleButton>
+
+            <Button
+                x:Name="SoundButton"
+                Grid.Column="1"
+                AutomationProperties.Name="{x:Bind StatusViewModel.SoundLabel, Mode=OneWay}"
+                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                Style="{StaticResource QuickActionButtonStyle}"
+                ToolTipService.ToolTip="{x:Bind StatusViewModel.SoundLabel, Mode=OneWay}">
+                <FontIcon FontSize="20" Glyph="{x:Bind StatusViewModel.SoundGlyph, Mode=OneWay}" />
+                <Button.Flyout>
+                    <Flyout x:Name="AudioFlyout" Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
+                        <StackPanel MinWidth="260" Spacing="8">
+                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Sound" />
+                            <Grid ColumnSpacing="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ToggleButton
+                                    Grid.Column="0"
+                                    Padding="8"
+                                    HorizontalAlignment="Stretch"
+                                    AutomationProperties.Name="Silent"
+                                    Click="RingerSilent_Click"
+                                    IsChecked="{x:Bind StatusViewModel.IsRingerSilent, Mode=OneWay}"
+                                    IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
+                                    <StackPanel Spacing="4">
+                                        <FontIcon Glyph="&#xE7ED;" />
+                                        <TextBlock FontSize="12" Text="Silent" />
+                                    </StackPanel>
+                                </ToggleButton>
+                                <ToggleButton
+                                    Grid.Column="1"
+                                    Padding="8"
+                                    HorizontalAlignment="Stretch"
+                                    AutomationProperties.Name="Vibrate"
+                                    Click="RingerVibrate_Click"
+                                    IsChecked="{x:Bind StatusViewModel.IsRingerVibrate, Mode=OneWay}"
+                                    IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
+                                    <StackPanel Spacing="4">
+                                        <FontIcon Glyph="&#xE877;" />
+                                        <TextBlock FontSize="12" Text="Vibrate" />
+                                    </StackPanel>
+                                </ToggleButton>
+                                <ToggleButton
+                                    Grid.Column="2"
+                                    Padding="8"
+                                    HorizontalAlignment="Stretch"
+                                    AutomationProperties.Name="Ring"
+                                    Click="RingerNormal_Click"
+                                    IsChecked="{x:Bind StatusViewModel.IsRingerNormal, Mode=OneWay}"
+                                    IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
+                                    <StackPanel Spacing="4">
+                                        <FontIcon Glyph="&#xEA8F;" />
+                                        <TextBlock FontSize="12" Text="Ring" />
+                                    </StackPanel>
+                                </ToggleButton>
+                            </Grid>
+                            <TextBlock
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="Media volume is under Media while something plays."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+
+            <Button
+                Grid.Column="2"
+                AutomationProperties.Name="Media"
+                Style="{StaticResource QuickActionButtonStyle}"
+                ToolTipService.ToolTip="Media">
+                <FontIcon FontSize="20" Glyph="&#xE8D6;" />
+                <Button.Flyout>
+                    <Flyout x:Name="MediaFlyout" Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
+                        <StackPanel Width="280" Spacing="12">
+                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Media" />
+                            <TextBlock
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind MediaEmptyText(ViewModel.IsDeviceConnected), Mode=OneWay}"
+                                TextWrapping="Wrap"
+                                Visibility="{x:Bind MediaViewModel.HasNoSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Grid ColumnSpacing="12" Visibility="{x:Bind MediaViewModel.HasSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border
+                                    Width="56"
+                                    Height="56"
+                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                    CornerRadius="6">
+                                    <Grid>
+                                        <FontIcon
+                                            FontSize="20"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Glyph="&#xEC4F;"
+                                            Visibility="{x:Bind MediaViewModel.HasNoArt, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Image
+                                            AutomationProperties.Name="Album art"
+                                            Source="{x:Bind MediaViewModel.Art, Mode=OneWay}"
+                                            Stretch="UniformToFill"
+                                            Visibility="{x:Bind MediaViewModel.HasArt, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    </Grid>
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock
+                                        FontWeight="SemiBold"
+                                        Text="{x:Bind MediaViewModel.Title, Mode=OneWay}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="{x:Bind MediaViewModel.Artist, Mode=OneWay}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="{x:Bind MediaViewModel.AppName, Mode=OneWay}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel
+                                HorizontalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                Visibility="{x:Bind MediaViewModel.HasSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Button
+                                    AutomationProperties.Name="Previous track"
+                                    Click="MediaPrevious_Click"
+                                    IsEnabled="{x:Bind MediaViewModel.CanPrev, Mode=OneWay}"
+                                    Style="{StaticResource PillIconButtonStyle}"
+                                    ToolTipService.ToolTip="Previous">
+                                    <FontIcon FontSize="14" Glyph="&#xE892;" />
+                                </Button>
+                                <Button
+                                    Width="40"
+                                    Height="40"
+                                    Padding="0"
+                                    AutomationProperties.Name="{x:Bind MediaViewModel.PlayPauseLabel, Mode=OneWay}"
+                                    Click="MediaPlayPause_Click"
+                                    CornerRadius="20"
+                                    IsEnabled="{x:Bind MediaViewModel.CanControl, Mode=OneWay}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    ToolTipService.ToolTip="{x:Bind MediaViewModel.PlayPauseLabel, Mode=OneWay}">
+                                    <FontIcon FontSize="16" Glyph="{x:Bind MediaViewModel.PlayPauseGlyph, Mode=OneWay}" />
+                                </Button>
+                                <Button
+                                    AutomationProperties.Name="Next track"
+                                    Click="MediaNext_Click"
+                                    IsEnabled="{x:Bind MediaViewModel.CanNext, Mode=OneWay}"
+                                    Style="{StaticResource PillIconButtonStyle}"
+                                    ToolTipService.ToolTip="Next">
+                                    <FontIcon FontSize="14" Glyph="&#xE893;" />
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+
+            <ToggleButton
+                x:Name="RingToggle"
+                Grid.Column="3"
+                AutomationProperties.Name="{x:Bind StatusViewModel.RingButtonText, Mode=OneWay}"
+                Click="Ring_Click"
+                IsChecked="{x:Bind StatusViewModel.IsRinging, Mode=OneWay}"
+                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                Style="{StaticResource QuickActionToggleStyle}"
+                ToolTipService.ToolTip="Find my phone: ring it at full volume for up to 30 seconds">
+                <Grid>
+                    <FontIcon Margin="-6,0,0,0" FontSize="20" Glyph="&#xE8EA;" />
+                    <FontIcon Margin="8,0,-8,0" FontSize="12" Glyph="&#xEBC5;" />
+                </Grid>
+            </ToggleButton>
+        </Grid>
+
+        <TextBlock
+            Grid.Row="2"
+            Style="{StaticResource CaptionTextBlockStyle}"
+            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+            Text="{x:Bind StatusViewModel.StatusText, Mode=OneWay}"
+            TextWrapping="Wrap"
+            Visibility="{x:Bind StatusViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
         <TeachingTip
             x:Name="PhoneFrameScrollTeachingTip"
-            Grid.Column="0"
+            Grid.Row="0"
             IsLightDismissEnabled="True"
             PreferredPlacement="Right"
             Subtitle="Scroll over the phone to switch between paired phones."

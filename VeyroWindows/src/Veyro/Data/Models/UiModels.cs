@@ -39,6 +39,27 @@ public sealed class PairedDeviceUiModel : INotifyPropertyChanged
 
     public string ConnectionStatusText => IsConnected ? "Connected" : "Disconnected";
 
+    private bool _autoAcceptTransfers;
+
+    /// <summary>Files from this phone are saved without a prompt (trust store, ADR-038).</summary>
+    public bool AutoAcceptTransfers
+    {
+        get => _autoAcceptTransfers;
+        set
+        {
+            if (_autoAcceptTransfers != value)
+            {
+                _autoAcceptTransfers = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AutoAcceptText));
+            }
+        }
+    }
+
+    public string AutoAcceptText => _autoAcceptTransfers
+        ? "Files from this phone are saved without asking."
+        : "You are asked before files from this phone are saved.";
+
     private bool _isActive;
 
     /// <summary>This is the phone the pages currently follow.</summary>

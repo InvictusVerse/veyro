@@ -16,23 +16,23 @@ public sealed class TransferConsentUi(INotificationToastService toasts) : ITrans
     public Task<bool> IsWindowVisibleAsync()
         => OnUiThreadAsync(() => App.MainWindow is { } window && App.IsWindowOnScreen(window));
 
-    public Task<bool> ShowDialogAsync(InboundOfferRequest request, CancellationToken ct)
+    public Task<ConsentAnswer> ShowDialogAsync(InboundOfferRequest request, CancellationToken ct)
     {
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
         DispatcherQueue? dispatcher = App.MainWindow?.DispatcherQueue;
         if (dispatcher is null || !dispatcher.TryEnqueue(() => _ = RunDialogAsync(request, completion, ct)))
             completion.TrySetException(new InvalidOperationException("The window is not available."));
         return completion.Task;
     }
 
-    public Task<bool?> ShowNotificationAsync(InboundOfferRequest request, CancellationToken ct)
+    public Task<ConsentAnswer?> ShowNotificationAsync(InboundOfferRequest request, CancellationToken ct)
         => toasts.ShowTransferRequestAsync(
             request.Peer.DisplayName,
             request.Offer.Items.Count(item => !item.IsDir),
             request.Offer.TotalBytes,
             ct);
 
-    private static async Task RunDialogAsync(InboundOfferRequest request, TaskCompletionSource<bool> completion, CancellationToken ct)
+    private static async Task RunDialogAsync(InboundOfferRequest request, TaskCompletionSource<ConsentAnswer> completion, CancellationToken ct)
     {
         if (!App.TryEnterDialog())
         {
@@ -45,13 +45,34 @@ public sealed class TransferConsentUi(INotificationToastService toasts) : ITrans
                 ?? throw new InvalidOperationException("The window has no XamlRoot.");
             int count = request.Offer.Items.Count(item => !item.IsDir);
             bool? clicked = null;
+            // ADR-038: pre-ticked, so the first file prompts and later ones arrive on their own.
+            var always = new CheckBox
+            {
+                Content = "Always accept from this phone",
+                IsChecked = true
+            };
             var dialog = new ContentDialog
             {
                 Title = "Incoming files",
-                Content = new TextBlock
+                Content = new StackPanel
                 {
-                    Text = $"{request.Peer.DisplayName} wants to send {(count == 1 ? "1 file" : $"{count:N0} files")} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)}).",
-                    TextWrapping = TextWrapping.Wrap
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = $"{request.Peer.DisplayName} wants to send {(count == 1 ? "1 file" : $"{count:N0} files")} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)}).",
+                            TextWrapping = TextWrapping.Wrap
+                        },
+                        always,
+                        new TextBlock
+                        {
+                            Text = "You can change this later in Settings > Devices.",
+                            TextWrapping = TextWrapping.Wrap,
+                            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+                            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                        }
+                    }
                 },
                 PrimaryButtonText = "Accept",
                 CloseButtonText = "Decline",
@@ -64,8 +85,8 @@ public sealed class TransferConsentUi(INotificationToastService toasts) : ITrans
             var shown = Stopwatch.StartNew();
             ContentDialogResult result = await dialog.ShowAsync();
             if (ct.IsCancellationRequested) completion.TrySetCanceled(ct);
-            else if (result == ContentDialogResult.Primary || clicked == true) completion.TrySetResult(true);
-            else if (clicked == false || shown.Elapsed >= MinimumHumanAnswer) completion.TrySetResult(false); // Decline or Esc
+            else if (result == ContentDialogResult.Primary || clicked == true) completion.TrySetResult(new ConsentAnswer(true, always.IsChecked == true));
+            else if (clicked == false || shown.Elapsed >= MinimumHumanAnswer) completion.TrySetResult(ConsentAnswer.Declined); // Decline or Esc
             else completion.TrySetException(new InvalidOperationException("The dialog closed without an answer."));
         }
         catch (Exception error)

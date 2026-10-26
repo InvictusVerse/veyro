@@ -35,7 +35,18 @@
                     <TextBlock
                         IsTextSelectionEnabled="True"
                         Text="{x:Bind Body, Mode=OneWay}"
-                        TextWrapping="Wrap" />
+                        TextWrapping="Wrap">
+                        <!--  Phone Link's Copy on a message; Ctrl+C still copies a selection.  -->
+                        <TextBlock.ContextFlyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Click="CopyMessage_Click" Tag="{x:Bind Body, Mode=OneWay}" Text="Copy">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8C8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </TextBlock.ContextFlyout>
+                    </TextBlock>
                 </Border>
                 <TextBlock
                     FontSize="11"
@@ -58,7 +69,17 @@
                         Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
                         IsTextSelectionEnabled="True"
                         Text="{x:Bind Body, Mode=OneWay}"
-                        TextWrapping="Wrap" />
+                        TextWrapping="Wrap">
+                        <TextBlock.ContextFlyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Click="CopyMessage_Click" Tag="{x:Bind Body, Mode=OneWay}" Text="Copy">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8C8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </TextBlock.ContextFlyout>
+                    </TextBlock>
                 </Border>
                 <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
                     <TextBlock
@@ -88,6 +109,7 @@
         <!-- Phone not connected / feature off -->
         <StackPanel
             MaxWidth="440"
+            Margin="24"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             Spacing="8"
@@ -112,7 +134,7 @@
             <!-- Thread list -->
             <Grid
                 Grid.Column="0"
-                Padding="16,16,8,16"
+                Padding="16,16,12,16"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,0,1,0"
                 RowSpacing="12">
@@ -253,6 +275,7 @@
             <!-- Conversation -->
             <StackPanel
                 Grid.Column="1"
+                Margin="24"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
                 Spacing="8"
@@ -261,7 +284,9 @@
                 <TextBlock
                     HorizontalAlignment="Center"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Select a conversation or start a new message" />
+                    Text="Select a conversation or start a new message"
+                    TextAlignment="Center"
+                    TextWrapping="Wrap" />
             </StackPanel>
 
             <Grid
@@ -313,7 +338,8 @@
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="4,0" />
+                            <!--  Right inset keeps outgoing bubbles clear of the overlay scroll bar.  -->
+                            <Setter Property="Padding" Value="4,0,16,0" />
                             <Setter Property="MinHeight" Value="0" />
                         </Style>
                     </ListView.ItemContainerStyle>

@@ -35,7 +35,7 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
     private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<bool?>> _transferPrompts = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<ConsentAnswer?>> _transferPrompts = new(StringComparer.Ordinal);
     private static readonly string TransferGroup = Hash("transfers");
     private (string Directory, string? UriPrefix)? _iconLocation;
     private bool _registered;
@@ -313,13 +313,13 @@ public sealed class NotificationToastService : INotificationToastService
 
     // ── Incoming files (ADR-036) ─────────────────────────────────────────────────────
 
-    public async Task<bool?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct)
+    public async Task<ConsentAnswer?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct)
     {
         if (!_registered) throw new InvalidOperationException("App notifications are not registered.");
         ct.ThrowIfCancellationRequested();
         string id = Guid.NewGuid().ToString("N");
         string tag = Hash("x|" + id);
-        var answer = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = new TaskCompletionSource<ConsentAnswer?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _transferPrompts[id] = answer;
         try
         {
@@ -333,7 +333,11 @@ public sealed class NotificationToastService : INotificationToastService
                 .SetGroup(TransferGroup)
                 .AddText(Clip($"{peerName} wants to send files", MaxTitleLength))
                 .AddText($"{files}, {TransferProgressMath.FormatBytes(totalBytes)}")
+                // ADR-038: toasts have no checkbox, so the pre-ticked "Always accept" is the
+                // default button and "Only this time" is the unticked choice.
+                .AddText("Accept also accepts this phone's files from now on.")
                 .AddButton(TransferButton("Accept", "transfer-accept", id, AppNotificationButtonStyle.Success))
+                .AddButton(TransferButton("Only this time", "transfer-once", id, null))
                 .AddButton(TransferButton("Decline", "transfer-decline", id, null));
             AppNotification notification = builder.BuildNotification();
             notification.ExpiresOnReboot = true;
@@ -357,7 +361,7 @@ public sealed class NotificationToastService : INotificationToastService
         return button;
     }
 
-    private void AnswerTransferPrompt(IDictionary<string, string> arguments, bool? answer)
+    private void AnswerTransferPrompt(IDictionary<string, string> arguments, ConsentAnswer? answer)
     {
         if (arguments.TryGetValue("req", out string? id) && _transferPrompts.TryGetValue(id, out var prompt))
             prompt.TrySetResult(answer);
@@ -370,10 +374,13 @@ public sealed class NotificationToastService : INotificationToastService
         switch (action)
         {
             case "transfer-accept":
-                AnswerTransferPrompt(arguments, true);
+                AnswerTransferPrompt(arguments, new ConsentAnswer(true, AlwaysAccept: true));
+                return;
+            case "transfer-once":
+                AnswerTransferPrompt(arguments, new ConsentAnswer(true));
                 return;
             case "transfer-decline":
-                AnswerTransferPrompt(arguments, false);
+                AnswerTransferPrompt(arguments, ConsentAnswer.Declined);
                 return;
             case "transfer-open":
                 // Bring Veyro forward first, then let the prompt ask again in the window.

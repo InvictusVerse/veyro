@@ -42,7 +42,18 @@ public sealed partial class SettingsPage : Page
             "about" => AboutItem,
             _ => GeneralItem
         };
+        Devices.RefreshAutoAccept();
         await ViewModel.RefreshAsync();
+    }
+
+    /// <summary>The binding is one-way, so an unchanged value (a model update) is not saved again.</summary>
+    private async void AutoAccept_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch { Tag: string deviceId } toggle) return;
+        PairedDeviceUiModel? device = Devices.PairedDevices.FirstOrDefault(d => d.DeviceId == deviceId);
+        if (device is null || device.AutoAcceptTransfers == toggle.IsOn) return;
+        try { await Devices.SetAutoAcceptAsync(deviceId, toggle.IsOn); }
+        catch (Exception error) { VeyroTrace.Error("Saving auto-accept failed", error); }
     }
 
     private void SettingsNav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)

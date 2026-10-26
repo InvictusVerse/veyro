@@ -232,7 +232,8 @@
                             <TextBlock
                                 FontFamily="Consolas"
                                 IsTextSelectionEnabled="True"
-                                Text="{x:Bind ViewModel.PairedFingerprint, Mode=OneWay}" />
+                                Text="{x:Bind ViewModel.PairedFingerprint, Mode=OneWay}"
+                                TextWrapping="Wrap" />
                             <TextBlock
                                 FontSize="12"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"

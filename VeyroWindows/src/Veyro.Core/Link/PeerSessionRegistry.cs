@@ -38,6 +38,12 @@ public interface IPeerSessionRegistry
     /// <summary>ADR-034 phone-to-PC photo messages: photos, photoThumb, photoNew, photoRemoved. User data.</summary>
     event Action<string, LinkMessage>? PhotosMessageReceived;
 
+    /// <summary>
+    /// ADR-038 phone-to-PC messages: <c>pcLock</c> (only from a peer still in the trust store) and
+    /// <c>wallpaper</c>. Wallpaper bytes are user data.
+    /// </summary>
+    event Action<string, LinkMessage>? DeviceMessageReceived;
+
     bool IsConnected(string peerId);
 
     /// <summary>Peers with a live session right now.</summary>
@@ -77,6 +83,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     public event Action<string, LinkMessage.CallState>? CallStateReceived;
     public event Action<string, LinkMessage.CallLog>? CallLogReceived;
     public event Action<string, LinkMessage>? PhotosMessageReceived;
+    public event Action<string, LinkMessage>? DeviceMessageReceived;
 
     public bool IsConnected(string peerId)
     {
@@ -163,6 +170,14 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         if (message is not (LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved))
             return false;
         Publish(PhotosMessageReceived, peerId, message, nameof(PhotosMessageReceived));
+        return true;
+    }
+
+    /// <summary>Routes an ADR-038 pcLock or wallpaper. Returns false for any other type.</summary>
+    internal bool PublishDeviceMessage(string peerId, LinkMessage message)
+    {
+        if (message is not (LinkMessage.PcLock or LinkMessage.Wallpaper)) return false;
+        Publish(DeviceMessageReceived, peerId, message, nameof(DeviceMessageReceived));
         return true;
     }
 

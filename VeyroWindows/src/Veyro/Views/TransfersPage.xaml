@@ -1,53 +1,79 @@
+<!--
+    Page.Padding is not applied by Page (it has no template that uses it), so the page inset
+    lives on the root grid. 24 px page inset, 16 px card padding (ADR-038 layout pass).
+-->
 <Page
     x:Class="Veyro.Views.TransfersPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:viewModels="using:Veyro.ViewModels"
-    Padding="24,16,24,0">
+    xmlns:viewModels="using:Veyro.ViewModels">
 
-    <Grid RowSpacing="16">
+    <Grid Padding="24,20,24,0" RowSpacing="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" ColumnSpacing="8">
+        <Grid Grid.Row="0" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock FontSize="20" FontWeight="SemiBold" Text="Transfers" />
-                <TextBlock
-                    FontSize="13"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Drop files anywhere in this window, or choose Send files. Every file is checked with SHA-256 on arrival."
-                    TextWrapping="Wrap" />
-            </StackPanel>
+            <TextBlock
+                Grid.Column="0"
+                VerticalAlignment="Center"
+                FontSize="20"
+                FontWeight="SemiBold"
+                Text="Transfers"
+                TextTrimming="CharacterEllipsis" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                <Button Click="OpenDownloadsFolder_Click" Content="Open received files" />
+                <Button Click="OpenDownloadsFolder_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xEC50;" />
+                        <TextBlock Text="Open received files" />
+                    </StackPanel>
+                </Button>
                 <Button
                     Click="SendFiles_Click"
-                    Content="Send files"
                     IsEnabled="{x:Bind Main.HasActiveDevice, Mode=OneWay}"
-                    Style="{StaticResource AccentButtonStyle}" />
+                    Style="{StaticResource AccentButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xE898;" />
+                        <TextBlock Text="Send files" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Grid>
 
         <TextBlock
             Grid.Row="1"
+            MaxWidth="720"
+            HorizontalAlignment="Left"
+            FontSize="13"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="Drop files anywhere in this window, or choose Send files. Every file is checked with SHA-256 on arrival."
+            TextWrapping="Wrap" />
+
+        <TextBlock
+            Grid.Row="2"
+            Margin="0,8,0,0"
             FontWeight="SemiBold"
             Text="History" />
 
+        <!--  The right padding keeps cards clear of the overlay scroll bar.  -->
         <ListView
-            Grid.Row="2"
+            Grid.Row="3"
+            Margin="0,0,-12,0"
+            Padding="0,0,12,16"
             ItemsSource="{x:Bind ViewModel.History, Mode=OneWay}"
             SelectionMode="None">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                     <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0" />
                 </Style>
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
@@ -59,19 +85,27 @@
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         CornerRadius="8">
-                        <Grid ColumnSpacing="12">
+                        <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <FontIcon Grid.Column="0" VerticalAlignment="Center" Glyph="{x:Bind Glyph}" />
+                            <FontIcon
+                                Grid.Column="0"
+                                VerticalAlignment="Center"
+                                FontSize="20"
+                                Glyph="{x:Bind Glyph}" />
                             <StackPanel Grid.Column="1" Spacing="2">
-                                <TextBlock FontWeight="SemiBold" Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock
+                                    FontWeight="SemiBold"
+                                    Text="{x:Bind Title}"
+                                    TextTrimming="CharacterEllipsis" />
                                 <TextBlock
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="{x:Bind Detail}" />
+                                    Text="{x:Bind Detail}"
+                                    TextTrimming="CharacterEllipsis" />
                                 <TextBlock
                                     FontSize="12"
                                     Foreground="{ThemeResource SystemFillColorCriticalBrush}"
@@ -79,7 +113,11 @@
                                     TextWrapping="Wrap"
                                     Visibility="{x:Bind HasError}" />
                             </StackPanel>
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="6">
+                            <StackPanel
+                                Grid.Column="2"
+                                VerticalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="6">
                                 <FontIcon FontSize="14" Glyph="{x:Bind OutcomeGlyph}" />
                                 <TextBlock Text="{x:Bind OutcomeText}" />
                             </StackPanel>
@@ -90,7 +128,7 @@
         </ListView>
 
         <StackPanel
-            Grid.Row="2"
+            Grid.Row="3"
             Margin="0,48,0,0"
             HorizontalAlignment="Center"
             VerticalAlignment="Top"
@@ -100,7 +138,9 @@
             <TextBlock
                 HorizontalAlignment="Center"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="No files sent yet." />
+                Text="No files sent yet."
+                TextAlignment="Center"
+                TextWrapping="Wrap" />
         </StackPanel>
     </Grid>
 </Page>

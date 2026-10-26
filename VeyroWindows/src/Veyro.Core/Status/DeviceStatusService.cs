@@ -19,6 +19,19 @@ public interface IPcBatterySource
     PcBatteryReading? Current { get; }
 }
 
+/// <summary>
+/// The PC's own Wi-Fi signal for the phone's PC card (ADR-038), implemented per platform. Declared
+/// here because <see cref="DeviceStatusService"/> consumes it.
+/// </summary>
+public interface IPcNetworkSource
+{
+    /// <summary>Raised on any thread when the reading may have changed.</summary>
+    event Action? Changed;
+
+    /// <summary>Wi-Fi signal 0..4 while on Wi-Fi, null when not on Wi-Fi or unknown.</summary>
+    int? WifiLevel { get; }
+}
+
 public interface IDeviceStatusService
 {
     /// <summary>
@@ -38,9 +51,10 @@ public interface IDeviceStatusService
 }
 
 /// <summary>
-/// Device status in both directions (04-PROTOCOL.md 6.2, ADR-026): keeps each phone's latest
-/// <c>devStatus</c> (cleared when its session closes), sends <c>devControl</c>, and publishes the
-/// PC's own battery-only <c>devStatus</c> to capable peers on connect and on change.
+/// Device status in both directions (04-PROTOCOL.md 6.2 and 6.2.1, ADR-026, ADR-038): keeps each
+/// phone's latest <c>devStatus</c> including radio fields (cleared when its session closes), sends
+/// <c>devControl</c>, and publishes the PC's own battery and Wi-Fi <c>devStatus</c> to capable
+/// peers on connect and on change.
 /// </summary>
 public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
 {
@@ -49,23 +63,28 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
     public const string RingerSilent = "silent";
     /// <summary>Battery changes smaller than this are not sent (protocol: 1 point).</summary>
     public const int BatteryThreshold = 1;
+    /// <summary>Longest carrier name kept from the phone; longer is cut (untrusted input).</summary>
+    public const int MaxCarrierLength = 64;
 
     private readonly IPeerSessionRegistry _sessions;
     private readonly IPcBatterySource? _battery;
+    private readonly IPcNetworkSource? _network;
     private readonly object _gate = new();
     private readonly Dictionary<string, LinkMessage.DeviceStatus> _phoneStatus = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LinkMessage.DeviceStatus> _sentToPeer = new(StringComparer.OrdinalIgnoreCase);
 
     public event Action<string>? Changed;
 
-    public DeviceStatusService(IPeerSessionRegistry sessions, IPcBatterySource? battery)
+    public DeviceStatusService(IPeerSessionRegistry sessions, IPcBatterySource? battery, IPcNetworkSource? network = null)
     {
         _sessions = sessions;
         _battery = battery;
+        _network = network;
         _sessions.DeviceStatusReceived += OnDeviceStatus;
         _sessions.SessionClosed += OnSessionClosed;
         _sessions.CapabilitiesChanged += OnCapabilitiesChanged;
         if (_battery is not null) _battery.Changed += OnBatteryChanged;
+        if (_network is not null) _network.Changed += OnBatteryChanged;
     }
 
     public static bool IsRingerMode(string? value)
@@ -99,6 +118,7 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
         _sessions.SessionClosed -= OnSessionClosed;
         _sessions.CapabilitiesChanged -= OnCapabilitiesChanged;
         if (_battery is not null) _battery.Changed -= OnBatteryChanged;
+        if (_network is not null) _network.Changed -= OnBatteryChanged;
     }
 
     private bool IsCapable(string peerId)
@@ -107,11 +127,19 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
     private void OnDeviceStatus(string peerId, LinkMessage.DeviceStatus status)
     {
         // Untrusted input: out-of-contract fields become "unknown" rather than wrong.
+        // The carrier is user data: kept for the UI, never logged.
+        string? carrier = string.IsNullOrWhiteSpace(status.Carrier) ? null : status.Carrier.Trim();
+        if (carrier is { Length: > MaxCarrierLength }) carrier = carrier[..MaxCarrierLength];
         var sanitized = new LinkMessage.DeviceStatus(
             status.Battery is >= 0 and <= 100 ? status.Battery : null,
             status.Charging,
             IsRingerMode(status.Ringer) ? status.Ringer : null,
-            status.Dnd);
+            status.Dnd,
+            Wifi: status.Wifi is >= -1 and <= 4 ? status.Wifi : null,
+            Cell: status.Cell is >= -1 and <= 4 ? status.Cell : null,
+            Carrier: carrier,
+            Bluetooth: status.Bluetooth,
+            MobileData: status.MobileData);
         lock (_gate) _phoneStatus[peerId] = sanitized;
         Changed?.Invoke(peerId);
     }
@@ -140,24 +168,38 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
         }
     }
 
-    /// <summary>Sends the PC battery to one peer unless it already has an equivalent reading.</summary>
+    /// <summary>
+    /// Sends the PC battery and Wi-Fi (ADR-038) to one peer unless it already has an equivalent
+    /// reading. Nothing is sent when neither is known.
+    /// </summary>
     private void Publish(string peerId)
     {
         PcBatteryReading? reading;
-        try { reading = _battery?.Current; }
+        int? wifi;
+        try
+        {
+            reading = _battery?.Current;
+            wifi = _network?.WifiLevel;
+        }
         catch (Exception error)
         {
-            VeyroTrace.Error("Reading PC battery failed", error);
+            VeyroTrace.Error("Reading PC status failed", error);
             return;
         }
-        if (reading is null) return; // no battery: send nothing
+        if (wifi is not (>= 0 and <= 4)) wifi = null;
+        if (reading is null && wifi is null) return; // nothing known: send nothing
 
-        var status = new LinkMessage.DeviceStatus(Math.Clamp(reading.Percent, 0, 100), reading.Charging);
+        var status = new LinkMessage.DeviceStatus(
+            reading is null ? null : Math.Clamp(reading.Percent, 0, 100),
+            reading?.Charging,
+            Wifi: wifi);
         lock (_gate)
         {
             if (_sentToPeer.TryGetValue(peerId, out var last) &&
                 last.Charging == status.Charging &&
-                Math.Abs((last.Battery ?? -100) - status.Battery!.Value) < BatteryThreshold)
+                last.Wifi == status.Wifi &&
+                (last.Battery is null) == (status.Battery is null) &&
+                Math.Abs((last.Battery ?? 0) - (status.Battery ?? 0)) < BatteryThreshold)
                 return;
             _sentToPeer[peerId] = status;
         }

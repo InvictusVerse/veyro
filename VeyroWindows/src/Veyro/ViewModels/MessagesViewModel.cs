@@ -374,7 +374,13 @@ public sealed class MessagesViewModel : BaseViewModel
     {
         _allThreads = _peerId is null ? [] : _messaging.GetThreads(_peerId);
         ApplyThreadFilter();
+        OnPropertyChanged(nameof(UnreadCount));
+        OnPropertyChanged(nameof(HasUnread));
     }
+
+    /// <summary>Unread messages across the phone's known threads, for the Messages tab badge (Phone Link).</summary>
+    public int UnreadCount => _allThreads.Sum(thread => Math.Max(0, thread.Unread));
+    public bool HasUnread => UnreadCount > 0;
 
     private void ApplyThreadFilter()
     {

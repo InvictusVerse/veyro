@@ -90,7 +90,8 @@ public sealed class DeviceManagerService : IDeviceManager
                 Name = entry.DisplayName,
                 Fingerprint = FingerprintOf(entry.PublicKeyBase64),
                 Platform = entry.Platform,
-                IsConnected = entry.IsConnected
+                IsConnected = entry.IsConnected,
+                AutoAcceptTransfers = _trustStore.GetPeer(entry.DeviceId)?.AutoAcceptTransfers == true
             });
         }
 

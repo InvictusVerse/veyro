@@ -13,6 +13,7 @@ public sealed class TransfersPageViewModel : BaseViewModel
     private readonly IFileTransferService _transferService;
     private readonly ISettingsStore _settingsStore;
     private ActiveTransfer? _activeTransfer;
+    private string? _hiddenTransferId;
 
     public ObservableCollection<TransferHistoryItemViewModel> History { get; } = [];
     public bool HasNoHistory => History.Count == 0;
@@ -31,7 +32,7 @@ public sealed class TransfersPageViewModel : BaseViewModel
                          {
                              nameof(HasActiveTransfer), nameof(IsTransferRunning), nameof(IsTransferFinished), nameof(BannerTitle),
                              nameof(BannerStage), nameof(BannerProgressText), nameof(BannerProgress), nameof(BannerError), nameof(HasBannerError),
-                             nameof(BannerGlyph)
+                             nameof(BannerGlyph), nameof(IsBannerVisible), nameof(IsTransferSucceeded), nameof(DismissLabel)
                          })
                 {
                     OnPropertyChanged(name);
@@ -43,6 +44,30 @@ public sealed class TransfersPageViewModel : BaseViewModel
     public bool HasActiveTransfer => ActiveTransfer is not null;
     public bool IsTransferFinished => ActiveTransfer?.Stage is TransferStage.Completed or TransferStage.Failed or TransferStage.Cancelled;
     public bool IsTransferRunning => HasActiveTransfer && !IsTransferFinished;
+
+    /// <summary>Completed: the banner slides out on its own (ADR-038). Failures stay until dismissed.</summary>
+    public bool IsTransferSucceeded => ActiveTransfer?.Stage == TransferStage.Completed;
+
+    /// <summary>The banner is shown unless the user hid this transfer's banner.</summary>
+    public bool IsBannerVisible => ActiveTransfer is { } transfer && transfer.TransferId != _hiddenTransferId;
+
+    public string DismissLabel => IsTransferRunning ? "Hide (the transfer continues)" : "Dismiss";
+
+    /// <summary>
+    /// The banner's close button. A finished transfer is cleared; a running one keeps going and
+    /// only its banner is hidden (progress stays on the Transfers tab history when it ends).
+    /// </summary>
+    public void HideBanner()
+    {
+        if (ActiveTransfer is not { } transfer) return;
+        if (IsTransferFinished)
+        {
+            DismissTransfer();
+            return;
+        }
+        _hiddenTransferId = transfer.TransferId;
+        OnPropertyChanged(nameof(IsBannerVisible));
+    }
 
     public string BannerTitle => ActiveTransfer is { } transfer
         ? $"{(transfer.IsIncoming ? "From" : "To")} {transfer.PeerDisplayName}: {transfer.CurrentFileName}"

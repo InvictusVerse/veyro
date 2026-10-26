@@ -1,4 +1,6 @@
+using Veyro.Core.Diagnostics;
 using Veyro.Platforms.Windows.Calling;
+using Veyro.Platforms.Windows.Interop;
 using Veyro.Platforms.Windows.Services;
 using Veyro.Services;
 using Veyro.ViewModels.Settings;
@@ -27,7 +29,10 @@ public sealed class VeyroContainer
     public IWindowsMediaSource PcMediaSource { get; }
     public PcMediaPublisher PcMediaPublisher { get; }
     public IWindowsBatterySource PcBatterySource { get; }
+    public IWindowsNetworkSource PcNetworkSource { get; }
+    public IWindowsWallpaperSource PcWallpaperSource { get; }
     public DeviceStatusService DeviceStatus { get; }
+    public WallpaperService Wallpaper { get; }
     public MessagingService Messaging { get; }
     public CallService Calls { get; }
     public PhotoService Photos { get; }
@@ -88,7 +93,17 @@ public sealed class VeyroContainer
         PcMediaSource = new WindowsMediaSource();
         PcMediaPublisher = new PcMediaPublisher(PeerSessions, PcMediaSource);
         PcBatterySource = new WindowsBatterySource();
-        DeviceStatus = new DeviceStatusService(PeerSessions, PcBatterySource);
+        // ADR-038: PC Wi-Fi and wallpaper for the phone's PC card; the phone's wallpaper for ours.
+        PcNetworkSource = new WindowsNetworkSource();
+        DeviceStatus = new DeviceStatusService(PeerSessions, PcBatterySource, PcNetworkSource);
+        PcWallpaperSource = new WindowsWallpaperSource();
+        Wallpaper = new WallpaperService(PeerSessions, PcWallpaperSource);
+        // ADR-038 "Lock PC": the server raises pcLock only from a trusted peer's live session.
+        PeerSessions.DeviceMessageReceived += (peerId, message) =>
+        {
+            if (message is not LinkMessage.PcLock || !PeerSessions.IsConnected(peerId)) return;
+            if (!InteropHelpers.LockWorkStation()) VeyroTrace.Warn("Locking the PC failed");
+        };
         // ADR-027: in-memory only, cleared when the phone's session closes.
         Messaging = new MessagingService(PeerSessions);
         Calls = new CallService(PeerSessions);
@@ -128,12 +143,13 @@ public sealed class VeyroContainer
             DataDirectory);
         // ADR-036: incoming files are asked about one at a time, by dialog or actionable toast,
         // with a 60 s deadline that reaches the phone as "timeout", not "declined".
-        TransferConsent = new TransferConsentCoordinator(new TransferConsentUi(NotificationToastService));
+        // ADR-038: "Always accept from this phone" (pre-ticked) is saved in the trust store.
+        TransferConsent = new TransferConsentCoordinator(new TransferConsentUi(NotificationToastService), trustStore: TrustStore);
         LinkServer.OfferConsent = TransferConsent.DecideAsync;
 
         NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager);
         PhoneMediaViewModel = new PhoneMediaViewModel(PhoneMedia, DeviceManager);
-        DeviceStatusViewModel = new DeviceStatusViewModel(DeviceStatus, DeviceManager);
+        DeviceStatusViewModel = new DeviceStatusViewModel(DeviceStatus, Wallpaper, DeviceManager);
 
         MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService);
         TransfersPageViewModel = new TransfersPageViewModel(DeviceManager, FileTransferService, SettingsStore);
@@ -143,6 +159,7 @@ public sealed class VeyroContainer
         PhotosViewModel = new PhotosViewModel(Photos, DeviceManager);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);
+        TransferConsent.AutoAcceptEnabled += _ => App.MainWindow?.DispatcherQueue.TryEnqueue(DevicesViewModel.RefreshAutoAccept);
 
         // ADR-030: QR pairing screen (shared by onboarding and Settings) and first-run flow.
         NetworkDiagnostics = new WindowsNetworkDiagnostics();

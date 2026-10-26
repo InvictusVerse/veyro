@@ -1,6 +1,8 @@
 // Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Converters/Converters.cs (BatteryStatusToIconConverter, RingerModeToIconConverter), GPL-3.0.
 // Modified for Veyro.
 
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Veyro.Core.Diagnostics;
 
 namespace Veyro.ViewModels;
@@ -19,16 +21,20 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         [DeviceStatusService.RingerSilent, DeviceStatusService.RingerVibrate, DeviceStatusService.RingerNormal];
 
     private readonly IDeviceStatusService _status;
+    private readonly IWallpaperService _wallpapers;
     private readonly DispatcherQueue? _dispatcher;
     private readonly DispatcherQueueTimer? _ringTimer;
     private string? _peerId;
     private LinkMessage.DeviceStatus? _reported;
     private bool _isRinging;
     private string _statusText = string.Empty;
+    private byte[]? _wallpaperBytes;
+    private ImageSource? _wallpaper;
 
-    public DeviceStatusViewModel(IDeviceStatusService status, IDeviceManager deviceManager)
+    public DeviceStatusViewModel(IDeviceStatusService status, IWallpaperService wallpapers, IDeviceManager deviceManager)
     {
         _status = status;
+        _wallpapers = wallpapers;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _peerId = deviceManager.ActiveDevice?.DeviceId;
         if (_dispatcher is not null)
@@ -43,14 +49,104 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         {
             if (string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) Sync();
         });
+        _wallpapers.Changed += peerId => Post(() =>
+        {
+            if (string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) _ = SyncWallpaperAsync();
+        });
         deviceManager.ActiveDeviceChanged += device => Post(() =>
         {
             _peerId = device?.DeviceId;
             SetRinging(false);
             Sync();
+            _ = SyncWallpaperAsync();
         });
         Sync();
+        _ = SyncWallpaperAsync();
     }
+
+    // ── Wallpaper (ADR-038): the phone's own, or the fallback gradient ───────────────────
+
+    /// <summary>The phone's wallpaper from its latest <c>wallpaper</c> message, or null.</summary>
+    public ImageSource? Wallpaper => _wallpaper;
+    public bool HasWallpaper => _wallpaper is not null;
+    public bool HasNoWallpaper => _wallpaper is null;
+
+    private async Task SyncWallpaperAsync()
+    {
+        byte[]? bytes = _peerId is null ? null : _wallpapers.GetPhoneWallpaper(_peerId);
+        if (ReferenceEquals(bytes, _wallpaperBytes)) return;
+        _wallpaperBytes = bytes;
+        ImageSource? image = null;
+        if (bytes is not null)
+        {
+            try
+            {
+                var bitmap = new BitmapImage { DecodePixelHeight = 360 };
+                using var stream = new MemoryStream(bytes);
+                await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+                image = bitmap;
+            }
+            catch (Exception)
+            {
+                // Untrusted bytes: a JPEG that does not decode shows the fallback.
+                image = null;
+            }
+        }
+        if (!ReferenceEquals(bytes, _wallpaperBytes)) return;
+        _wallpaper = image;
+        OnPropertyChanged(nameof(Wallpaper));
+        OnPropertyChanged(nameof(HasWallpaper));
+        OnPropertyChanged(nameof(HasNoWallpaper));
+    }
+
+    // ── Radios (ADR-038). Each glyph exists only once the phone reported it. ─────────────
+
+    public bool HasBluetooth => _reported?.Bluetooth is not null;
+    public double BluetoothOpacity => _reported?.Bluetooth == true ? 1.0 : 0.45;
+    public string BluetoothLabel => _reported?.Bluetooth == true ? "Bluetooth on" : "Bluetooth off";
+
+    public bool HasWifi => _reported?.Wifi is not null;
+    public string WifiGlyph => _reported?.Wifi switch
+    {
+        null => string.Empty,
+        <= 1 => "\uE872",
+        2 => "\uE873",
+        3 => "\uE874",
+        _ => "\uE701"
+    };
+    public double WifiOpacity => _reported?.Wifi is >= 1 ? 1.0 : 0.45;
+    public string WifiLabel => _reported?.Wifi switch
+    {
+        null => string.Empty,
+        < 0 => "Wi-Fi off",
+        { } level => $"Wi-Fi signal {level} of 4"
+    };
+
+    public bool HasCell => _reported?.Cell is not null;
+    public string CellGlyph => _reported?.Cell switch
+    {
+        null => string.Empty,
+        < 0 => "\uE871",
+        { } level => ((char)(0xE86C + Math.Clamp(level, 0, 4))).ToString()
+    };
+    public double CellOpacity => _reported?.Cell is >= 0 ? 1.0 : 0.45;
+
+    /// <summary>Carrier, signal and mobile data, for the tooltip. Shown, never logged.</summary>
+    public string CellLabel
+    {
+        get
+        {
+            if (_reported?.Cell is not { } level) return string.Empty;
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(_reported.Carrier)) parts.Add(_reported.Carrier);
+            parts.Add(level < 0 ? "No service" : $"Signal {level} of 4");
+            if (_reported.MobileData is { } data) parts.Add(data ? "Mobile data on" : "Mobile data off");
+            return string.Join(", ", parts);
+        }
+    }
+
+    /// <summary>Only phones that report radios get the radio part of the status row.</summary>
+    public bool HasRadios => HasBluetooth || HasWifi || HasCell;
 
     public bool CanControl => _peerId is not null && _status.CanControl(_peerId);
 
@@ -76,7 +172,7 @@ public sealed class DeviceStatusViewModel : BaseViewModel
     /// <summary>Index into Silent / Vibrate / Ring, or -1 when the phone has not reported it.</summary>
     public int RingerIndex => Array.IndexOf(RingerModes, _reported?.Ringer ?? string.Empty);
     public bool HasRinger => RingerIndex >= 0;
-    public bool HasStatusRow => HasBattery || HasRinger || IsDndOn;
+    public bool HasStatusRow => HasBattery || HasRinger || IsDndOn || HasRadios;
 
     /// <summary>Connected and status-capable, but no devStatus yet: say so instead of showing a value.</summary>
     public bool IsWaitingForStatus => CanControl && !HasStatusRow;
@@ -96,6 +192,17 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         DeviceStatusService.RingerVibrate => "Vibrate",
         DeviceStatusService.RingerSilent => "Silent",
         _ => "Ringer unknown"
+    };
+
+    /// <summary>Quick-action Sound tile: the reported mode, or a neutral speaker when unknown.</summary>
+    public string SoundGlyph => HasRinger ? RingerGlyph : "\uE767";
+    public string SoundLabel => HasRinger ? $"Sound: {RingerLabel}" : "Sound mode not reported";
+
+    public string DndButtonLabel => _reported?.Dnd switch
+    {
+        true => "Do not disturb: on. Select to turn off.",
+        false => "Do not disturb: off. Select to turn on.",
+        null => "Do not disturb"
     };
 
     public bool IsDndOn => _reported?.Dnd == true;
@@ -183,7 +290,11 @@ public sealed class DeviceStatusViewModel : BaseViewModel
                      nameof(CanControl), nameof(HasBattery), nameof(BatteryText), nameof(IsCharging), nameof(BatteryGlyph),
                      nameof(BatteryLabel), nameof(RingerIndex), nameof(HasRinger), nameof(HasStatusRow), nameof(IsWaitingForStatus), nameof(RingerGlyph),
                      nameof(RingerLabel), nameof(IsRingerSilent), nameof(IsRingerVibrate), nameof(IsRingerNormal),
-                     nameof(IsDndOn), nameof(DndLabel)
+                     nameof(IsDndOn), nameof(DndLabel), nameof(DndButtonLabel),
+                     nameof(HasBluetooth), nameof(BluetoothOpacity), nameof(BluetoothLabel),
+                     nameof(HasWifi), nameof(WifiGlyph), nameof(WifiOpacity), nameof(WifiLabel),
+                     nameof(HasCell), nameof(CellGlyph), nameof(CellOpacity), nameof(CellLabel), nameof(HasRadios),
+                     nameof(SoundGlyph), nameof(SoundLabel)
                  })
         {
             OnPropertyChanged(name);

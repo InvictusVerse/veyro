@@ -229,12 +229,16 @@
                         <ItemsRepeater.ItemTemplate>
                             <DataTemplate x:DataType="models:PairedDeviceUiModel">
                                 <Border Style="{StaticResource SettingsCardStyle}">
-                                    <Grid ColumnSpacing="15">
+                                    <Grid ColumnSpacing="16" RowSpacing="12">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
                                         <Grid Width="30" Height="53">
                                             <Rectangle
                                                 Opacity="0.5"
@@ -262,14 +266,40 @@
                                             </Border>
                                         </Grid>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Text="{x:Bind Name, Mode=OneWay}" />
+                                            <TextBlock Text="{x:Bind Name, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ConnectionStatusText, Mode=OneWay}" />
                                             <TextBlock
                                                 FontFamily="Consolas"
                                                 FontSize="12"
                                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Text="{x:Bind Fingerprint}" />
+                                                Text="{x:Bind Fingerprint}"
+                                                TextWrapping="Wrap" />
                                         </StackPanel>
+                                        <!--  ADR-038: set by the pre-ticked box in the first incoming-files prompt.  -->
+                                        <Grid
+                                            Grid.Row="1"
+                                            Grid.Column="1"
+                                            Grid.ColumnSpan="2"
+                                            ColumnSpacing="16">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Accept files automatically" />
+                                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind AutoAcceptText, Mode=OneWay}" />
+                                            </StackPanel>
+                                            <ToggleSwitch
+                                                Grid.Column="1"
+                                                MinWidth="0"
+                                                VerticalAlignment="Center"
+                                                AutomationProperties.Name="Accept files automatically"
+                                                IsOn="{x:Bind AutoAcceptTransfers, Mode=OneWay}"
+                                                OffContent=""
+                                                OnContent=""
+                                                Tag="{x:Bind DeviceId}"
+                                                Toggled="AutoAccept_Toggled" />
+                                        </Grid>
                                         <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
                                             <Button
                                                 MinWidth="110"

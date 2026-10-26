@@ -142,7 +142,7 @@
                         FontSize="12"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Text="This PC" />
-                    <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.PcName, Mode=OneWay}" />
+                    <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.PcName, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
                     <TextBlock
                         FontFamily="Consolas"
                         IsTextSelectionEnabled="True"
@@ -291,7 +291,7 @@
                                         Glyph="&#xE7BA;"
                                         Visibility="{x:Bind IsProblem, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <StackPanel Grid.Column="1" Spacing="2">
-                                        <TextBlock FontWeight="SemiBold" Text="{x:Bind Title}" />
+                                        <TextBlock FontWeight="SemiBold" Text="{x:Bind Title}" TextWrapping="Wrap" />
                                         <TextBlock
                                             FontSize="12"
                                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"

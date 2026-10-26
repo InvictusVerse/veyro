@@ -30,6 +30,7 @@
         <!--  Phone not connected / feature off  -->
         <StackPanel
             MaxWidth="440"
+            Margin="24"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             Spacing="8"
@@ -52,7 +53,7 @@
             <!--  Call history  -->
             <Grid
                 Grid.Column="0"
-                Padding="16,12,16,0"
+                Padding="24,20,16,0"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,0,1,0"
                 RowSpacing="12">
@@ -103,13 +104,17 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE717;" />
-                        <StackPanel Grid.Column="1" Spacing="2">
-                            <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.CurrentCallTitle, Mode=OneWay}" />
+                        <FontIcon Grid.Column="0" VerticalAlignment="Center" Glyph="&#xE717;" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="{x:Bind ViewModel.CurrentCallTitle, Mode=OneWay}"
+                                TextTrimming="CharacterEllipsis" />
                             <TextBlock
                                 FontSize="12"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind ViewModel.CurrentCallText, Mode=OneWay}" />
+                                Text="{x:Bind ViewModel.CurrentCallText, Mode=OneWay}"
+                                TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
                             <Button
@@ -153,6 +158,7 @@
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="8,0,16,0" />
                         </Style>
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
@@ -186,11 +192,13 @@
                                         FontSize="12"
                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                         Text="{x:Bind Number}"
+                                        TextTrimming="CharacterEllipsis"
                                         Visibility="{x:Bind HasNumberLine, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <TextBlock
                                         FontSize="12"
                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        Text="{x:Bind DetailText}" />
+                                        Text="{x:Bind DetailText}"
+                                        TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <TextBlock
                                     Grid.Column="2"

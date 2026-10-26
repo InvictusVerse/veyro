@@ -26,6 +26,8 @@ public sealed partial class MainPage : Page
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
     public NotificationsViewModel NotificationsViewModel => VeyroContainer.Instance.NotificationsViewModel;
     public PhoneMediaViewModel MediaViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
+    public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
+    public MessagesViewModel MessagesViewModel => VeyroContainer.Instance.MessagesViewModel;
 
     private string? _pendingSettingsSection;
     private bool IsInline => SideBar.PaneDisplayMode is NavigationViewPaneDisplayMode.Left;

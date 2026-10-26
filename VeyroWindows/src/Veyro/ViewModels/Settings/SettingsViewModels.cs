@@ -298,6 +298,25 @@ public sealed class DevicesViewModel : BaseViewModel
         deviceManager.ReloadPairedDevices();
     }
 
+    /// <summary>
+    /// "Accept files automatically" for one phone (ADR-038). The link server re-reads trust per
+    /// offer, so the change applies to the next transfer.
+    /// </summary>
+    public async Task SetAutoAcceptAsync(string deviceId, bool enabled)
+    {
+        TrustedPeer? peer = trustStore.GetPeer(deviceId);
+        if (peer is not null && peer.AutoAcceptTransfers != enabled)
+            await trustStore.UpsertAsync(peer with { AutoAcceptTransfers = enabled });
+        RefreshAutoAccept();
+    }
+
+    /// <summary>Re-reads auto-accept from the trust store, e.g. after a prompt turned it on.</summary>
+    public void RefreshAutoAccept()
+    {
+        foreach (PairedDeviceUiModel device in PairedDevices)
+            device.AutoAcceptTransfers = trustStore.GetPeer(device.DeviceId)?.AutoAcceptTransfers == true;
+    }
+
     /// <summary>Makes the phone the one every page follows.</summary>
     public void Select(string deviceId)
     {

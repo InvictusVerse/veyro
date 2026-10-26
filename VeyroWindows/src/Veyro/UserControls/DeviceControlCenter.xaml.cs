@@ -8,8 +8,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Foundation;
 using Windows.Storage;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
 
 namespace Veyro.UserControls;
 
@@ -20,7 +18,13 @@ public sealed partial class DeviceControlCenter : UserControl
 
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
     public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
+    public PhoneMediaViewModel MediaViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
     public string ScreenMirrorText => MainPageViewModel.ScreenMirrorUnavailableText;
+
+    /// <summary>Why the Media flyout is empty.</summary>
+    public string MediaEmptyText(bool connected) => connected
+        ? "Nothing is playing on the phone."
+        : "Media controls work while the phone is connected.";
 
     public DeviceControlCenter()
     {
@@ -94,35 +98,27 @@ public sealed partial class DeviceControlCenter : UserControl
         await StatusViewModel.ToggleRingAsync();
     }
 
+    private async void MediaPrevious_Click(object sender, RoutedEventArgs e) => await MediaViewModel.PreviousAsync();
+
+    private async void MediaPlayPause_Click(object sender, RoutedEventArgs e) => await MediaViewModel.TogglePlayPauseAsync();
+
+    private async void MediaNext_Click(object sender, RoutedEventArgs e) => await MediaViewModel.NextAsync();
+
+    /// <summary>ADR-038: straight to the system file picker; sending starts as soon as files are chosen.</summary>
     private async void SendFilesAction_Click(object sender, RoutedEventArgs e)
     {
-        DeviceActionsFlyout.Hide();
         if (ViewModel.Device is null) return;
-
-        var picker = new FileOpenPicker();
-        InitializeWithWindow.Initialize(picker, App.WindowHandle);
-        picker.FileTypeFilter.Add("*");
-        var files = await picker.PickMultipleFilesAsync();
-        if (files is { Count: > 0 })
-        {
-            var paths = files.Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
-            await VeyroContainer.Instance.TransfersPageViewModel.SendFilesToActiveDeviceAsync(paths);
-        }
+        await App.PickAndSendFilesAsync();
     }
 
     private void OpenReceivedFolderAction_Click(object sender, RoutedEventArgs e)
     {
-        DeviceActionsFlyout.Hide();
         string dir = VeyroContainer.Instance.SettingsStore.Current.DownloadDirectory;
         Directory.CreateDirectory(dir);
         Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
     }
 
-    private void OpenDeviceSettingsAction_Click(object sender, RoutedEventArgs e)
-    {
-        DeviceActionsFlyout.Hide();
-        ViewModel.OpenDeviceSettings();
-    }
+    private void OpenDeviceSettingsAction_Click(object sender, RoutedEventArgs e) => ViewModel.OpenDeviceSettings();
 
     private async void RefreshConnection_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshDiscoveryAsync();
 

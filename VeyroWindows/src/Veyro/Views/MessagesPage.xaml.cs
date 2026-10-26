@@ -63,6 +63,16 @@ public sealed partial class MessagesPage : Page
             await ViewModel.RetryAsync(message);
     }
 
+    /// <summary>Copies the whole message body. User data: never logged.</summary>
+    private void CopyMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string { Length: > 0 } body) return;
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(body);
+        try { Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package); }
+        catch (Exception error) { Core.Diagnostics.VeyroTrace.Warn($"Copying a message failed: {error.GetType().Name}"); }
+    }
+
     private void SimPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
         => ViewModel.SelectedSim = SimPicker.SelectedItem as SimItem;
 

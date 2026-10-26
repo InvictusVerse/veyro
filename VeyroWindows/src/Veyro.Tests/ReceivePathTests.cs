@@ -249,6 +249,68 @@ public sealed class ReceivePathTests : IAsyncLifetime
         Assert.Equal(0, _legacyPrompts);
     }
 
+    [Fact]
+    public async Task AlwaysAcceptTicked_IsPersisted_AndTheNextOfferIsNotPrompted()
+    {
+        // ADR-038: the first file prompts with "Always accept from this phone" pre-ticked.
+        var ui = new FakeConsentUi { Visible = true, AlwaysAccept = true };
+        var coordinator = new TransferConsentCoordinator(ui, trustStore: _trustStore);
+        string? enabledFor = null;
+        coordinator.AutoAcceptEnabled += id => enabledFor = id;
+        _server.OfferConsent = coordinator.DecideAsync;
+        await using var phone = await ConnectPhoneAsync();
+
+        Assert.True((await AndroidSendAsync(phone, "first001", "a.bin", [1, 2])).End!.Completed);
+        Assert.Equal(1, ui.Dialogs);
+        Assert.True(_trustStore.GetPeer(PhoneId)!.AutoAcceptTransfers);
+        Assert.Equal(PhoneId, enabledFor);
+        // Persisted, not just cached: a fresh store over the same file sees it.
+        Assert.True(new FileTrustStore(Path.Combine(_root, "trust"), new byte[32]).GetPeer(PhoneId)!.AutoAcceptTransfers);
+
+        Assert.True((await AndroidSendAsync(phone, "second01", "b.bin", [3])).End!.Completed);
+        Assert.Equal(1, ui.Dialogs + ui.Notifications);
+    }
+
+    [Fact]
+    public async Task PcLockAndWallpaper_FromTheLiveSession_ReachTheRegistry()
+    {
+        var received = new List<LinkMessage>();
+        var got = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _registry.DeviceMessageReceived += (peer, message) =>
+        {
+            Assert.Equal(PhoneId, peer);
+            lock (received)
+            {
+                received.Add(message);
+                if (received.Count == 2) got.TrySetResult();
+            }
+        };
+        await using var phone = await ConnectPhoneAsync();
+        await phone.Session.SendAsync(new LinkMessage.PcLock(), Ct);
+        await phone.Session.SendAsync(new LinkMessage.Wallpaper("/9j/4AAQSkZJRg=="), Ct);
+        await got.Task.WaitAsync(Ct);
+
+        Assert.IsType<LinkMessage.PcLock>(received[0]);
+        Assert.IsType<LinkMessage.Wallpaper>(received[1]);
+        Assert.NotEqual(0, _registry.GetPeerCapabilities(PhoneId) & LinkCapabilities.Wallpaper);
+    }
+
+    [Fact]
+    public async Task AlwaysAcceptUnticked_OrDecline_LeavesAutoAcceptOff()
+    {
+        var ui = new FakeConsentUi { Visible = false, AlwaysAccept = false };
+        var coordinator = new TransferConsentCoordinator(ui, trustStore: _trustStore);
+        TrustedPeer peer = _trustStore.GetPeer(PhoneId)!;
+
+        Assert.Equal(OfferVerdict.Accepted, await coordinator.DecideAsync(new InboundOfferRequest(peer, AndroidOffer("once0001", "a.bin", 1))));
+        Assert.False(_trustStore.GetPeer(PhoneId)!.AutoAcceptTransfers);
+
+        ui.AlwaysAccept = true;
+        ui.Notification = (_, _) => Task.FromResult<bool?>(false);
+        Assert.Equal(OfferVerdict.Declined, await coordinator.DecideAsync(new InboundOfferRequest(peer, AndroidOffer("decl0001", "a.bin", 1))));
+        Assert.False(_trustStore.GetPeer(PhoneId)!.AutoAcceptTransfers);
+    }
+
     // ── Consent prompt ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -434,6 +496,8 @@ public sealed class ReceivePathTests : IAsyncLifetime
         public volatile bool Visible;
         public Func<InboundOfferRequest, CancellationToken, Task<bool>> Dialog { get; set; } = (_, _) => Task.FromResult(true);
         public Func<InboundOfferRequest, CancellationToken, Task<bool?>> Notification { get; set; } = (_, _) => Task.FromResult<bool?>(true);
+        /// <summary>The "Always accept from this phone" box as the user left it.</summary>
+        public volatile bool AlwaysAccept;
         public int Dialogs;
         public int Notifications;
         public int MaxOpen;
@@ -442,19 +506,19 @@ public sealed class ReceivePathTests : IAsyncLifetime
 
         public Task<bool> IsWindowVisibleAsync() => Task.FromResult(Visible);
 
-        public async Task<bool> ShowDialogAsync(InboundOfferRequest request, CancellationToken ct)
+        public async Task<ConsentAnswer> ShowDialogAsync(InboundOfferRequest request, CancellationToken ct)
         {
             Interlocked.Increment(ref Dialogs);
             Enter(request, ct);
-            try { return await Dialog(request, ct); }
+            try { return new ConsentAnswer(await Dialog(request, ct), AlwaysAccept); }
             finally { Interlocked.Decrement(ref _open); }
         }
 
-        public async Task<bool?> ShowNotificationAsync(InboundOfferRequest request, CancellationToken ct)
+        public async Task<ConsentAnswer?> ShowNotificationAsync(InboundOfferRequest request, CancellationToken ct)
         {
             Interlocked.Increment(ref Notifications);
             Enter(request, ct);
-            try { return await Notification(request, ct); }
+            try { return await Notification(request, ct) is { } accepted ? new ConsentAnswer(accepted, AlwaysAccept) : null; }
             finally { Interlocked.Decrement(ref _open); }
         }
 

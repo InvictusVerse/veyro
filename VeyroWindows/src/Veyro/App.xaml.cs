@@ -69,6 +69,8 @@ public partial class App : Application
         try
         {
             VeyroContainer.Instance.PcBatterySource.Start();
+            VeyroContainer.Instance.PcNetworkSource.Start();
+            VeyroContainer.Instance.PcWallpaperSource.Start();
             await VeyroContainer.Instance.PcMediaSource.StartAsync();
         }
         catch (Exception error)
@@ -186,12 +188,24 @@ public partial class App : Application
         }
     }
 
-    /// <summary>Tray "Send files...": shows the window, picks files, sends to the selected phone.</summary>
+    /// <summary>
+    /// Tray "Send files...": brings the window forward (the picker needs an owner on screen),
+    /// then opens the picker directly.
+    /// </summary>
     public static async void SendFilesFromTray()
+    {
+        ShowMainWindow();
+        await PickAndSendFilesAsync();
+    }
+
+    /// <summary>
+    /// Every "Send files" entry point (header, Transfers tab, tray) opens the system file picker
+    /// directly and sends what is chosen to the selected phone (ADR-038). UI thread.
+    /// </summary>
+    public static async Task PickAndSendFilesAsync()
     {
         try
         {
-            ShowMainWindow();
             var picker = new Windows.Storage.Pickers.FileOpenPicker();
             InitializeWithWindow.Initialize(picker, WindowHandle);
             picker.FileTypeFilter.Add("*");
@@ -202,7 +216,8 @@ public partial class App : Application
         }
         catch (Exception error)
         {
-            VeyroTrace.Warn($"Sending files from the tray failed: {error.GetType().Name}");
+            // Type only: exception messages can name the user's files.
+            VeyroTrace.Warn($"Sending files failed: {error.GetType().Name}");
         }
     }
 
@@ -245,6 +260,8 @@ public partial class App : Application
         VeyroContainer.Instance.BluetoothCalling.Dispose();
         VeyroContainer.Instance.PcMediaSource.Dispose();
         VeyroContainer.Instance.PcBatterySource.Dispose();
+        VeyroContainer.Instance.PcNetworkSource.Dispose();
+        VeyroContainer.Instance.PcWallpaperSource.Dispose();
         VeyroContainer.Instance.SystemTrayService.Dispose();
         MainWindow?.Close();
         Current.Exit();

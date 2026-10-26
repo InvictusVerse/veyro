@@ -85,27 +85,25 @@
                             CornerRadius="6"
                             ToolTipService.ToolTip="{x:Bind ViewModel.Device.ConnectionStatusText, Mode=OneWay}"
                             Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Viewbox Width="24" Height="44">
-                                <Grid Width="54" Height="100" CornerRadius="8">
-                                    <Rectangle
-                                        Opacity="0.5"
-                                        RadiusX="4"
-                                        RadiusY="4"
-                                        Stroke="Black"
-                                        StrokeThickness="2" />
-                                    <Border
-                                        Margin="3"
-                                        CornerRadius="4"
-                                        Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
+                            <Grid Width="24" Height="44">
+                                <Border Background="#FF1B1B1F" CornerRadius="5" />
+                                <Grid Margin="2" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
+                                    <Border CornerRadius="3">
                                         <Border.Background>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                                <GradientStop Offset="0" Color="#FF0070FF" />
-                                                <GradientStop Offset="1" Color="#FF2E90FF" />
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Offset="0" Color="#FF2F5BEA" />
+                                                <GradientStop Offset="0.55" Color="#FF4C8DF6" />
+                                                <GradientStop Offset="1" Color="#FF7FC4FF" />
                                             </LinearGradientBrush>
                                         </Border.Background>
                                     </Border>
+                                    <Border CornerRadius="3" Visibility="{x:Bind StatusViewModel.HasWallpaper, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Border.Background>
+                                            <ImageBrush ImageSource="{x:Bind StatusViewModel.Wallpaper, Mode=OneWay}" Stretch="UniformToFill" />
+                                        </Border.Background>
+                                    </Border>
                                 </Grid>
-                            </Viewbox>
+                            </Grid>
                         </Button>
                         <ScrollViewer
                             Grid.Row="2"
@@ -148,9 +146,9 @@
                     <!--  Expanded pane  -->
                     <Grid
                         x:Name="ExpandedPaneContent"
-                        Margin="12,0,12,12"
+                        Margin="16,4,16,16"
                         VerticalAlignment="Stretch"
-                        RowSpacing="8">
+                        RowSpacing="12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -317,6 +315,13 @@
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE8BD;" />
                             </NavigationViewItem.Icon>
+                            <!--  Unread count, as on Phone Link's Messages tab  -->
+                            <NavigationViewItem.InfoBadge>
+                                <InfoBadge
+                                    AutomationProperties.Name="Unread messages"
+                                    Visibility="{x:Bind MessagesViewModel.HasUnread, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                    Value="{x:Bind MessagesViewModel.UnreadCount, Mode=OneWay}" />
+                            </NavigationViewItem.InfoBadge>
                         </NavigationViewItem>
                         <NavigationViewItem
                             x:Name="TransfersNavigationItem"

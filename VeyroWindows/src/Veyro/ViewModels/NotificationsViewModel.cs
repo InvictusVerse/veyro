@@ -32,7 +32,11 @@ public sealed class NotificationsViewModel : BaseViewModel
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _peerId = deviceManager.ActiveDevice?.DeviceId;
 
-        Notifications.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoNotifications));
+        Notifications.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasNoNotifications));
+            OnPropertyChanged(nameof(HasNotifications));
+        };
         _mirror.Changed += change => Post(() =>
         {
             if (string.Equals(change.PeerId, _peerId, StringComparison.OrdinalIgnoreCase)) Sync();
@@ -52,6 +56,14 @@ public sealed class NotificationsViewModel : BaseViewModel
 
     public Task DismissAsync(NotificationItemViewModel item)
         => RunAsync(item, () => _mirror.DismissAsync(item.PeerId, item.Key), "dismiss");
+
+    /// <summary>Phone Link's "Clear all": dismisses every listed notification on the phone.</summary>
+    public async Task ClearAllAsync()
+    {
+        foreach (NotificationItemViewModel item in Notifications.ToList()) await DismissAsync(item);
+    }
+
+    public bool HasNotifications => Notifications.Count > 0;
 
     public Task InvokeActionAsync(NotificationActionItem action)
         => RunAsync(action.Owner, () => _mirror.InvokeActionAsync(action.Owner.PeerId, action.Owner.Key, action.Index), "action");
