@@ -6,21 +6,19 @@ package com.veyro.navigation
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModelProvider
@@ -32,9 +30,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.veyro.core.designsystem.components.VeyroDetailScaffold
 import com.veyro.core.link.TransferCoordinator
+import com.veyro.core.model.ActiveTransfer
 import com.veyro.feature.clipboard.ClipboardScreen
 import com.veyro.ui.components.ActiveTransferBanner
 import com.veyro.ui.components.ActiveTransferDialog
+import com.veyro.ui.components.TransferBannerModel
 import com.veyro.ui.devices.DeviceSettingsScreen
 import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.devices.MediaSettingsScreen
@@ -44,39 +44,35 @@ import com.veyro.ui.pairing.PairingScreen
 import com.veyro.ui.pairing.PairingViewModel
 import com.veyro.ui.receive.ReceiveScreen
 import com.veyro.ui.receive.ReceiveViewModel
-import com.veyro.ui.send.SendScreen
-import com.veyro.ui.send.SendViewModel
 import com.veyro.ui.settings.SettingsViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The root navigation graph: the tabbed [MainScreen] plus every pushed screen, each with its own
  * back arrow (Sefirah's root graph).
  *
- * The one authoritative [ActiveTransferBanner] sits above the whole graph, so it shows on every
- * screen exactly once. When it is visible it takes the status-bar inset and the graph below is
- * told the inset is consumed, so no top bar pads for the status bar twice.
+ * The one authoritative [ActiveTransferBanner] floats above the whole graph, so it shows on every
+ * screen exactly once, and nothing under it moves when it appears or leaves (ADR-038). What it
+ * shows and when it slides out is decided by [TransferBannerModel].
  *
  * Home and Devices share one [HomeViewModel], like Sefirah's ConnectionViewModel, so a Connect
  * started on one card shows on the other. It and [DevicesViewModel] are scoped to the Activity.
  *
- * `onPickFiles` is passed in from the Activity rather than handled here, because the file picker is
- * an `ActivityResultContract` and only the Activity can launch one.
+ * [onSendFiles] is passed in from the Activity: Send files opens the system picker directly
+ * (an `ActivityResultContract`, which only the Activity can launch) and sends the result to the
+ * given PC, with no screen in between.
  */
 @Composable
 public fun VeyroNavHost(
     viewModelFactory: ViewModelProvider.Factory,
-    onPickFiles: () -> Unit,
+    /** Opens the system file picker and sends what is picked to this device id (null: the connected PC). */
+    onSendFiles: (deviceId: String?) -> Unit,
     transferCoordinator: TransferCoordinator? = null,
     modifier: Modifier = Modifier,
     /** Runtime permissions need the Activity, like the picker (ADR-027). */
     onRequestMessagingPermissions: () -> Unit = {},
-    /** The photo read permission, requested when "Photos on PC" is turned on (ADR-034). */
+    /** The photo read permission, for "Photos on PC" (ADR-034) and the wallpaper (ADR-038). */
     onRequestPhotosPermission: () -> Unit = {},
-    /** A device to open Send for, from the background notification (ADR-036). */
-    sendRequest: StateFlow<String?> = MutableStateFlow(null),
-    onSendRequestHandled: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -84,40 +80,32 @@ public fun VeyroNavHost(
     val homeViewModel = viewModel<HomeViewModel>(factory = viewModelFactory)
     val devicesViewModel = viewModel<DevicesViewModel>(factory = viewModelFactory)
 
-    val pendingSend by sendRequest.collectAsStateWithLifecycle()
-    LaunchedEffect(pendingSend) {
-        val deviceId = pendingSend ?: return@LaunchedEffect
-        navController.navigate(VeyroDestination.Send(deviceId))
-        onSendRequestHandled()
+    val bannerScope = rememberCoroutineScope()
+    val bannerModel = remember(transferCoordinator) {
+        TransferBannerModel(
+            scope = bannerScope,
+            transfers = transferCoordinator?.activeTransfer ?: MutableStateFlow<ActiveTransfer?>(null),
+            clear = { id -> transferCoordinator?.clearActiveTransfer(id) },
+        )
     }
+    val bannerTransfer by bannerModel.shown.collectAsStateWithLifecycle()
 
     var showTransferDialog by remember { mutableStateOf(false) }
     val activeTransfer by (transferCoordinator?.activeTransfer ?: remember { MutableStateFlow(null) })
         .collectAsStateWithLifecycle()
-    val bannerVisible = activeTransfer != null
+    // The details dialog belongs to one transfer; it must not reopen for the next one.
+    val noTransfer = activeTransfer == null
+    LaunchedEffect(noTransfer) { if (noTransfer) showTransferDialog = false }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        ActiveTransferBanner(
-            activeTransfer = activeTransfer,
-            onCancel = { transferCoordinator?.cancel() },
-            onDismiss = { transferCoordinator?.clearActiveTransfer() },
-            onClick = { showTransferDialog = true },
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (bannerVisible) Modifier.statusBarsPadding() else Modifier),
-        )
-
         NavHost(
             navController = navController,
             startDestination = VeyroDestination.Main,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .then(if (bannerVisible) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier),
+            modifier = Modifier.fillMaxSize(),
             enterTransition = { NavigationTransitions.rootEnterTransition(this) },
             exitTransition = { NavigationTransitions.rootExitTransition(this) },
             popEnterTransition = { NavigationTransitions.rootPopEnterTransition(this) },
@@ -130,6 +118,7 @@ public fun VeyroNavHost(
                     homeViewModel = homeViewModel,
                     devicesViewModel = devicesViewModel,
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
+                    onSendFiles = onSendFiles,
                 )
             }
 
@@ -137,18 +126,6 @@ public fun VeyroNavHost(
                 VeyroDetailScaffold(title = "Add device", onNavigateBack = { navController.navigateUp() }) { padding ->
                     PairingScreen(
                         viewModel = viewModel<PairingViewModel>(factory = viewModelFactory),
-                        modifier = Modifier.padding(padding),
-                    )
-                }
-            }
-
-            composable<VeyroDestination.Send> { entry ->
-                val route = entry.toRoute<VeyroDestination.Send>()
-                VeyroDetailScaffold(title = "Send files", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    SendScreen(
-                        viewModel = viewModel<SendViewModel>(factory = viewModelFactory),
-                        onPickFiles = onPickFiles,
-                        initialTarget = route.deviceId,
                         modifier = Modifier.padding(padding),
                     )
                 }
@@ -165,7 +142,7 @@ public fun VeyroNavHost(
 
             composable<VeyroDestination.Clipboard> {
                 VeyroDetailScaffold(title = "Clipboard", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    androidx.compose.foundation.layout.Box(Modifier.padding(padding)) { ClipboardScreen() }
+                    Box(Modifier.padding(padding)) { ClipboardScreen() }
                 }
             }
 
@@ -177,7 +154,7 @@ public fun VeyroNavHost(
                     devicesViewModel = devicesViewModel,
                     settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
                     onNavigateBack = { navController.navigateUp() },
-                    onSendFiles = { navController.navigate(VeyroDestination.Send(route.deviceId)) },
+                    onSendFiles = { onSendFiles(route.deviceId) },
                     onOpenMediaSettings = { navController.navigate(VeyroDestination.DeviceMedia) },
                     onOpenMessagesSettings = { navController.navigate(VeyroDestination.DeviceMessages) },
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
@@ -200,6 +177,16 @@ public fun VeyroNavHost(
                 )
             }
         }
+
+        // Drawn after the graph, so it floats above every screen.
+        ActiveTransferBanner(
+            activeTransfer = bannerTransfer,
+            onDismiss = { bannerModel.dismiss() },
+            onClick = { showTransferDialog = true },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth(),
+        )
     }
 
     if (showTransferDialog && activeTransfer != null) {
@@ -208,7 +195,7 @@ public fun VeyroNavHost(
             onCancel = { transferCoordinator?.cancel() },
             onDismiss = {
                 showTransferDialog = false
-                transferCoordinator?.clearActiveTransfer()
+                if (activeTransfer?.isTerminal == true) bannerModel.dismiss()
             },
             onViewFile = { uriStr ->
                 runCatching {

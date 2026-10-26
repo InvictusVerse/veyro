@@ -46,13 +46,12 @@ import java.util.Locale
  * Transfer history: search, filter chips and one card per transfer with its real verification
  * outcome (REQ-T04), restyled as Material 3 list items to match the Sefirah-style screens.
  *
- * [onOpenReceive] opens the Receive screen, so it stays one tap away from the History tab.
+ * No Receive button: receiving is always on (ADR-038).
  */
 @Composable
 public fun HistoryScreen(
     viewModel: HistoryViewModel,
     modifier: Modifier = Modifier,
-    onOpenReceive: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -91,7 +90,7 @@ public fun HistoryScreen(
             shape = MaterialTheme.shapes.extraLarge,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                .padding(start = 20.dp, end = 20.dp, top = 8.dp),
         )
 
         val filters = listOf(
@@ -101,7 +100,7 @@ public fun HistoryScreen(
             HistoryFilter.VERIFIED to "Verified",
         )
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(filters) { (filter, label) ->
@@ -110,9 +109,6 @@ public fun HistoryScreen(
                     onClick = { viewModel.setFilter(filter) },
                     label = { Text(if (filter == HistoryFilter.ALL && state.transfers.isNotEmpty()) "$label (${state.transfers.size})" else label) },
                 )
-            }
-            item {
-                TextButton(onClick = onOpenReceive) { Text("Receive") }
             }
         }
 
@@ -128,7 +124,7 @@ public fun HistoryScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(itemsToShow, key = { it.id }) { transfer ->
@@ -179,7 +175,7 @@ private fun HistoryItem(
                 Text(
                     text = if (transfer.itemCount > 1) "$firstItemName (+${transfer.itemCount - 1})" else firstItemName,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    overflow = TextOverflow.MiddleEllipsis,
                 )
             },
             supportingContent = {
@@ -188,6 +184,8 @@ private fun HistoryItem(
                         text = "${if (isIncoming) "From" else "To"} ${transfer.peerDisplayName ?: "device"}, " +
                             "${timestamp(transfer.startedAtEpochMillis)}, ${formatBytes(transfer.totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = if (isComplete) "Completed, SHA-256 verified" else description,

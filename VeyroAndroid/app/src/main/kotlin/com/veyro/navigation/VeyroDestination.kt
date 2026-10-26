@@ -35,10 +35,6 @@ public sealed interface VeyroDestination {
     @Serializable
     public data object Pairing : VeyroDestination
 
-    /** [deviceId] preselects the target when opened from a device. */
-    @Serializable
-    public data class Send(val deviceId: String? = null) : VeyroDestination
-
     @Serializable
     public data object Receive : VeyroDestination
 

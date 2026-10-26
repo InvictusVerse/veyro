@@ -1,25 +1,29 @@
 package com.veyro.ui.home
 
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.veyro.core.data.DeviceRepository
 import com.veyro.core.data.DiscoverySubscription
 import com.veyro.core.link.LinkMessage
+import com.veyro.core.model.Capabilities
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
-import com.veyro.core.model.TrustedPeer
 import com.veyro.core.model.NetworkStatus
+import com.veyro.core.model.Transfer
+import com.veyro.core.model.TrustedPeer
 import com.veyro.core.network.NetworkMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -28,6 +32,9 @@ import kotlinx.coroutines.launch
  * Owns the discovery window. The window opens when the screen starts observing and closes when the
  * ViewModel is cleared, which is what makes NFR-02 ("zero packets when idle") true in practice:
  * leaving the hub stops advertising, stops browsing, and releases the multicast lock.
+ *
+ * Since ADR-038 it also feeds the Phone Link-style Home: the selected PC with its wallpaper and
+ * reported status, Lock PC, and the newest transfer for the Recent card.
  */
 public class HomeViewModel(
     private val deviceRepository: DeviceRepository,
@@ -39,14 +46,29 @@ public class HomeViewModel(
     /** Device id of the PC the live session is with. */
     connectedPeerId: Flow<String?> = flowOf(null),
     private val sendMediaCommand: suspend (LinkMessage.MediaCommand) -> Boolean = { false },
-    /** Paired devices, for the Sefirah-style device cards. */
+    /** Paired devices, for the device cards and the PC switcher. */
     trustedPeers: Flow<List<TrustedPeer>> = flowOf(emptyList()),
     /** Opens a session with a paired device at the given endpoints; true on success. */
     private val connectPeer: suspend (deviceId: String, name: String, endpoints: List<Endpoint>) -> Boolean =
         { _, _, _ -> false },
     /** Closes the live session. */
     private val disconnectPeer: () -> Unit = {},
+    /** The capabilities the connected PC advertised (NONE while disconnected). */
+    peerCapabilities: Flow<Capabilities> = flowOf(Capabilities.NONE),
+    /** The last wallpaper each PC sent, by device id (ADR-038). */
+    pcWallpapers: Flow<Map<String, ByteArray>> = flowOf(emptyMap()),
+    /** Transfer history, newest first, for the Recent card. */
+    history: Flow<List<Transfer>> = flowOf(emptyList()),
+    /** Sends `pcLock` over the live session; true if it was sent. */
+    private val lockPc: suspend () -> Boolean = { false },
+    /** Drops one entry from the transfer history. */
+    private val removeHistory: suspend (transferId: String) -> Unit = {},
+    /** A small preview of a received image, read off the main thread by `:app`. */
+    private val loadThumbnail: suspend (uri: String) -> ImageBitmap? = { null },
 ) : ViewModel() {
+
+    /** For the Recent card's image preview. */
+    public suspend fun thumbnail(uri: String): ImageBitmap? = loadThumbnail(uri)
 
     private companion object {
         /**
@@ -66,7 +88,7 @@ public class HomeViewModel(
 
     init {
         deviceRepository.devices
-            .onEach { devices -> _state.value = _state.value.copy(devices = devices) }
+            .onEach { devices -> _state.update { it.copy(devices = devices) } }
             .launchIn(viewModelScope)
 
         networkMonitor.status
@@ -74,26 +96,46 @@ public class HomeViewModel(
             .launchIn(viewModelScope)
 
         pcMedia
-            .onEach { _state.value = _state.value.copy(pcMedia = it) }
+            .onEach { media -> _state.update { it.copy(pcMedia = media) } }
             .launchIn(viewModelScope)
 
         pcStatus
-            .onEach { _state.value = _state.value.copy(pcStatus = it) }
+            .onEach { status -> _state.update { it.copy(pcStatus = status) } }
             .launchIn(viewModelScope)
 
         connectedPeerId
-            .onEach { _state.value = _state.value.copy(connectedPeerId = DeviceId.parseOrNull(it)) }
+            .onEach { id -> _state.update { it.copy(connectedPeerId = DeviceId.parseOrNull(id)) } }
             .launchIn(viewModelScope)
 
         trustedPeers
             .catch { emit(emptyList()) }
-            .onEach { peers -> _state.value = _state.value.copy(pairedPeers = peers.filterNot { it.revoked }) }
+            .onEach { peers -> _state.update { it.copy(pairedPeers = peers.filterNot { p -> p.revoked }) } }
+            .launchIn(viewModelScope)
+
+        peerCapabilities
+            .catch { emit(Capabilities.NONE) }
+            .onEach { caps -> _state.update { it.copy(peerCapabilities = caps) } }
+            .launchIn(viewModelScope)
+
+        pcWallpapers
+            .catch { emit(emptyMap()) }
+            .onEach { wallpapers -> _state.update { it.copy(pcWallpapers = wallpapers) } }
+            .launchIn(viewModelScope)
+
+        history
+            .catch { emit(emptyList()) }
+            .onEach { transfers -> _state.update { it.copy(history = transfers) } }
             .launchIn(viewModelScope)
     }
 
+    /** The PC switcher on Home. */
+    public fun selectPc(deviceId: DeviceId) {
+        _state.update { it.copy(selectedId = deviceId) }
+    }
+
     /**
-     * The card's sync button (Sefirah's DeviceCard): disconnects the connected device, otherwise
-     * dials [deviceId] at the endpoints discovery currently reports for it.
+     * The card's sync button: disconnects the connected device, otherwise dials [deviceId] at the
+     * endpoints discovery currently reports for it.
      */
     public fun toggleConnection(deviceId: DeviceId) {
         val current = _state.value
@@ -105,10 +147,10 @@ public class HomeViewModel(
         val peer = current.pairedPeers.firstOrNull { it.deviceId == deviceId } ?: return
         val endpoints = current.devices.firstOrNull { it.deviceId == deviceId }?.endpoints.orEmpty()
         if (endpoints.isEmpty()) {
-            _state.value = current.copy(failedId = deviceId)
+            _state.update { it.copy(failedId = deviceId) }
             return
         }
-        _state.value = current.copy(connectingId = deviceId, failedId = null)
+        _state.update { it.copy(connectingId = deviceId, failedId = null) }
         viewModelScope.launch {
             val ok = try {
                 connectPeer(deviceId.value, peer.name, endpoints)
@@ -117,8 +159,38 @@ public class HomeViewModel(
             } catch (_: Exception) {
                 false
             }
-            _state.value = _state.value.copy(connectingId = null, failedId = if (ok) null else deviceId)
+            _state.update { it.copy(connectingId = null, failedId = if (ok) null else deviceId) }
         }
+    }
+
+    /** The Lock PC tile (ADR-038). A no-op unless [HomeUiState.canLockPc]. */
+    public fun lockSelectedPc() {
+        val current = _state.value
+        val pc = current.selectedPc ?: return
+        if (!current.canLockPc) return
+        viewModelScope.launch {
+            val sent = try {
+                lockPc()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+            _state.update { it.copy(message = if (sent) "Locking ${pc.name}" else "Could not reach ${pc.name}") }
+        }
+    }
+
+    /** "Delete from history" on the Recent card. The file itself stays where it is. */
+    public fun removeFromHistory(transferId: String) {
+        viewModelScope.launch {
+            runCatching { removeHistory(transferId) }
+            _state.update { it.copy(message = "Removed from history") }
+        }
+    }
+
+    /** The snackbar showed [HomeUiState.message]. */
+    public fun messageShown() {
+        _state.update { it.copy(message = null) }
     }
 
     /** Drives the connected PC's media session [id] (ADR-026). Fire and forget. */
@@ -132,11 +204,11 @@ public class HomeViewModel(
     public fun startDiscovery() {
         if (subscription != null) return
         subscription = deviceRepository.observeNearby(forPairing = false)
-        _state.value = _state.value.copy(isSearching = true, searchedLongEnough = false)
+        _state.update { it.copy(isSearching = true, searchedLongEnough = false) }
 
         viewModelScope.launch {
             delay(GRACE_MILLIS)
-            _state.value = _state.value.copy(searchedLongEnough = true)
+            _state.update { it.copy(searchedLongEnough = true) }
         }
     }
 
@@ -163,7 +235,7 @@ public class HomeViewModel(
     public fun stopDiscovery() {
         subscription?.close()
         subscription = null
-        _state.value = _state.value.copy(isSearching = false, searchedLongEnough = false)
+        _state.update { it.copy(isSearching = false, searchedLongEnough = false) }
     }
 
     public fun refresh() {
@@ -172,14 +244,16 @@ public class HomeViewModel(
     }
 
     private fun applyNetwork(status: NetworkStatus) {
-        _state.value = _state.value.copy(
-            transport = status.transport,
-            hasUsableNetwork = status.hasUsableNetwork,
-            isHotspotActive = status.isHotspotActive,
-            isVpnActive = status.isVpnActive,
-            localAddresses = status.localAddresses,
-            diagnosis = status.diagnosis,
-        )
+        _state.update {
+            it.copy(
+                transport = status.transport,
+                hasUsableNetwork = status.hasUsableNetwork,
+                isHotspotActive = status.isHotspotActive,
+                isVpnActive = status.isVpnActive,
+                localAddresses = status.localAddresses,
+                diagnosis = status.diagnosis,
+            )
+        }
     }
 
     override fun onCleared() {

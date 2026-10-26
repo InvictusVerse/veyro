@@ -1,13 +1,20 @@
 package com.veyro.ui.home
 
 import com.veyro.core.link.LinkMessage
+import com.veyro.core.model.Capabilities
+import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.NetworkDiagnosis
 import com.veyro.core.model.NetworkTransport
 import com.veyro.core.model.PeerDevice
 import com.veyro.core.model.Platform
+import com.veyro.core.model.Transfer
+import com.veyro.core.model.TransferDirection
+import com.veyro.core.model.TransferState
 import com.veyro.core.model.TrustState
 import com.veyro.core.model.TrustedPeer
+import com.veyro.ui.format.FileKind
+import com.veyro.ui.format.fileKindOf
 
 /** Where a paired device stands right now, for the device cards (Home and Devices). */
 public enum class ConnectionStatus {
@@ -25,8 +32,8 @@ public enum class ConnectionStatus {
 }
 
 /**
- * One paired device as the Sefirah-style cards show it: name, connection state and, for the
- * connected PC, the battery it reports (`devStatus`, ADR-026).
+ * One paired device as the cards show it: name, connection state and, for the connected PC, what
+ * its own `devStatus` reports (battery ADR-026, Wi-Fi ADR-038).
  */
 public data class PairedDeviceUi(
     val deviceId: DeviceId,
@@ -35,6 +42,8 @@ public data class PairedDeviceUi(
     val status: ConnectionStatus,
     val battery: Int? = null,
     val charging: Boolean? = null,
+    /** Wi-Fi bars 0..4, -1 when the PC is not on Wi-Fi; null when unknown or not connected. */
+    val wifi: Int? = null,
     /** The last Connect from the card for this device failed. */
     val connectFailed: Boolean = false,
     val lastConnectedEpochMillis: Long = 0L,
@@ -45,6 +54,27 @@ public data class PairedDeviceUi(
     /** Connect can only be tried for a device discovery currently sees. */
     val canToggleConnection: Boolean
         get() = status == ConnectionStatus.CONNECTED || status == ConnectionStatus.NEARBY
+}
+
+/** The latest transfer for Home's "Recent" card. File names are user data: shown, never logged. */
+public data class RecentTransferUi(
+    val id: String,
+    val fileName: String,
+    /** Files beyond the first in the same transfer. */
+    val moreCount: Int,
+    val direction: TransferDirection,
+    val peerName: String,
+    /** Where the received file was saved; null for sent files (the bytes are on the PC). */
+    val destinationUri: String?,
+    val kind: FileKind,
+    val finishedAtEpochMillis: Long,
+    val succeeded: Boolean,
+) {
+    /** "Received from Office PC" / "Sent to Office PC". */
+    val subtitle: String
+        get() = if (direction == TransferDirection.RECEIVE) "Received from $peerName" else "Sent to $peerName"
+
+    val canOpen: Boolean get() = destinationUri != null && succeeded
 }
 
 /**
@@ -76,17 +106,32 @@ public data class HomeUiState(
     /** The connected PC's media sessions (ADR-026). Null when no capable PC is connected. */
     val pcMedia: LinkMessage.MediaState? = null,
 
-    /** The connected PC's own status (battery etc.), when it reports one. */
+    /** The connected PC's own status (battery, Wi-Fi), when it reports one. */
     val pcStatus: LinkMessage.DeviceStatus? = null,
+
+    /** What the connected PC advertised in its hello; NONE while disconnected. */
+    val peerCapabilities: Capabilities = Capabilities.NONE,
+
+    /** The last wallpaper each PC sent (JPEG), by device id string (ADR-038). */
+    val pcWallpapers: Map<String, ByteArray> = emptyMap(),
 
     /** Paired devices from the trust store, revoked ones excluded. */
     val pairedPeers: List<TrustedPeer> = emptyList(),
+
+    /** The PC the user picked in the switcher; the connected one (else the first) when null. */
+    val selectedId: DeviceId? = null,
 
     /** Device a Connect from the card is running for. */
     val connectingId: DeviceId? = null,
 
     /** Device whose last Connect from the card failed. */
     val failedId: DeviceId? = null,
+
+    /** Transfer history, newest first. */
+    val history: List<Transfer> = emptyList(),
+
+    /** A one-line confirmation for the snackbar ("Locking Office PC"); cleared once shown. */
+    val message: String? = null,
 ) {
     /** The PC session the media card shows: the playing one, else the first. */
     val pcMediaSession: LinkMessage.MediaSessionInfo?
@@ -124,6 +169,7 @@ public data class HomeUiState(
                     status = status,
                     battery = if (connected) pcStatus?.battery else null,
                     charging = if (connected) pcStatus?.charging else null,
+                    wifi = if (connected) pcStatus?.wifi else null,
                     connectFailed = failedId == peer.deviceId && !connected,
                     lastConnectedEpochMillis = peer.lastConnectedEpochMillis,
                     pairedAtEpochMillis = peer.pairedAtEpochMillis,
@@ -134,4 +180,71 @@ public data class HomeUiState(
     /** The connected device's card, if any, for the quick actions. */
     val connectedDevice: PairedDeviceUi?
         get() = pairedDevices.firstOrNull { it.isConnected }
+
+    /** The PC Home is about: the one picked in the switcher, else the connected one, else the first. */
+    val selectedPc: PairedDeviceUi?
+        get() {
+            val all = pairedDevices
+            return all.firstOrNull { it.deviceId == selectedId } ?: all.firstOrNull { it.isConnected } ?: all.firstOrNull()
+        }
+
+    /** The wallpaper to draw on the laptop, or null for the gradient fallback. */
+    val selectedWallpaper: ByteArray?
+        get() = selectedPc?.let { pcWallpapers[it.deviceId.value] }
+
+    /** Lock PC needs the live session with that PC, and the PC must understand `pcLock`. */
+    val canLockPc: Boolean
+        get() = selectedPc?.isConnected == true && Capability.DEVICE_STATUS in peerCapabilities
+
+    /** Send files works for any paired PC: the coordinator dials it if it is not connected. */
+    val canSendFiles: Boolean
+        get() = selectedPc != null
+
+    /** The newest finished transfer, for the Recent card. */
+    val recent: RecentTransferUi?
+        get() = history.firstOrNull { it.state.isTerminal }?.let { transfer ->
+            val files = transfer.items.filterNot { it.isDirectory }
+            val first = files.firstOrNull()?.fileName
+            RecentTransferUi(
+                id = transfer.id,
+                fileName = first ?: if (transfer.direction == TransferDirection.RECEIVE) "Received files" else "Sent files",
+                moreCount = (files.size - 1).coerceAtLeast(0),
+                direction = transfer.direction,
+                peerName = transfer.peerDisplayName ?: "your PC",
+                destinationUri = transfer.destinationUri ?: files.firstOrNull()?.destinationUri,
+                kind = first?.let(::fileKindOf) ?: FileKind.OTHER,
+                finishedAtEpochMillis = transfer.finishedAtEpochMillis ?: transfer.startedAtEpochMillis,
+                succeeded = transfer.state == TransferState.COMPLETED,
+            )
+        }
+}
+
+/**
+ * The line under the PC's status icons, Phone Link style: "Just now" while connected, else when
+ * it was last seen. [now] is passed in so the wording is testable.
+ */
+public fun lastSeenLabel(device: PairedDeviceUi, now: Long): String = when (device.status) {
+    ConnectionStatus.CONNECTED -> "Just now"
+    ConnectionStatus.CONNECTING -> "Connecting..."
+    ConnectionStatus.NEARBY, ConnectionStatus.OFFLINE -> {
+        val prefix = if (device.status == ConnectionStatus.NEARBY) "Nearby, last connected" else "Last connected"
+        val at = device.lastConnectedEpochMillis
+        if (at <= 0L) {
+            if (device.status == ConnectionStatus.NEARBY) "Nearby, not connected yet" else "Not connected yet"
+        } else {
+            "$prefix ${relativeTime(at, now)}"
+        }
+    }
+}
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago". */
+public fun relativeTime(at: Long, now: Long): String {
+    val seconds = ((now - at) / 1000L).coerceAtLeast(0L)
+    return when {
+        seconds < 60 -> "just now"
+        seconds < 3_600 -> "${seconds / 60} min ago"
+        seconds < 86_400 -> "${seconds / 3_600} h ago"
+        seconds < 2 * 86_400 -> "yesterday"
+        else -> "${seconds / 86_400} days ago"
+    }
 }

@@ -127,6 +127,28 @@ class DeviceStatusPublisherTest {
     }
 
     @Test
+    fun `radio changes are sent, unchanged radios are not resent`() = runTest {
+        val rig = rig()
+        rig.source.current = rig.source.current.copy(wifi = 3, cell = 2, carrier = "Carrier A", bluetooth = true, mobileData = false)
+        val link = connect(rig)
+
+        // Signal callbacks fire often; the same bars do not go out again.
+        repeat(3) { rig.source.changeFlow.emit(Unit) }
+        runCurrent()
+        rig.source.current = rig.source.current.copy(wifi = -1, mobileData = true)
+        rig.source.changeFlow.emit(Unit)
+        runCurrent()
+        rig.source.current = rig.source.current.copy(bluetooth = false)
+        rig.source.changeFlow.emit(Unit)
+        runCurrent()
+
+        assertEquals(listOf(3, -1, -1), link.statuses.map { it.wifi })
+        assertEquals(listOf(false, true, true), link.statuses.map { it.mobileData })
+        assertEquals(listOf(true, true, false), link.statuses.map { it.bluetooth })
+        assertEquals("Carrier A", link.statuses.first().carrier)
+    }
+
+    @Test
     fun `keeps the PC status until disconnect`() = runTest {
         val rig = rig()
         val link = connect(rig)

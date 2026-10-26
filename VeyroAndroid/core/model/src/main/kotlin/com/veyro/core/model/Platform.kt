@@ -60,6 +60,7 @@ public value class Capabilities(public val bits: Int) {
             Capability.MESSAGING,
             Capability.CALLS,
             Capability.PHOTOS,
+            Capability.WALLPAPER,
         )
     }
 }

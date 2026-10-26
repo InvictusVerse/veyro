@@ -127,17 +127,26 @@ public class VeyroNotifications(private val context: Context) {
         contentIntent: PendingIntent? = null,
         /** When the offer is declined automatically; shown as a countdown and used as the timeout. */
         expiresAtEpochMillis: Long = 0L,
+        /**
+         * Accepts this offer only. When set, [acceptIntent] is "Always accept", matching the in-app
+         * prompt where "Always accept from this PC" is ticked by default (ADR-038).
+         */
+        acceptOnceIntent: PendingIntent? = null,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_OFFERS)
             .setContentTitle("$peerName wants to send you $summary")
             .setContentText(totalBytesLabel)
+            .setStyle(Notification.BigTextStyle().bigText(totalBytesLabel))
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setCategory(Notification.CATEGORY_RECOMMENDATION)
             .setAutoCancel(false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(Notification.Action.Builder(null, "Accept", acceptIntent).build())
-            .addAction(Notification.Action.Builder(null, "Decline", declineIntent).build())
+            .addAction(
+                Notification.Action.Builder(null, if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent).build(),
+            )
+        acceptOnceIntent?.let { builder.addAction(Notification.Action.Builder(null, "Just this once", it).build()) }
+        builder.addAction(Notification.Action.Builder(null, "Decline", declineIntent).build())
         contentIntent?.let { builder.setContentIntent(it) }
         val remaining = expiresAtEpochMillis - System.currentTimeMillis()
         if (remaining > 0) {

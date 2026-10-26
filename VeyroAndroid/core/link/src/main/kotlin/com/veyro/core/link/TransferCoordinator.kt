@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -94,6 +95,14 @@ public class TransferCoordinator(
 
     public fun clearActiveTransfer() {
         _activeTransfer.value = null
+    }
+
+    /**
+     * Clears the banner state only if it still shows [transferId], so a banner that slides out
+     * after a finished transfer cannot wipe a transfer that started in the meantime.
+     */
+    public fun clearActiveTransfer(transferId: String) {
+        _activeTransfer.update { current -> current?.takeUnless { it.transferId == transferId } }
     }
 
     private val mutex = Mutex()

@@ -37,36 +37,26 @@ class ActiveTransferBannerLayoutTest {
     }
 
     @Test
-    fun `VeyroNavHost places banner in Column before the root NavHost with weight to reserve height`() {
+    fun `VeyroNavHost floats the banner above the root NavHost so nothing below it moves`() {
         val projectRoot = findProjectRoot()
-        val navHostFile = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt")
-        val content = navHostFile.readText()
+        val content = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt").readText()
 
-        // Since the Sefirah UI port the banner sits above the root graph (tabs and pushed screens),
-        // not inside the tab Scaffold, so it is still shown exactly once on every screen.
-        assertTrue("VeyroNavHost root content must use a Column", content.contains("Column("))
+        // ADR-038: the banner overlays the graph in a Box instead of pushing it down in a Column,
+        // so appearing and sliding out never shift the screen below.
+        val boxIdx = content.indexOf("Box(")
+        val navHostCallIdx = content.indexOf("\n        NavHost(", boxIdx)
+        val bannerIdx = content.indexOf("ActiveTransferBanner(", navHostCallIdx)
+        assertTrue("root content must be a Box", boxIdx > 0)
+        assertTrue("NavHost must be inside the Box", navHostCallIdx > boxIdx)
+        assertTrue("banner must be drawn after (above) the NavHost", bannerIdx > navHostCallIdx)
+        assertTrue(content.contains(".align(Alignment.TopCenter)"))
 
-        // Verify ActiveTransferBanner is rendered BEFORE the root NavHost invocation
-        val bannerIdx = content.indexOf("ActiveTransferBanner(", content.indexOf("Column("))
-        val navHostCallIdx = content.indexOf("\n        NavHost(", bannerIdx)
-        assertTrue("ActiveTransferBanner must be present", bannerIdx > 0)
-        assertTrue("NavHost call must be present after ActiveTransferBanner", navHostCallIdx > 0)
-        assertTrue(
-            "ActiveTransferBanner must precede NavHost in Column layout",
-            bannerIdx < navHostCallIdx,
-        )
-
-        // Verify NavHost has weight(1f) to lay out underneath banner without overlap
         val navHostBlock = content.substring(navHostCallIdx, content.indexOf("composable<VeyroDestination.Main>", navHostCallIdx))
-        assertTrue(
-            "NavHost must declare weight(1f) to occupy remaining vertical space below banner",
-            navHostBlock.contains(".weight(1f)"),
-        )
+        assertFalse("the graph must not be resized for the banner", navHostBlock.contains("consumeWindowInsets"))
 
-        // When shown, the banner takes the status-bar inset and the graph is told it is consumed,
-        // so the top bars below do not pad for the status bar a second time.
-        assertTrue(content.contains("statusBarsPadding()"))
-        assertTrue(navHostBlock.contains("consumeWindowInsets(WindowInsets.statusBars)"))
+        // The banner carries its own status-bar inset.
+        val banner = File(projectRoot, "core/ui/src/main/kotlin/com/veyro/ui/components/ActiveTransferBanner.kt").readText()
+        assertTrue(banner.contains("statusBarsPadding()"))
     }
 
     @Test
@@ -78,18 +68,15 @@ class ActiveTransferBannerLayoutTest {
     }
 
     @Test
-    fun `VeyroNavHost binds onCancel and onDismiss actions correctly`() {
+    fun `VeyroNavHost binds dismiss to the banner model and cancel to the coordinator`() {
         val projectRoot = findProjectRoot()
-        val navHostFile = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt")
-        val content = navHostFile.readText()
+        val content = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt").readText()
 
+        assertTrue(content.contains("onDismiss = { bannerModel.dismiss() }"))
+        assertTrue(content.contains("onCancel = { transferCoordinator?.cancel() }"))
         assertTrue(
-            "onCancel must invoke transferCoordinator?.cancel()",
-            content.contains("onCancel = { transferCoordinator?.cancel() }"),
-        )
-        assertTrue(
-            "onDismiss must invoke transferCoordinator?.clearActiveTransfer()",
-            content.contains("onDismiss = { transferCoordinator?.clearActiveTransfer() }"),
+            "slid-out banners clear only their own transfer",
+            content.contains("transferCoordinator?.clearActiveTransfer(id)"),
         )
     }
 

@@ -1,20 +1,37 @@
 package com.veyro.core.companion
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.telephony.PhoneStateListener
+import android.telephony.SignalStrength
+import android.telephony.SubscriptionManager
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.link.LinkMessage
@@ -22,13 +39,24 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Executor
 
 /**
- * [DeviceStatusSource] from the sticky battery broadcast, `AudioManager` and `NotificationManager`.
+ * [DeviceStatusSource] from the sticky battery broadcast, `AudioManager`, `NotificationManager`,
+ * and (ADR-038) the radios: Wi-Fi and mobile data from `ConnectivityManager`, the cellular level
+ * and carrier from `TelephonyManager`, Bluetooth on/off.
  *
- * `ACTION_BATTERY_CHANGED` fires on every voltage or temperature tick; [DeviceStatusPublisher]
- * only sends when the resulting message differs, so that is a whole-point battery move or a
- * charging / ringer / DND change.
+ * `ACTION_BATTERY_CHANGED` and the signal callbacks fire often; [DeviceStatusPublisher] only sends
+ * when the resulting message differs, so that is a whole-point battery move, a bar gained or lost,
+ * or a charging / ringer / DND / radio change.
+ *
+ * No permission is added for any of it. Bluetooth is read through `BluetoothAdapter.isEnabled`
+ * only when `BLUETOOTH_CONNECT` happens to be granted (API 31+), otherwise from
+ * `Settings.Global.BLUETOOTH_ON`, which needs none: Veyro declares no Bluetooth permission
+ * (ADR-001). The carrier comes from the data SIM's display name when `READ_PHONE_STATE` is granted
+ * (it is for "Messages and calls on PC"), else from the SIM operator name. Every read degrades to
+ * "absent" on a phone without telephony or on an OEM that refuses it. Carrier is user data: never
+ * logged.
  */
 public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
 
@@ -36,6 +64,9 @@ public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
     private val audioManager: AudioManager? = appContext.getSystemService(AudioManager::class.java)
     private val notificationManager: NotificationManager? =
         appContext.getSystemService(NotificationManager::class.java)
+    private val connectivity: ConnectivityManager? = appContext.getSystemService(ConnectivityManager::class.java)
+    private val wifiManager: WifiManager? = appContext.getSystemService(WifiManager::class.java)
+    private val telephony: TelephonyManager? = appContext.getSystemService(TelephonyManager::class.java)
 
     override val changes: Flow<Unit> = callbackFlow {
         val receiver = object : BroadcastReceiver() {
@@ -47,6 +78,10 @@ public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
+            addAction(WifiManager.RSSI_CHANGED_ACTION)
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+            // Delivered only where the platform lets us; the settings observer below covers the rest.
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
         // System broadcasts only, so the receiver need not be exported.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -54,7 +89,139 @@ public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
         } else {
             appContext.registerReceiver(receiver, filter)
         }
-        awaitClose { runCatching { appContext.unregisterReceiver(receiver) } }
+
+        val networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trySend(Unit)
+            }
+            override fun onLost(network: Network) {
+                trySend(Unit)
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                trySend(Unit)
+            }
+        }
+        val networkRegistered = runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
+            .onFailure { VeyroLog.d(TAG) { "No network callback: ${it.javaClass.simpleName}" } }
+            .isSuccess && connectivity != null
+
+        val bluetoothObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                trySend(Unit)
+            }
+        }
+        runCatching {
+            appContext.contentResolver.registerContentObserver(
+                Settings.Global.getUriFor(Settings.Global.BLUETOOTH_ON),
+                false,
+                bluetoothObserver,
+            )
+        }
+
+        val unregisterSignal = registerSignalListener { trySend(Unit) }
+
+        awaitClose {
+            runCatching { appContext.unregisterReceiver(receiver) }
+            if (networkRegistered) runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
+            runCatching { appContext.contentResolver.unregisterContentObserver(bluetoothObserver) }
+            runCatching { unregisterSignal() }
+        }
+    }
+
+    /** Cellular signal changes. No permission is needed for signal strength on any supported API. */
+    private fun registerSignalListener(onChange: () -> Unit): () -> Unit {
+        val noop: () -> Unit = {}
+        val manager = telephony ?: return noop
+        val executor = Executor { it.run() }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val callback = object : TelephonyCallback(), TelephonyCallback.SignalStrengthsListener {
+                    override fun onSignalStrengthsChanged(signalStrength: SignalStrength) = onChange()
+                }
+                manager.registerTelephonyCallback(executor, callback)
+                return { manager.unregisterTelephonyCallback(callback) }
+            }
+            @Suppress("DEPRECATION")
+            val listener = object : PhoneStateListener(executor) {
+                @Deprecated("Deprecated in Java")
+                override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) = onChange()
+            }
+            @Suppress("DEPRECATION")
+            manager.listen(listener, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS)
+            @Suppress("DEPRECATION")
+            return { manager.listen(listener, PhoneStateListener.LISTEN_NONE) }
+        } catch (e: RuntimeException) {
+            // SecurityException on some OEM builds, or no telephony service at all.
+            VeyroLog.d(TAG) { "No signal listener: ${e.javaClass.simpleName}" }
+            return noop
+        }
+    }
+
+    private class RadioState(val wifiConnected: Boolean, val wifiRssi: Int?, val mobileData: Boolean?)
+
+    private fun readNetwork(): RadioState {
+        val cm = connectivity ?: return RadioState(false, null, null)
+        val active = runCatching { cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } }.getOrNull()
+        val mobileData = active?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ?: false
+        // The active network can be a VPN or cellular while Wi-Fi is still associated.
+        val wifiCaps = active?.takeIf { it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
+            ?: runCatching {
+                @Suppress("DEPRECATION")
+                cm.allNetworks.asSequence()
+                    .mapNotNull { cm.getNetworkCapabilities(it) }
+                    .firstOrNull { it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
+            }.getOrNull()
+        val rssi = wifiCaps?.signalStrength?.takeIf { it != NetworkCapabilities.SIGNAL_STRENGTH_UNSPECIFIED }
+            ?: if (wifiCaps != null) {
+                @Suppress("DEPRECATION")
+                runCatching { wifiManager?.connectionInfo?.rssi }.getOrNull()
+            } else {
+                null
+            }
+        return RadioState(wifiConnected = wifiCaps != null, wifiRssi = rssi, mobileData = mobileData)
+    }
+
+    private fun simReady(): Boolean =
+        runCatching { telephony?.simState == TelephonyManager.SIM_STATE_READY }.getOrDefault(false)
+
+    private fun cellLevel(): Int? = runCatching { telephony?.signalStrength?.level }.getOrNull()
+
+    // The permission is checked right here; without it the name falls back to the operator.
+    @SuppressLint("MissingPermission")
+    private fun carrier(): String? {
+        val manager = telephony ?: return null
+        val subId = SubscriptionManager.getDefaultDataSubscriptionId()
+        val display = if (granted(Manifest.permission.READ_PHONE_STATE) && subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            runCatching {
+                appContext.getSystemService(SubscriptionManager::class.java)
+                    ?.getActiveSubscriptionInfo(subId)?.displayName?.toString()
+            }.getOrNull()
+        } else {
+            null
+        }
+        val operator = display ?: runCatching {
+            val forData = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) manager.createForSubscriptionId(subId) else manager
+            forData.simOperatorName?.takeIf { it.isNotBlank() } ?: forData.networkOperatorName
+        }.getOrNull()
+        return operator?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun bluetoothOn(): Boolean? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && granted(Manifest.permission.BLUETOOTH_CONNECT)) {
+            runCatching { appContext.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled }
+                .getOrNull()?.let { return it }
+        }
+        return runCatching {
+            Settings.Global.getInt(appContext.contentResolver, Settings.Global.BLUETOOTH_ON, 0) != 0
+        }.getOrNull()
+    }
+
+    private fun granted(permission: String): Boolean =
+        appContext.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    private companion object {
+        const val TAG = "DeviceStatusSource"
     }
 
     override suspend fun current(): LinkMessage.DeviceStatus {
@@ -77,7 +244,19 @@ public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
             filter != NotificationManager.INTERRUPTION_FILTER_ALL &&
                 filter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
         }
-        return LinkMessage.DeviceStatus(battery = percent, charging = charging, ringer = ringer, dnd = dnd)
+        val radio = readNetwork()
+        val simReady = simReady()
+        return LinkMessage.DeviceStatus(
+            battery = percent,
+            charging = charging,
+            ringer = ringer,
+            dnd = dnd,
+            wifi = RadioLevels.wifiField(radio.wifiConnected, RadioLevels.wifiLevelFromRssi(radio.wifiRssi)),
+            cell = if (telephony == null) null else RadioLevels.cellField(simReady, cellLevel()),
+            carrier = if (simReady) carrier() else null,
+            bluetooth = bluetoothOn(),
+            mobileData = radio.mobileData,
+        )
     }
 }
 

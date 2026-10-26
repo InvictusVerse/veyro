@@ -4,7 +4,14 @@ import com.veyro.core.data.DeviceRepository
 import com.veyro.core.data.DiscoverySubscription
 import com.veyro.core.link.LinkMessage
 import com.veyro.core.model.Capabilities
+import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
+import com.veyro.core.model.Transfer
+import com.veyro.core.model.TransferDirection
+import com.veyro.core.model.TransferItem
+import com.veyro.core.model.TransferState
+import com.veyro.ui.format.FileKind
+import org.junit.Assert.assertFalse
 import com.veyro.core.model.DiscoverySource
 import com.veyro.core.model.Endpoint
 import com.veyro.core.model.NetworkStatus
@@ -158,6 +165,191 @@ class HomeViewModelTest {
         val card = vm.state.value.pairedDevices.single()
         assertEquals(ConnectionStatus.NEARBY, card.status)
         assertTrue(card.connectFailed)
+    }
+
+    // ── Phone Link-style Home (ADR-038) ─────────────────────────────────────────────────────
+
+    private fun history(vararg transfers: Transfer) = MutableStateFlow(transfers.toList())
+
+    private fun transfer(
+        id: String,
+        direction: TransferDirection,
+        names: List<String>,
+        state: TransferState = TransferState.COMPLETED,
+        uri: String? = null,
+    ) = Transfer(
+        id = id,
+        peerDeviceId = DeviceId.fromPublicKey(ByteArray(32) { 1 }),
+        peerDisplayName = "Office PC",
+        direction = direction,
+        items = names.mapIndexed { i, n -> TransferItem(i, n, 10L, 0L) },
+        totalBytes = 10L * names.size,
+        state = state,
+        startedAtEpochMillis = 1_000L,
+        finishedAtEpochMillis = 2_000L,
+        destinationUri = uri,
+    )
+
+    @Test
+    fun `the connected PC shows its battery, charging and Wi-Fi, and can be locked`() {
+        val office = trusted(1, "Office PC")
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            pcStatus = MutableStateFlow(LinkMessage.DeviceStatus(battery = 64, charging = true, wifi = 3)),
+            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            trustedPeers = MutableStateFlow(listOf(office)),
+            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.FILE_TRANSFER, Capability.DEVICE_STATUS)),
+        )
+
+        val pc = vm.state.value.selectedPc!!
+        assertEquals("Office PC", pc.name)
+        assertEquals(64, pc.battery)
+        assertEquals(true, pc.charging)
+        assertEquals(3, pc.wifi)
+        assertEquals("Just now", lastSeenLabel(pc, now = 10_000L))
+        assertTrue(vm.state.value.canLockPc)
+        assertTrue(vm.state.value.canSendFiles)
+    }
+
+    @Test
+    fun `a disconnected PC shows no live status, cannot be locked, but can still be sent to`() {
+        val office = trusted(1, "Office PC").copy(lastConnectedEpochMillis = 1_000L)
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            // A stale status from before the disconnect must not be shown for it.
+            pcStatus = MutableStateFlow(LinkMessage.DeviceStatus(battery = 64, wifi = 3)),
+            trustedPeers = MutableStateFlow(listOf(office)),
+            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.DEVICE_STATUS)),
+        )
+
+        val pc = vm.state.value.selectedPc!!
+        assertEquals(ConnectionStatus.OFFLINE, pc.status)
+        assertNull(pc.battery)
+        assertNull(pc.wifi)
+        assertEquals("Last connected 5 min ago", lastSeenLabel(pc, now = 1_000L + 5 * 60_000L))
+        assertFalse(vm.state.value.canLockPc)
+        assertTrue(vm.state.value.canSendFiles)
+    }
+
+    @Test
+    fun `Lock PC needs the DEVICE_STATUS capability`() {
+        val office = trusted(1, "Office PC")
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            trustedPeers = MutableStateFlow(listOf(office)),
+            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.FILE_TRANSFER)),
+            lockPc = { error("must not be called") },
+        )
+        assertFalse(vm.state.value.canLockPc)
+        vm.lockSelectedPc()
+        assertNull(vm.state.value.message)
+    }
+
+    @Test
+    fun `Lock PC sends once and confirms in the snackbar`() {
+        val office = trusted(1, "Office PC")
+        var locks = 0
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            trustedPeers = MutableStateFlow(listOf(office)),
+            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.DEVICE_STATUS)),
+            lockPc = {
+                locks++
+                true
+            },
+        )
+        vm.lockSelectedPc()
+        assertEquals(1, locks)
+        assertEquals("Locking Office PC", vm.state.value.message)
+        vm.messageShown()
+        assertNull(vm.state.value.message)
+    }
+
+    @Test
+    fun `the selected PC's wallpaper is drawn, and the switcher changes PC`() {
+        val office = trusted(1, "Office PC")
+        val laptop = trusted(2, "Laptop")
+        val officeJpeg = byteArrayOf(1)
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            trustedPeers = MutableStateFlow(listOf(office, laptop)),
+            pcWallpapers = MutableStateFlow(mapOf(office.deviceId.value to officeJpeg)),
+        )
+
+        assertEquals("connected PC first", "Office PC", vm.state.value.selectedPc?.name)
+        assertTrue(vm.state.value.selectedWallpaper === officeJpeg)
+
+        vm.selectPc(laptop.deviceId)
+        assertEquals("Laptop", vm.state.value.selectedPc?.name)
+        assertNull("no wallpaper: the gradient fallback", vm.state.value.selectedWallpaper)
+    }
+
+    @Test
+    fun `no paired PC means no selection and no tiles`() {
+        val vm = HomeViewModel(deviceRepository = FakeRepository(), networkMonitor = QuietNetwork)
+        assertNull(vm.state.value.selectedPc)
+        assertFalse(vm.state.value.canSendFiles)
+        assertFalse(vm.state.value.canLockPc)
+        assertNull(vm.state.value.recent)
+    }
+
+    @Test
+    fun `Recent shows the newest finished transfer with its direction`() {
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            history = history(
+                transfer("run", TransferDirection.SEND, listOf("live.bin"), state = TransferState.TRANSFERRING),
+                transfer("r1", TransferDirection.RECEIVE, listOf("IMG_2041.jpg", "IMG_2042.jpg"), uri = "content://media/1"),
+                transfer("s1", TransferDirection.SEND, listOf("notes.pdf")),
+            ),
+        )
+
+        val recent = vm.state.value.recent!!
+        assertEquals("r1", recent.id)
+        assertEquals("IMG_2041.jpg", recent.fileName)
+        assertEquals(1, recent.moreCount)
+        assertEquals("Received from Office PC", recent.subtitle)
+        assertEquals(FileKind.IMAGE, recent.kind)
+        assertTrue(recent.canOpen)
+    }
+
+    @Test
+    fun `a sent file can only be removed from history, not opened`() {
+        val removed = mutableListOf<String>()
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            history = history(transfer("s1", TransferDirection.SEND, listOf("notes.pdf"))),
+            removeHistory = { removed += it },
+        )
+        val recent = vm.state.value.recent!!
+        assertEquals("Sent to Office PC", recent.subtitle)
+        assertEquals(FileKind.DOCUMENT, recent.kind)
+        assertFalse(recent.canOpen)
+
+        vm.removeFromHistory(recent.id)
+        assertEquals(listOf("s1"), removed)
+    }
+
+    @Test
+    fun `last seen reads like Phone Link`() {
+        val base = PairedDeviceUi(trusted(1, "PC").deviceId, "PC", Platform.WINDOWS, ConnectionStatus.OFFLINE)
+        assertEquals("Not connected yet", lastSeenLabel(base, now = 0L))
+        assertEquals("Nearby, not connected yet", lastSeenLabel(base.copy(status = ConnectionStatus.NEARBY), now = 0L))
+        val seen = base.copy(lastConnectedEpochMillis = 0L + 1)
+        assertEquals("Last connected just now", lastSeenLabel(seen, now = 30_000L))
+        assertEquals("Last connected 3 h ago", lastSeenLabel(seen, now = 3 * 3_600_000L + 1))
+        assertEquals("Last connected yesterday", lastSeenLabel(seen, now = 30 * 3_600_000L))
+        assertEquals("Connecting...", lastSeenLabel(base.copy(status = ConnectionStatus.CONNECTING), now = 0L))
     }
 
     @Test

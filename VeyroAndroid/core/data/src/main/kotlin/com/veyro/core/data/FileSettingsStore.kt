@@ -56,6 +56,8 @@ public class FileSettingsStore(
         // start-on-boot is off unless turned on.
         val runInBackground: Boolean = true,
         val startOnBoot: Boolean = false,
+        // ADR-038. Defaulted so older files decode; on unless turned off.
+        val wallpaperShareEnabled: Boolean = true,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -147,6 +149,13 @@ public class FileSettingsStore(
 
     override suspend fun setStartOnBoot(enabled: Boolean) {
         update { it.copy(startOnBoot = enabled) }
+    }
+
+    override val wallpaperShareEnabled: Flow<Boolean> =
+        state.asStateFlow().map { it.wallpaperShareEnabled }
+
+    override suspend fun setWallpaperShareEnabled(enabled: Boolean) {
+        update { it.copy(wallpaperShareEnabled = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

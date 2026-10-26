@@ -1,10 +1,14 @@
 package com.veyro.ui.components
 
+import com.veyro.core.link.IncomingOffer
+import com.veyro.core.model.DeviceId
 import com.veyro.ui.format.FileKind
 import com.veyro.ui.format.destinationLabel
 import com.veyro.ui.format.fileKindOf
 import com.veyro.ui.format.formatCountdown
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -34,6 +38,20 @@ class IncomingFilesSheetModelTest {
         )
         assertEquals("Download/Veyro", destinationLabel(emptyList(), null))
         assertEquals("Inbox", destinationLabel(listOf("a.jpg"), File("/storage/emulated/0/Inbox")))
+    }
+
+    @Test
+    fun `Always accept starts ticked for a paired sender, never for an unknown one`() {
+        val paired = IncomingOffer(
+            transferId = "t-1",
+            peerName = "Office PC",
+            fileCount = 1,
+            totalBytes = 10L,
+            topLevelNames = listOf("a.jpg"),
+            peerDeviceId = DeviceId.fromPublicKey(ByteArray(32) { 3 }),
+        )
+        assertTrue(defaultAlwaysAccept(paired))
+        assertFalse(defaultAlwaysAccept(paired.copy(peerDeviceId = null)))
     }
 
     @Test

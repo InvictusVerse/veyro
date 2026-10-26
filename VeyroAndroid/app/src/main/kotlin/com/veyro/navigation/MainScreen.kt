@@ -77,6 +77,8 @@ internal fun MainScreen(
     homeViewModel: HomeViewModel,
     devicesViewModel: DevicesViewModel,
     onRequestMessagingPermissions: () -> Unit,
+    /** Send files from Home: the system picker, then straight to the PC (ADR-038). */
+    onSendFiles: (deviceId: String?) -> Unit,
     homeNavController: NavHostController = rememberNavController(),
 ) {
     val backStackState by homeNavController.currentBackStackEntryAsState()
@@ -85,19 +87,23 @@ internal fun MainScreen(
         .indexOfFirst { item -> currentDestination.isOn(item.routeClass) }
         .takeIf { it >= 0 } ?: 0
     val onDevices = navigationItems[selectedItem].route == VeyroDestination.Devices
+    // Home draws its own header (the round settings button), like Phone Link's app.
+    val onHome = navigationItems[selectedItem].route == VeyroDestination.Home
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            AppTopBar(
-                title = navigationItems[selectedItem].text,
-                searchEnabled = onDevices,
-                searchPlaceholder = "Search devices",
-                searchQuery = searchQuery,
-                onSearchQueryChange = { searchQuery = it },
-            )
+            if (!onHome) {
+                AppTopBar(
+                    title = navigationItems[selectedItem].text,
+                    searchEnabled = onDevices,
+                    searchPlaceholder = "Search devices",
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                )
+            }
         },
         bottomBar = {
             NavigationBar {
@@ -144,10 +150,11 @@ internal fun MainScreen(
             composable<VeyroDestination.Home> {
                 HomeScreen(
                     viewModel = homeViewModel,
-                    onDeviceClick = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
+                    onOpenSettings = { navigateToTab(homeNavController, VeyroDestination.Settings) },
+                    onPcSettings = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
                     onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
-                    onSendFiles = { rootNavController.navigate(VeyroDestination.Send(it.value)) },
-                    onReceive = { rootNavController.navigate(VeyroDestination.Receive) },
+                    onSendFiles = { onSendFiles(it.value) },
+                    onOpenHistory = { navigateToTab(homeNavController, VeyroDestination.History) },
                 )
             }
 
@@ -164,7 +171,6 @@ internal fun MainScreen(
             composable<VeyroDestination.History> {
                 HistoryScreen(
                     viewModel = viewModel<HistoryViewModel>(factory = viewModelFactory),
-                    onOpenReceive = { rootNavController.navigate(VeyroDestination.Receive) },
                 )
             }
 

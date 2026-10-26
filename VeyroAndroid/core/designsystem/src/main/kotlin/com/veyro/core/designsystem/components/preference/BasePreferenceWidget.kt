@@ -125,6 +125,7 @@ private fun highlightColor(highlighted: Boolean): Color {
 }
 
 internal val TrailingWidgetBuffer = 16.dp
-internal val PrefsHorizontalPadding = 16.dp
+// 20 dp (Sefirah uses 16): long subtitles and fingerprints need air from the screen edge (ADR-038).
+internal val PrefsHorizontalPadding = 20.dp
 internal val PrefsVerticalPadding = 16.dp
 internal val TitleFontSize = 16.sp

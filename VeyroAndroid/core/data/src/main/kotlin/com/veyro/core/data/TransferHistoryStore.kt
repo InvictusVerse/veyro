@@ -9,4 +9,7 @@ public interface TransferHistoryStore {
     public suspend fun append(transfer: Transfer)
     public suspend fun update(transfer: Transfer)
     public suspend fun clear()
+
+    /** Drops one entry ("Delete from history" on Home, ADR-038). The file itself is untouched. */
+    public suspend fun remove(transferId: String) {}
 }

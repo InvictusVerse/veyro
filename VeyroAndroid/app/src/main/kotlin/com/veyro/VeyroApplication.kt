@@ -44,6 +44,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.callBridge.start()
         // ADR-034. Same rule, behind "Photos on PC".
         container.photoBridge.start()
+        // ADR-038. Same rule: wallpapers only travel over a session something else opened.
+        container.wallpaperBridge.start()
         registerActivityLifecycleCallbacks(VisibilityTracker())
     }
 

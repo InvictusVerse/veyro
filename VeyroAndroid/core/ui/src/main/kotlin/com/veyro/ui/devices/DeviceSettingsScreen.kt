@@ -43,6 +43,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -174,7 +176,8 @@ public fun DeviceSettingsScreen(
             item {
                 SwitchPreferenceWidget(
                     title = "Auto-accept files",
-                    subtitle = "Files from this device are saved without asking.",
+                    subtitle = "Files from this device are saved without asking. Turned on when you accept " +
+                        "with \"Always accept\" ticked.",
                     icon = VeyroIcons.Download,
                     checked = peer.autoAcceptTransfers,
                     onCheckedChanged = { devicesViewModel.setAutoAccept(peer.deviceId, it) },
@@ -187,8 +190,8 @@ public fun DeviceSettingsScreen(
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(
-                        start = MaterialTheme.padding.medium,
-                        end = MaterialTheme.padding.medium,
+                        start = 20.dp,
+                        end = 20.dp,
                         top = MaterialTheme.padding.medium,
                         bottom = MaterialTheme.padding.small,
                     ),
@@ -238,6 +241,23 @@ public fun DeviceSettingsScreen(
                     checked = settings.photosEnabled && granted,
                     onCheckedChanged = { on ->
                         settingsViewModel.setPhotosEnabled(on)
+                        if (on && !granted) onRequestPhotosPermission()
+                    },
+                )
+            }
+
+            item {
+                // ADR-038. On by default; reading the wallpaper may need photo access, which this
+                // row asks for. Without it the PC is told there is no wallpaper.
+                val granted = settings.photosPermissionGranted
+                SwitchPreferenceWidget(
+                    title = "Show my wallpaper on PC",
+                    subtitle = "The PC draws this phone with your wallpaper." +
+                        if (granted) "" else " Some Android versions need photo access to read it; tap to grant it.",
+                    icon = VeyroIcons.Mobile,
+                    checked = settings.wallpaperShareEnabled,
+                    onCheckedChanged = { on ->
+                        settingsViewModel.setWallpaperShareEnabled(on)
                         if (on && !granted) onRequestPhotosPermission()
                     },
                 )
@@ -326,13 +346,13 @@ private fun DeviceHeader(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             DeviceAvatar(
@@ -347,6 +367,9 @@ private fun DeviceHeader(
                 text = name,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
 
             Spacer(Modifier.height(4.dp))
@@ -409,6 +432,8 @@ private fun DeviceStatusInfo(
             text = text,
             style = MaterialTheme.typography.bodySmall,
             color = color,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

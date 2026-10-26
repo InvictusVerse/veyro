@@ -32,7 +32,6 @@ import com.veyro.di.VeyroViewModelFactory
 import com.veyro.navigation.VeyroNavHost
 import com.veyro.ui.components.InboundPairingDialog
 import com.veyro.ui.components.InboundTransferDialog
-import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.IOException
 
 /**
@@ -50,22 +49,33 @@ public class MainActivity : ComponentActivity() {
     public companion object {
         private const val TAG = "MainActivity"
 
-        /** From the background notification's Send files: open Send for [EXTRA_SEND_TO]. */
+        /** From the background notification's Send files: pick files for [EXTRA_SEND_TO]. */
         public const val ACTION_SEND_FILES: String = "com.veyro.action.SEND_FILES"
         public const val EXTRA_SEND_TO: String = "com.veyro.extra.SEND_TO"
+
+        private const val STATE_SEND_TARGET = "sendTarget"
+        private const val STATE_SEND_PENDING = "sendPending"
     }
 
-    /** A device id to open the Send screen for, consumed by the nav host. */
-    private val sendRequest = MutableStateFlow<String?>(null)
+    /**
+     * The PC the open picker is for (null: the connected or most recent PC). Saved with the
+     * instance state, so a rotation or process death while the picker is open keeps the target.
+     */
+    private var sendTarget: String? = null
+    private var sendPending = false
 
     private val pickFiles = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
-        if (uris.isNullOrEmpty()) return@registerForActivityResult
-        val container = (application as VeyroApplication).container
-        // Written into the process-scoped buffer rather than handed to a callback, so a rotation
-        // between launching the picker and its result cannot drop the selection.
-        container.pickedFiles.add(uris.mapNotNull { describe(it) })
+        val target = sendTarget
+        val wasPending = sendPending
+        sendTarget = null
+        sendPending = false
+        if (!wasPending || uris.isNullOrEmpty()) return@registerForActivityResult
+        val files = uris.mapNotNull { describe(it) }
+        if (files.isEmpty()) return@registerForActivityResult
+        // ADR-038: straight to the PC, no Send screen; the banner shows progress.
+        (application as VeyroApplication).container.sendFiles(target, files)
     }
 
     private val requestPermissions = registerForActivityResult(
@@ -73,6 +83,10 @@ public class MainActivity : ComponentActivity() {
     ) { result ->
         result.forEach { (perm, granted) ->
             VeyroLog.i(TAG) { "[permission-result] $perm granted=$granted" }
+        }
+        // The wallpaper may have become readable (ADR-038).
+        if (result[AndroidPhotoSource.permission()] == true) {
+            (application as VeyroApplication).container.wallpaperBridge.refresh()
         }
     }
 
@@ -82,7 +96,13 @@ public class MainActivity : ComponentActivity() {
 
         val container = (application as VeyroApplication).container
         val factory = VeyroViewModelFactory(container)
-        readSendRequest(intent)
+        if (savedInstanceState != null) {
+            sendTarget = savedInstanceState.getString(STATE_SEND_TARGET)
+            sendPending = savedInstanceState.getBoolean(STATE_SEND_PENDING, false)
+        } else {
+            // A recreated Activity gets the same intent again; the picker must open only once.
+            readSendRequest(intent)
+        }
 
         setContent {
             VeyroTheme {
@@ -107,13 +127,9 @@ public class MainActivity : ComponentActivity() {
                         VeyroNavHost(
                             viewModelFactory = factory,
                             transferCoordinator = container.transferCoordinator,
-                            // `*/*` rather than a type list: Veyro transfers arbitrary files, and
-                            // restricting the picker would only stop the user sending what they wanted.
-                            onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
+                            onSendFiles = ::launchSendPicker,
                             onRequestMessagingPermissions = ::requestMessagingPermissions,
                             onRequestPhotosPermission = ::requestPhotosPermission,
-                            sendRequest = sendRequest,
-                            onSendRequestHandled = { sendRequest.value = null },
                         )
                     }
                 }
@@ -131,9 +147,35 @@ public class MainActivity : ComponentActivity() {
         readSendRequest(intent)
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_SEND_TARGET, sendTarget)
+        outState.putBoolean(STATE_SEND_PENDING, sendPending)
+    }
+
     private fun readSendRequest(intent: Intent?) {
         if (intent?.action != ACTION_SEND_FILES) return
-        sendRequest.value = intent.getStringExtra(EXTRA_SEND_TO)
+        val target = intent.getStringExtra(EXTRA_SEND_TO)
+        // Consumed, so returning to the task later does not open the picker again.
+        intent.action = Intent.ACTION_MAIN
+        launchSendPicker(target)
+    }
+
+    /**
+     * Every Send files entry point (Home's tile, a device's settings, the background
+     * notification) opens the system picker directly (ADR-038).
+     */
+    private fun launchSendPicker(deviceId: String?) {
+        sendTarget = deviceId
+        sendPending = true
+        try {
+            // Any type rather than a list: Veyro transfers arbitrary files, and restricting the
+            // picker would only stop the user sending what they wanted.
+            pickFiles.launch(arrayOf("*/*"))
+        } catch (e: android.content.ActivityNotFoundException) {
+            sendPending = false
+            VeyroLog.w(TAG) { "No document picker on this device" }
+        }
     }
 
     private fun requestRequiredPermissions() {

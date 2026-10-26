@@ -79,7 +79,16 @@ import com.veyro.core.link.TransferRunner
 import com.veyro.core.transfer.TransferStoragePublisher
 import com.veyro.storage.AndroidMediaStorePublisher
 import com.veyro.core.model.Capabilities
+import com.veyro.core.model.Capability
 import com.veyro.core.model.Platform
+import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.OutgoingFile
+import com.veyro.core.companion.AndroidWallpaperSource
+import com.veyro.core.companion.WallpaperBridge
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.veyro.core.model.fingerprint
 import com.veyro.core.network.AndroidNetworkMonitor
 import com.veyro.core.network.AndroidWifiDirectManager
@@ -128,15 +137,6 @@ public class VeyroContainer(context: Context) {
 
     /** In-memory log tail, so the debug screen works without a laptop attached. */
     public val logRecorder: RecordingLogSink by lazy { RecordingLogSink() }
-
-    /**
-     * Hand-off between the file picker and the send screen.
-     *
-     * Process-scoped on purpose: only an Activity can launch a picker, and the result can arrive
-     * after a configuration change. Keeping the selection here means a rotation mid-pick does not
-     * silently lose it.
-     */
-    public val pickedFiles: PickedFileBuffer by lazy { PickedFileBuffer() }
 
     // ── P1 — identity and local storage ────────────────────────────────────────────────────
 
@@ -250,6 +250,44 @@ public class VeyroContainer(context: Context) {
             .map { it?.peerDeviceId }
     }
 
+    /** What the connected PC advertised in its hello, for Home's Lock PC (ADR-038). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    public val connectedPeerCapabilities: Flow<Capabilities> by lazy {
+        connectionManagerReady
+            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
+            .flatMapLatest { connection -> connection?.peerCapabilities ?: flowOf(Capabilities.NONE) }
+    }
+
+    /** Home's Lock PC: `pcLock` over the live session (ADR-038). False when there is none. */
+    public suspend fun lockConnectedPc(): Boolean {
+        val connection = connectionManagerReady.value?.activeConnection?.value ?: return false
+        if (!connection.isConnected || Capability.DEVICE_STATUS !in connection.peerCapabilities.value) return false
+        return runCatching { connection.send(LinkMessage.PcLock) }
+            .onFailure { VeyroLog.w("Container") { "pcLock not sent: ${it.javaClass.simpleName}" } }
+            .isSuccess
+    }
+
+    /**
+     * Sends what the picker returned (ADR-038: no Send screen). [deviceId] is the PC the user
+     * chose; null means the connected PC, else the most recently used paired PC. Runs on the app
+     * scope, so leaving the app does not stop it; progress and the outcome show in the banner.
+     */
+    public fun sendFiles(deviceId: String?, files: List<OutgoingFile>) {
+        if (files.isEmpty()) return
+        appScope.launch {
+            val peers = runCatching { trustStore.snapshot() }.getOrDefault(emptyList()).filterNot { it.revoked }
+            val connected = connectionManagerReady.value?.activeConnection?.value?.peerDeviceId
+            val target = peers.firstOrNull { it.deviceId.value == deviceId }
+                ?: peers.firstOrNull { it.deviceId.value == connected }
+                ?: peers.maxWithOrNull(compareBy({ it.lastConnectedEpochMillis }, { it.pairedAtEpochMillis }))
+            if (target == null) {
+                VeyroLog.w("Container") { "Send files: no paired device to send to" }
+                return@launch
+            }
+            transferCoordinator.sendTo(target.deviceId, target.name, files)
+        }
+    }
+
     /** Legacy alias for callers expecting linkManager. */
     public val linkManager: ConnectionManager get() = connectionManager
 
@@ -292,8 +330,9 @@ public class VeyroContainer(context: Context) {
             localName = { runCatching { settingsStore.deviceName.first() }.getOrDefault("Veyro device") },
             endpointsFor = { id -> knownEndpoints(id) },
             autoAcceptFor = { deviceId ->
-                // REQ-T03: per-device, default off, never for an unpaired device. `find` returning
-                // null for an unknown peer is what enforces the last part.
+                // REQ-T03: per-device, never for an unpaired device. `find` returning null for an
+                // unknown peer is what enforces the last part. Off until the first prompt from that
+                // device is accepted with "Always accept" ticked, which it is by default (ADR-038).
                 trustStore.find(deviceId)?.takeUnless { it.revoked }?.autoAcceptTransfers == true
             },
             discoverEndpoints = { id, timeoutMs -> discoverEndpoints(id, timeoutMs) },
@@ -349,6 +388,7 @@ public class VeyroContainer(context: Context) {
 
     private companion object {
         const val LAST_KNOWN_ENDPOINT_TTL_MS = 60_000L
+        const val THUMBNAIL_PX = 192
     }
 
     // ── Background running (ADR-036) ───────────────────────────────────────────────────────
@@ -511,6 +551,32 @@ public class VeyroContainer(context: Context) {
 
     /** Whether the photo read permission is held, for the Settings row. */
     public fun isPhotosPermissionGranted(): Boolean = AndroidPhotoSource.isGranted(appContext)
+
+    // ── Companion: wallpaper (ADR-038) ──────────────────────────────────────────────────────
+
+    /**
+     * This phone's wallpaper to the PC (on by default) and the PC's wallpaper for Home. Follows
+     * the session only once something else opened it. The PC's last wallpaper is cached so Home
+     * can draw it while disconnected.
+     */
+    public val wallpaperBridge: WallpaperBridge by lazy {
+        WallpaperBridge(
+            links = companionLinks,
+            enabled = flow { emitAll(settingsStore.wallpaperShareEnabled) },
+            source = AndroidWallpaperSource(appContext, dispatchers),
+            cache = FilePeerWallpaperCache(File(appContext.cacheDir, "wallpapers"), dispatchers),
+            scope = appScope,
+        )
+    }
+
+    /** A small preview of a received image for Home's Recent card. Null if unreadable. */
+    public suspend fun loadThumbnail(uri: String): ImageBitmap? = withContext(dispatchers.io) {
+        runCatching {
+            appContext.contentResolver
+                .loadThumbnail(android.net.Uri.parse(uri), android.util.Size(THUMBNAIL_PX, THUMBNAIL_PX), null)
+                .asImageBitmap()
+        }.getOrNull()
+    }
 
     /** User-facing labels of the messaging permissions not granted yet, for the Settings row. */
     public fun missingMessagingPermissions(): List<String> =

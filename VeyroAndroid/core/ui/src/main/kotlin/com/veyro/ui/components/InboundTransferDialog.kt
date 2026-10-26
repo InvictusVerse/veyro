@@ -118,7 +118,9 @@ public fun IncomingFilesSheet(
     onDecline: () -> Unit,
     now: () -> Long = System::currentTimeMillis,
 ) {
-    var alwaysAccept by remember(offer.transferId) { mutableStateOf(false) }
+    // Ticked by default (ADR-038): the first file from a paired PC asks once, then later ones are
+    // accepted without a prompt. The per-device switch in device settings turns it back off.
+    var alwaysAccept by remember(offer.transferId) { mutableStateOf(defaultAlwaysAccept(offer)) }
     var answered by remember(offer.transferId) { mutableStateOf(false) }
     var nowMs by remember { mutableLongStateOf(now()) }
     LaunchedEffect(offer.transferId) {
@@ -361,6 +363,9 @@ private fun AlwaysAcceptRow(peerName: String, checked: Boolean, enabled: Boolean
             text = "Always accept from $peerName",
             style = MaterialTheme.typography.bodyMedium,
             color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -389,6 +394,12 @@ private fun kindLabel(kind: FileKind): String = when (kind) {
     FileKind.ARCHIVE -> "Archive"
     FileKind.OTHER -> "File"
 }
+
+/**
+ * Whether "Always accept" starts ticked: yes for a paired sender (ADR-038), never when the session
+ * names no device, because auto-accept can only be stored for a known, paired device (REQ-T03).
+ */
+public fun defaultAlwaysAccept(offer: IncomingOffer): Boolean = offer.peerDeviceId != null
 
 /** What TalkBack hears, bucketed so the live region speaks at a few moments only. */
 internal fun countdownAnnouncement(secondsLeft: Long): String = when {

@@ -314,8 +314,8 @@ private fun SectionLabel(text: String) {
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(
-            start = MaterialTheme.padding.medium,
-            end = MaterialTheme.padding.medium,
+            start = 20.dp,
+            end = 20.dp,
             top = MaterialTheme.padding.medium,
             bottom = MaterialTheme.padding.small,
         ),
@@ -327,7 +327,7 @@ private fun ProblemCard(title: String, message: String) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.errorContainer,
             contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -351,7 +351,7 @@ private fun DebugPanel(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Column(Modifier.padding(16.dp)) {

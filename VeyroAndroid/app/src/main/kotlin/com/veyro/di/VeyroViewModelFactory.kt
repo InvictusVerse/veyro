@@ -8,7 +8,6 @@ import com.veyro.ui.home.HomeViewModel
 import com.veyro.ui.onboarding.OnboardingViewModel
 import com.veyro.ui.pairing.PairingViewModel
 import com.veyro.ui.receive.ReceiveViewModel
-import com.veyro.ui.send.SendViewModel
 import com.veyro.ui.settings.SettingsViewModel
 
 /**
@@ -43,6 +42,13 @@ public class VeyroViewModelFactory(
                 container.connectionManager.connect(id, name, endpoints)
             },
             disconnectPeer = { container.backgroundController.onUserDisconnect() },
+            // ADR-038: the Phone Link-style Home.
+            peerCapabilities = container.connectedPeerCapabilities,
+            pcWallpapers = container.wallpaperBridge.peerWallpapers,
+            history = container.historyStore.history,
+            lockPc = { container.lockConnectedPc() },
+            removeHistory = { container.historyStore.remove(it) },
+            loadThumbnail = { container.loadThumbnail(it) },
         ) as T
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) -> DevicesViewModel(
@@ -52,15 +58,6 @@ public class VeyroViewModelFactory(
         modelClass.isAssignableFrom(PairingViewModel::class.java) -> PairingViewModel(
             deviceRepository = container.deviceRepository,
             connectionManager = container.connectionManager,
-        ) as T
-
-        modelClass.isAssignableFrom(SendViewModel::class.java) -> SendViewModel(
-            trustStore = container.trustStore,
-            coordinator = container.transferCoordinator,
-            selectedFiles = container.pickedFiles.files,
-            onSelectionConsumed = container.pickedFiles::clear,
-            onRemoveSelection = container.pickedFiles::removeAt,
-            deviceRepository = container.deviceRepository,
         ) as T
 
         modelClass.isAssignableFrom(ReceiveViewModel::class.java) -> ReceiveViewModel(

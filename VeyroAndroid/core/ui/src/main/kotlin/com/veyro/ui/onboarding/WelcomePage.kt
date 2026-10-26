@@ -46,7 +46,7 @@ internal fun OnboardingPage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = MaterialTheme.padding.medium),
+            .padding(horizontal = MaterialTheme.padding.large),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -115,6 +115,15 @@ public class SettingsViewModel(
         settingsStore.startOnBoot
             .onEach { _state.value = _state.value.copy(startOnBoot = it) }
             .launchIn(viewModelScope)
+
+        settingsStore.wallpaperShareEnabled
+            .onEach { _state.value = _state.value.copy(wallpaperShareEnabled = it) }
+            .launchIn(viewModelScope)
+    }
+
+    /** ADR-038. The photo permission, if needed, is requested by the Activity. */
+    public fun setWallpaperShareEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setWallpaperShareEnabled(enabled) }
     }
 
     /** ADR-036. The background service follows the stored value. */

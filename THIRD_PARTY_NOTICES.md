@@ -44,9 +44,6 @@ Adapted files (Veyro path <- Sefirah path):
 - `VeyroAndroid/core/designsystem/src/main/kotlin/com/veyro/core/designsystem/components/preference/PreferenceItem.kt` <- `app/src/main/java/com/castle/sefirah/presentation/settings/components/PreferenceItem.kt`
 - `VeyroAndroid/core/designsystem/src/main/res/drawable/ic_sym_*.xml` (51 icons) <- `core/common/src/main/res/drawable/ic_*.xml` (the glyphs are Google Material Symbols, Apache-2.0)
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/components/DeviceCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/common/components/DeviceCard.kt`
-- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/HomeScreen.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/HomeScreen.kt`
-- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/SwipeableDevicesCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/SwipeableDevicesCard.kt`
-- `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/DeviceControlCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/DeviceControlCard.kt`
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/MediaCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/MediaCard.kt`
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/VolumeSlider.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/VolumeSlider.kt`
 - `VeyroAndroid/core/ui/src/main/kotlin/com/veyro/ui/home/components/PcVolumeCard.kt` <- `app/src/main/java/com/castle/sefirah/presentation/home/components/AudioDeviceBottomSheet.kt`

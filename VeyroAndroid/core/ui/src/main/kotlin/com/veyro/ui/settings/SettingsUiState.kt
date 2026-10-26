@@ -50,6 +50,9 @@ public data class SettingsUiState(
     /** Start that connection after the phone boots. Off by default. */
     val startOnBoot: Boolean = false,
 
+    /** Send this phone's wallpaper to the PC (ADR-038). On by default. */
+    val wallpaperShareEnabled: Boolean = true,
+
     /** Whether Android exempts Veyro from battery optimisation (asked only from Settings). */
     val batteryOptimizationIgnored: Boolean = false,
 

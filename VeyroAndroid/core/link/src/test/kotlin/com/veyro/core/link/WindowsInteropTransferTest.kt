@@ -413,6 +413,57 @@ class WindowsInteropTransferTest {
     }
 
     @Test
+    fun `accepting with Always accept ticked means the next offer from that PC is not prompted`() = runBlocking {
+        // ADR-038: the prompt's box is ticked by default; what it stores is what auto-accept reads,
+        // exactly as VeyroContainer wires it to the trust store.
+        val (phone, pc) = pair()
+        val remembered = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val coordinator = coordinator(
+            rememberAutoAccept = { remembered += it.value },
+            autoAcceptFor = { it.value in remembered },
+        )
+        val driver = scope.async { coordinator.sessionDriverFor(phone) }
+
+        val first = pc.mailbox("a-1")
+        pc.send(fiveFileOffer("a-1"))
+        awaitPending(coordinator)
+        coordinator.respondToOffer("a-1", accept = true, alwaysAccept = true)
+        assertTrue(withTimeout(10_000) { first.awaitDecision(10_000) }!!.accept)
+        assertEquals(setOf(PC), remembered.toSet())
+        pc.send(LinkMessage.Cancel("a-1", "test over"))
+        withTimeout(10_000) { while (coordinator.activeTransfer.value?.isTerminal != true) kotlinx.coroutines.delay(20) }
+
+        val second = pc.mailbox("a-2")
+        pc.send(fiveFileOffer("a-2"))
+        val decision = withTimeout(15_000) { second.awaitDecision(15_000) }
+        assertTrue("the second offer is accepted without a prompt", decision!!.accept)
+        assertNull(coordinator.pendingOffer.value)
+
+        pc.send(LinkMessage.Cancel("a-2", "test over"))
+        phone.close(); pc.close()
+        driver.cancel()
+    }
+
+    @Test
+    fun `accepting with the box unticked keeps prompting`() = runBlocking {
+        val (phone, pc) = pair()
+        val remembered = mutableListOf<String>()
+        val coordinator = coordinator(rememberAutoAccept = { remembered += it.value })
+        val driver = scope.async { coordinator.sessionDriverFor(phone) }
+        val mailbox = pc.mailbox("o-1")
+        pc.send(fiveFileOffer("o-1"))
+        awaitPending(coordinator)
+
+        coordinator.respondToOffer("o-1", accept = true, alwaysAccept = false)
+        assertTrue(withTimeout(10_000) { mailbox.awaitDecision(10_000) }!!.accept)
+        assertTrue("nothing stored without the box", remembered.isEmpty())
+
+        pc.send(LinkMessage.Cancel("o-1", "test over"))
+        phone.close(); pc.close()
+        driver.cancel()
+    }
+
+    @Test
     fun `an unanswered prompt is declined with timeout`() = runBlocking {
         val (phone, pc) = pair()
         val clock = java.util.concurrent.atomic.AtomicLong(1_000_000L)
@@ -458,6 +509,7 @@ class WindowsInteropTransferTest {
     private fun coordinator(
         rememberAutoAccept: (suspend (com.veyro.core.model.DeviceId) -> Unit)? = null,
         clock: () -> Long = System::currentTimeMillis,
+        autoAcceptFor: suspend (com.veyro.core.model.DeviceId) -> Boolean = { false },
     ): TransferCoordinator {
         val manager = ConnectionManager(
             dispatchers = dispatchers,
@@ -475,7 +527,7 @@ class WindowsInteropTransferTest {
             destinationProvider = { tempDir.newFolder() },
             localName = { "Pixel" },
             endpointsFor = { emptyList() },
-            autoAcceptFor = { false },
+            autoAcceptFor = autoAcceptFor,
             rememberAutoAccept = rememberAutoAccept,
             clock = clock,
         ).also { drivers[it] = manager }

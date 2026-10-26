@@ -94,6 +94,11 @@ public class FileTransferHistoryStore(
 
     override suspend fun update(transfer: Transfer) = append(transfer)
 
+    override suspend fun remove(transferId: String) = mutex.withLock {
+        val remaining = state.value.filterNot { it.id == transferId }
+        if (remaining.size != state.value.size) persist(remaining)
+    }
+
     override suspend fun clear() = mutex.withLock {
         if (file.exists() && !file.delete()) {
             VeyroLog.w(TAG) { "Could not delete the history file" }

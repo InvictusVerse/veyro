@@ -54,4 +54,12 @@ public interface SettingsStore {
     public val startOnBoot: Flow<Boolean> get() = flowOf(false)
 
     public suspend fun setStartOnBoot(enabled: Boolean) {}
+
+    /**
+     * Send this phone's wallpaper to a connected PC so it can draw the phone (ADR-038). On by
+     * default; reading the wallpaper may still need the photo permission, asked from its row.
+     */
+    public val wallpaperShareEnabled: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setWallpaperShareEnabled(enabled: Boolean) {}
 }

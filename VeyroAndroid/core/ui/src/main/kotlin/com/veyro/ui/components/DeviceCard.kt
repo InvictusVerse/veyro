@@ -54,7 +54,7 @@ public fun DeviceCard(
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(),
     ) {
-        Box(Modifier.padding(16.dp)) {
+        Box(Modifier.padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 16.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
@@ -80,6 +80,8 @@ public fun DeviceCard(
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                         style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
 
                     if (device.isConnected && device.battery != null) {
