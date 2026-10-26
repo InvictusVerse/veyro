@@ -55,6 +55,8 @@ public value class Capabilities(public val bits: Int) {
             Capability.FOLDER_TRANSFER,
             Capability.RESUME,
             Capability.NOTIFICATION_MIRROR,
+            Capability.MEDIA_CONTROL,
+            Capability.DEVICE_STATUS,
         )
     }
 }

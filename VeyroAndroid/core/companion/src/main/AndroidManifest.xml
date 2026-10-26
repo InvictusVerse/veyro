@@ -15,5 +15,11 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Stop action of the "Ringing from <PC>" notification (ADR-026). Not exported: only this
+             app's own PendingIntent can reach it. -->
+        <receiver
+            android:name="com.veyro.core.companion.RingStopReceiver"
+            android:exported="false" />
     </application>
 </manifest>

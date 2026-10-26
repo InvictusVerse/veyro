@@ -62,6 +62,7 @@ import com.veyro.core.designsystem.theme.VeyroRed
 import com.veyro.core.designsystem.theme.VeyroTeal
 import com.veyro.core.designsystem.theme.VeyroTextSecondary
 import com.veyro.core.designsystem.theme.VeyroVoid
+import com.veyro.core.link.LinkMessage
 import com.veyro.core.model.PeerDevice
 import com.veyro.core.network.DiagnosisAdvice
 
@@ -99,13 +100,29 @@ public fun HomeScreen(
             NetworkBannerCard(state)
         }
 
+        // What is playing on the connected PC (ADR-026)
+        state.pcMediaSession?.let { session ->
+            item(key = "pc-media") {
+                PcMediaCard(
+                    session = session,
+                    volume = state.pcMedia?.volume,
+                    onCommand = viewModel::mediaCommand,
+                )
+            }
+        }
+
         // Trusted devices section
         if (state.trustedDevices.isNotEmpty()) {
             item {
                 VeyroSectionHeader("Your devices")
             }
             items(state.trustedDevices, key = { it.deviceId.value }) { device ->
-                DeviceCard(device, isTrusted = true, onClick = { onDeviceClick(device) })
+                DeviceCard(
+                    device,
+                    isTrusted = true,
+                    onClick = { onDeviceClick(device) },
+                    status = state.statusFor(device),
+                )
             }
         }
 
@@ -153,6 +170,7 @@ private fun DeviceCard(
     device: PeerDevice,
     isTrusted: Boolean,
     onClick: () -> Unit,
+    status: LinkMessage.DeviceStatus? = null,
 ) {
     VeyroCard(
         onClick = onClick,
@@ -184,6 +202,13 @@ private fun DeviceCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isTrusted) VeyroTeal.copy(alpha = 0.8f) else VeyroTextSecondary,
                 )
+                status?.battery?.let { battery ->
+                    Text(
+                        text = "Connected \u00b7 Battery $battery%" + if (status.charging == true) ", charging" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = VeyroTextSecondary,
+                    )
+                }
             }
 
             Icon(

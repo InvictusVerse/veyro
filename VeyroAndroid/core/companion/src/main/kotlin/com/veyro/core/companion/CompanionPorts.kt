@@ -52,10 +52,14 @@ public interface CompanionLink {
     public val peerCapabilities: Flow<Capabilities>
     public val incoming: Flow<LinkMessage>
     public suspend fun send(message: LinkMessage)
+
+    /** The peer's device id as the session authenticated it, when known. Display lookups only. */
+    public val peerDeviceId: String? get() = null
 }
 
 /** Adapts a live [PeerConnection]. A data class so two adapters of one connection are equal. */
 public data class PeerConnectionLink(private val connection: PeerConnection) : CompanionLink {
+    override val peerDeviceId: String? get() = connection.peerDeviceId
     override val peerCapabilities: Flow<Capabilities> get() = connection.peerCapabilities
     override val incoming: Flow<LinkMessage> get() = connection.incoming.map { it.payload }
     override suspend fun send(message: LinkMessage): Unit = connection.send(message)

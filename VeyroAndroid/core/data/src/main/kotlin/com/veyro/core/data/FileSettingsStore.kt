@@ -42,6 +42,9 @@ public class FileSettingsStore(
         val alwaysDiscoverable: Boolean = false,
         // Added after v1 with a default, so an older settings file still decodes.
         val notificationMirrorEnabled: Boolean = false,
+        // ADR-026, same rule: defaulted so older files decode, and off until the user opts in.
+        val mediaShareEnabled: Boolean = false,
+        val deviceControlAllowed: Boolean = false,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -84,6 +87,20 @@ public class FileSettingsStore(
 
     override suspend fun setNotificationMirrorEnabled(enabled: Boolean) {
         update { it.copy(notificationMirrorEnabled = enabled) }
+    }
+
+    override val mediaShareEnabled: Flow<Boolean> =
+        state.asStateFlow().map { it.mediaShareEnabled }
+
+    override val deviceControlAllowed: Flow<Boolean> =
+        state.asStateFlow().map { it.deviceControlAllowed }
+
+    override suspend fun setMediaShareEnabled(enabled: Boolean) {
+        update { it.copy(mediaShareEnabled = enabled) }
+    }
+
+    override suspend fun setDeviceControlAllowed(enabled: Boolean) {
+        update { it.copy(deviceControlAllowed = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

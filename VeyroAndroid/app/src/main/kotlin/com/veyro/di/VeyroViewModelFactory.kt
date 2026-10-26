@@ -30,6 +30,10 @@ public class VeyroViewModelFactory(
         modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(
             deviceRepository = container.deviceRepository,
             networkMonitor = container.networkMonitor,
+            pcMedia = container.mediaMirror.peerMedia,
+            pcStatus = container.deviceStatusPublisher.peerStatus,
+            connectedPeerId = container.connectedPeerId,
+            sendMediaCommand = { container.mediaMirror.sendMediaCommand(it) },
         ) as T
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) -> DevicesViewModel(
@@ -66,6 +70,7 @@ public class VeyroViewModelFactory(
             logSink = container.logRecorder,
             diagnosticsProvider = { container.diagnostics() },
             notificationAccessGranted = container::isNotificationAccessGranted,
+            policyAccessGranted = container::isPolicyAccessGranted,
         ) as T
 
         else -> error("Unknown ViewModel ${modelClass.name}; add it to VeyroViewModelFactory")

@@ -31,6 +31,8 @@ public class SettingsViewModel(
     private val diagnosticsProvider: suspend () -> Diagnostics,
     /** Whether the system has granted notification access. Re-read on every screen resume. */
     private val notificationAccessGranted: () -> Boolean = { false },
+    /** Whether Do Not Disturb access is granted. Re-read on every screen resume. */
+    private val policyAccessGranted: () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -81,15 +83,34 @@ public class SettingsViewModel(
         settingsStore.notificationMirrorEnabled
             .onEach { _state.value = _state.value.copy(notificationMirrorEnabled = it) }
             .launchIn(viewModelScope)
+
+        settingsStore.mediaShareEnabled
+            .onEach { _state.value = _state.value.copy(mediaShareEnabled = it) }
+            .launchIn(viewModelScope)
+
+        settingsStore.deviceControlAllowed
+            .onEach { _state.value = _state.value.copy(deviceControlAllowed = it) }
+            .launchIn(viewModelScope)
     }
 
     public fun setNotificationMirrorEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsStore.setNotificationMirrorEnabled(enabled) }
     }
 
+    public fun setMediaShareEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setMediaShareEnabled(enabled) }
+    }
+
+    public fun setDeviceControlAllowed(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setDeviceControlAllowed(enabled) }
+    }
+
     /** Access is granted in system settings, outside the app, so it is polled on resume. */
     public fun refreshNotificationAccess() {
-        _state.value = _state.value.copy(notificationAccessGranted = notificationAccessGranted())
+        _state.value = _state.value.copy(
+            notificationAccessGranted = notificationAccessGranted(),
+            policyAccessGranted = policyAccessGranted(),
+        )
     }
 
     public fun setDeviceName(name: String) {

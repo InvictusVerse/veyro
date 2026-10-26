@@ -41,6 +41,11 @@
     <!-- Progress and incoming-offer notifications. Runtime-requested on API 33+. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Lets the user grant Do Not Disturb access, which the PC needs to change this phone's
+         ringer mode or DND (ADR-026). Granted in system settings, never assumed; every change is
+         also behind the "Allow PC to ring and change sound mode" switch, off by default. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
     <application
         android:name=".VeyroApplication"
         android:allowBackup="false"

@@ -86,6 +86,7 @@ import com.veyro.core.designsystem.theme.VeyroVioletContainer
  *   [Device name]       ← editable name
  *   [Discovery]         ← always-discoverable toggle
  *   [Notifications]     ← mirror-to-PC toggle and notification access row
+ *   [Media and control] ← share-media toggle, PC ring/sound-mode toggle, DND access row
  *   [Danger zone]       ← identity reset
  *   [Debug panel]       ← diagnostics + log tail
  */
@@ -164,6 +165,25 @@ public fun SettingsScreen(
                 onOpenAccessSettings = {
                     try {
                         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    } catch (_: ActivityNotFoundException) {
+                        // Some builds hide the screen; the row's subtitle still says what is missing.
+                    }
+                },
+            )
+        }
+
+        // Media sharing and phone control (ADR-026)
+        item {
+            PhoneControlSection(
+                mediaShareEnabled = state.mediaShareEnabled,
+                notificationAccessGranted = state.notificationAccessGranted,
+                onMediaShareToggle = viewModel::setMediaShareEnabled,
+                deviceControlAllowed = state.deviceControlAllowed,
+                policyAccessGranted = state.policyAccessGranted,
+                onDeviceControlToggle = viewModel::setDeviceControlAllowed,
+                onOpenPolicyAccessSettings = {
+                    try {
+                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
                     } catch (_: ActivityNotFoundException) {
                         // Some builds hide the screen; the row's subtitle still says what is missing.
                     }
@@ -499,6 +519,115 @@ private fun NotificationMirrorSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PhoneControlSection(
+    mediaShareEnabled: Boolean,
+    notificationAccessGranted: Boolean,
+    onMediaShareToggle: (Boolean) -> Unit,
+    deviceControlAllowed: Boolean,
+    policyAccessGranted: Boolean,
+    onDeviceControlToggle: (Boolean) -> Unit,
+    onOpenPolicyAccessSettings: () -> Unit,
+) {
+    VeyroGlassCard {
+        Column {
+            SwitchRow(
+                title = "Share media with PC",
+                subtitle = "Off by default. Shows what is playing on this phone on a connected PC, " +
+                    "which can then play, pause, skip, seek and set the volume." +
+                    if (notificationAccessGranted) "" else " Needs notification access (above).",
+                checked = mediaShareEnabled,
+                onCheckedChange = onMediaShareToggle,
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = VeyroGlassBorder)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SwitchRow(
+                title = "Allow PC to ring and change sound mode",
+                subtitle = "Off by default. Lets a connected PC ring this phone at full volume to " +
+                    "find it, and switch its ringer mode or Do Not Disturb.",
+                checked = deviceControlAllowed,
+                onCheckedChange = onDeviceControlToggle,
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = VeyroGlassBorder)
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(
+                        onClickLabel = "Open Do Not Disturb access settings",
+                        role = Role.Button,
+                        onClick = onOpenPolicyAccessSettings,
+                    )
+                    .padding(vertical = 12.dp),
+            ) {
+                Icon(
+                    imageVector = if (policyAccessGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (policyAccessGranted) VeyroTeal else VeyroRed.copy(alpha = 0.8f),
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (policyAccessGranted) "Do Not Disturb access granted" else "Do Not Disturb access needed",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (policyAccessGranted) {
+                            "Tap to review it in system settings."
+                        } else {
+                            "Ringing works without it. Changing the ringer mode or Do Not Disturb " +
+                                "from the PC needs it; tap to allow Veyro in system settings."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = VeyroTextSecondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = VeyroTextSecondary,
+            )
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        ToggleSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

@@ -41,10 +41,21 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.withTimeoutOrNull
+import com.veyro.core.companion.AndroidDeviceController
+import com.veyro.core.companion.AndroidDeviceStatusSource
+import com.veyro.core.companion.AndroidMediaSource
 import com.veyro.core.companion.AndroidNotificationSource
+import com.veyro.core.companion.CompanionLink
+import com.veyro.core.companion.DeviceStatusPublisher
+import com.veyro.core.companion.MediaMirror
 import com.veyro.core.companion.NotificationMirror
 import com.veyro.core.companion.VeyroNotificationListener
 import com.veyro.core.companion.asCompanionLink
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import java.util.concurrent.ConcurrentHashMap
 import com.veyro.core.link.ConnectionManager
 import com.veyro.core.link.TransferCoordinator
@@ -196,7 +207,31 @@ public class VeyroContainer(context: Context) {
             identityManager = identityManager,
             trustStore = trustStore,
             deviceName = { runCatching { settingsStore.deviceName.first() }.getOrDefault("Veyro device") },
-        )
+        ).also { connectionManagerReady.value = it }
+    }
+
+    /**
+     * Set the moment [connectionManager] is first built, by whatever needed it.
+     *
+     * Lets always-on observers (media, device status) follow the connection without being the
+     * reason it, the trust store and the identity get constructed at launch.
+     */
+    private val connectionManagerReady = MutableStateFlow<ConnectionManager?>(null)
+
+    /** The live paired session as a [CompanionLink], null while there is none. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val companionLinks: Flow<CompanionLink?> by lazy {
+        connectionManagerReady
+            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
+            .map { it?.asCompanionLink() }
+    }
+
+    /** Device id of the PC the live session is with, for the Home screen. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    public val connectedPeerId: Flow<String?> by lazy {
+        connectionManagerReady
+            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
+            .map { it?.peerDeviceId }
     }
 
     /** Legacy alias for callers expecting linkManager. */
@@ -319,6 +354,46 @@ public class VeyroContainer(context: Context) {
     /** Whether notification access is granted, for the Settings row. */
     public fun isNotificationAccessGranted(): Boolean =
         VeyroNotificationListener.isAccessGranted(appContext)
+
+    // ── Companion: media control and device status (ADR-026) ───────────────────────────────
+
+    private val mediaSource: AndroidMediaSource by lazy { AndroidMediaSource(appContext, dispatchers) }
+
+    /**
+     * Phone media to the PC (behind "Share media with PC", off by default) and the PC's media on
+     * the phone. Follows the session only once something else has opened the connection layer.
+     */
+    public val mediaMirror: MediaMirror by lazy {
+        MediaMirror(
+            links = companionLinks,
+            enabled = flow { emitAll(settingsStore.mediaShareEnabled) },
+            source = mediaSource,
+            executor = mediaSource,
+            scope = appScope,
+        )
+    }
+
+    private val deviceController: AndroidDeviceController by lazy {
+        AndroidDeviceController(appContext, dispatchers)
+    }
+
+    /** This phone's battery/ringer/DND to the PC, the PC's status back, and ring-my-phone. */
+    public val deviceStatusPublisher: DeviceStatusPublisher by lazy {
+        DeviceStatusPublisher(
+            links = companionLinks,
+            controlAllowed = flow { emitAll(settingsStore.deviceControlAllowed) },
+            source = AndroidDeviceStatusSource(appContext),
+            controller = deviceController,
+            peerName = { id ->
+                DeviceId.parseOrNull(id)?.let { runCatching { trustStore.find(it)?.name }.getOrNull() }
+            },
+            scope = appScope,
+        )
+    }
+
+    /** Whether Do Not Disturb access is granted, for the Settings row. */
+    public fun isPolicyAccessGranted(): Boolean =
+        AndroidDeviceController.isPolicyAccessGranted(appContext)
 
     /**
      * Where received files land.

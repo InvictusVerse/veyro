@@ -117,6 +117,20 @@ class FileSettingsStoreTest {
     }
 
     @Test
+    fun `media sharing and device control default off, also in an older file, and persist`() = runBlocking {
+        // A settings file written before ADR-026 has neither key.
+        File(dir, "settings.json").writeText("""{"version":1,"notificationMirrorEnabled":true}""")
+        assertFalse(store().mediaShareEnabled.first())
+        assertFalse(store().deviceControlAllowed.first())
+        assertTrue(store().notificationMirrorEnabled.first())
+
+        store().setMediaShareEnabled(true)
+        store().setDeviceControlAllowed(true)
+        assertTrue(store().mediaShareEnabled.first())
+        assertTrue(store().deviceControlAllowed.first())
+    }
+
+    @Test
     fun `no temporary file is left behind`() = runBlocking {
         store().setDeviceName("X")
         assertFalse(File(dir, "settings.json.tmp").exists())

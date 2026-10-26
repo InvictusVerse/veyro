@@ -25,5 +25,9 @@ public class VeyroApplication : Application() {
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         container.installLogging(isDebuggable = debuggable)
         container.notificationMirror.start()
+        // ADR-026. Both only follow a connection something else opened; neither builds the
+        // connection layer itself, and phone media is shared only after an explicit opt-in.
+        container.mediaMirror.start()
+        container.deviceStatusPublisher.start()
     }
 }

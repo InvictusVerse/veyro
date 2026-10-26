@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.veyro.core.data.DeviceRepository
 import com.veyro.core.data.DiscoverySubscription
+import com.veyro.core.link.LinkMessage
+import com.veyro.core.model.DeviceId
 import com.veyro.core.model.NetworkStatus
 import com.veyro.core.network.NetworkMonitor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +28,13 @@ import kotlinx.coroutines.launch
 public class HomeViewModel(
     private val deviceRepository: DeviceRepository,
     private val networkMonitor: NetworkMonitor,
+    /** The connected PC's media (ADR-026); null when none. */
+    pcMedia: Flow<LinkMessage.MediaState?> = flowOf(null),
+    /** The connected PC's own status; null when none. */
+    pcStatus: Flow<LinkMessage.DeviceStatus?> = flowOf(null),
+    /** Device id of the PC the live session is with. */
+    connectedPeerId: Flow<String?> = flowOf(null),
+    private val sendMediaCommand: suspend (LinkMessage.MediaCommand) -> Boolean = { false },
 ) : ViewModel() {
 
     private companion object {
@@ -50,6 +61,25 @@ public class HomeViewModel(
         networkMonitor.status
             .onEach { applyNetwork(it) }
             .launchIn(viewModelScope)
+
+        pcMedia
+            .onEach { _state.value = _state.value.copy(pcMedia = it) }
+            .launchIn(viewModelScope)
+
+        pcStatus
+            .onEach { _state.value = _state.value.copy(pcStatus = it) }
+            .launchIn(viewModelScope)
+
+        connectedPeerId
+            .onEach { _state.value = _state.value.copy(connectedPeerId = DeviceId.parseOrNull(it)) }
+            .launchIn(viewModelScope)
+    }
+
+    /** Drives the connected PC's media session [id] (ADR-026). Fire and forget. */
+    public fun mediaCommand(action: String, id: String? = null, value: Long? = null) {
+        viewModelScope.launch {
+            sendMediaCommand(LinkMessage.MediaCommand(action = action, id = id, value = value))
+        }
     }
 
     /** Opens the discovery window. Safe to call repeatedly; the second call is a no-op. */

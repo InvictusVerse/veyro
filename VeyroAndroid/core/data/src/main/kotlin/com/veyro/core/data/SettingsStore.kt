@@ -16,4 +16,13 @@ public interface SettingsStore {
     public suspend fun setDestinationDir(dir: File?)
     public suspend fun setAlwaysDiscoverable(enabled: Boolean)
     public suspend fun setNotificationMirrorEnabled(enabled: Boolean)
+
+    /** Share this phone's media sessions with a connected PC (ADR-026). Explicit opt-in, off by default. */
+    public val mediaShareEnabled: Flow<Boolean>
+
+    /** Let a connected PC ring this phone and change its ringer/DND (ADR-026). Off by default. */
+    public val deviceControlAllowed: Flow<Boolean>
+
+    public suspend fun setMediaShareEnabled(enabled: Boolean)
+    public suspend fun setDeviceControlAllowed(enabled: Boolean)
 }

@@ -1,5 +1,7 @@
 package com.veyro.ui.home
 
+import com.veyro.core.link.LinkMessage
+import com.veyro.core.model.DeviceId
 import com.veyro.core.model.NetworkDiagnosis
 import com.veyro.core.model.NetworkTransport
 import com.veyro.core.model.PeerDevice
@@ -26,7 +28,24 @@ public data class HomeUiState(
      * of every visit.
      */
     val searchedLongEnough: Boolean = false,
+
+    /** Device id of the PC the live session is with, if any. */
+    val connectedPeerId: DeviceId? = null,
+
+    /** The connected PC's media sessions (ADR-026). Null when no capable PC is connected. */
+    val pcMedia: LinkMessage.MediaState? = null,
+
+    /** The connected PC's own status (battery etc.), when it reports one. */
+    val pcStatus: LinkMessage.DeviceStatus? = null,
 ) {
+    /** The PC session the media card shows: the playing one, else the first. */
+    val pcMediaSession: LinkMessage.MediaSessionInfo?
+        get() = pcMedia?.sessions?.let { sessions -> sessions.firstOrNull { it.playing } ?: sessions.firstOrNull() }
+
+    /** Status line extras for [device], present only for the connected PC. */
+    public fun statusFor(device: PeerDevice): LinkMessage.DeviceStatus? =
+        pcStatus?.takeIf { connectedPeerId != null && device.deviceId == connectedPeerId }
+
     val trustedDevices: List<PeerDevice>
         get() = devices.filter { it.trust == com.veyro.core.model.TrustState.TRUSTED }
 
