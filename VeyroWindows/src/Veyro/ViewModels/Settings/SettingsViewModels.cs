@@ -132,7 +132,7 @@ public sealed class BluetoothCallingViewModel : BaseViewModel
 
     public string StatusText => Status switch
     {
-        BluetoothLineStatus.NotSupported => "Bluetooth calling needs Windows 11. Calls still work over Wi-Fi with audio on the phone.",
+        BluetoothLineStatus.NotSupported => "Bluetooth calling is not available on this PC. Calls still work over Wi-Fi with audio on the phone.",
         BluetoothLineStatus.NotPaired => "No phone is paired over Bluetooth yet. Pair it in Windows Bluetooth settings, then refresh.",
         BluetoothLineStatus.NotSelected => "Choose your phone and connect.",
         BluetoothLineStatus.Connecting => "Connecting...",

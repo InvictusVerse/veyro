@@ -46,10 +46,10 @@ public sealed class BluetoothCallingService : IBluetoothCallingService
     public event Action<IBluetoothCall>? CallAdded;
 
     /// <summary>
-    /// Windows 11 (build 22000+) with in-call control APIs (CallsPhoneContract v6). The OS check comes
-    /// first so Windows 10 never touches the transport APIs.
+    /// True when the in-call control APIs (CallsPhoneContract v6) are present. Veyro requires
+    /// Windows 11 (MinVersion 10.0.22000.0), so this only fails on unusual or stripped builds.
     /// </summary>
-    public bool IsSupported { get; } = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && ContractPresent();
+    public bool IsSupported { get; } = ContractPresent();
 
     public BluetoothLineStatus Status
     {
