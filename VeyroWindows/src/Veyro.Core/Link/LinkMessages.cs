@@ -116,7 +116,19 @@ public static class LinkCapabilities
     public const int DeviceStatus = 0x0400;
     public const int Messaging = 0x0800;
     public const int Calls = 0x1000;
+    public const int Photos = 0x2000;
 }
+
+public sealed record PhotoInfo(
+    [property: JsonPropertyName("id")] long Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("ts")] long Ts,
+    [property: JsonPropertyName("width")] int? Width = null,
+    [property: JsonPropertyName("height")] int? Height = null,
+    [property: JsonPropertyName("size")] long? Size = null,
+    [property: JsonPropertyName("mime")] string? Mime = null,
+    /// <summary>camera | screenshots</summary>
+    [property: JsonPropertyName("bucket")] string? Bucket = null);
 
 public sealed record SmsThread(
     [property: JsonPropertyName("threadId")] long ThreadId,
@@ -233,6 +245,13 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(CallAction), "callAction")]
 [JsonDerivedType(typeof(CallLogRequest), "callLogReq")]
 [JsonDerivedType(typeof(CallLog), "callLog")]
+[JsonDerivedType(typeof(PhotosRequest), "photosReq")]
+[JsonDerivedType(typeof(Photos), "photos")]
+[JsonDerivedType(typeof(PhotoThumbRequest), "photoThumbReq")]
+[JsonDerivedType(typeof(PhotoThumb), "photoThumb")]
+[JsonDerivedType(typeof(PhotoFetch), "photoFetch")]
+[JsonDerivedType(typeof(PhotoNew), "photoNew")]
+[JsonDerivedType(typeof(PhotoRemoved), "photoRemoved")]
 public abstract record LinkMessage
 {
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
@@ -380,6 +399,37 @@ public abstract record LinkMessage
         [property: JsonPropertyName("callId")] string? CallId = null,
         [property: JsonPropertyName("number")] string? Number = null) : LinkMessage;
 
+    // ── Companion: photos (ADR-034), gated by LinkCapabilities.Photos ─────────────────────
+    // File names and images are user data: never log them.
+
+    /// <summary>PC to phone: newest-first photo list.</summary>
+    public sealed record PhotosRequest(
+        [property: JsonPropertyName("limit")] int Limit = 2000) : LinkMessage;
+
+    public sealed record Photos(
+        [property: JsonPropertyName("items")] IReadOnlyList<PhotoInfo> Items) : LinkMessage;
+
+    /// <summary>PC to phone: thumbnails for up to 50 ids; one PhotoThumb answers each id.</summary>
+    public sealed record PhotoThumbRequest(
+        [property: JsonPropertyName("ids")] IReadOnlyList<long> Ids,
+        [property: JsonPropertyName("size")] int Size = 256) : LinkMessage;
+
+    /// <summary>JPEG, longest side &lt;= requested size (max 512), &lt;= 48 KiB, base64.</summary>
+    public sealed record PhotoThumb(
+        [property: JsonPropertyName("id")] long Id,
+        [property: JsonPropertyName("jpeg")] string? Jpeg = null) : LinkMessage;
+
+    /// <summary>PC to phone: send the original as a TransferOffer carrying RequestId.</summary>
+    public sealed record PhotoFetch(
+        [property: JsonPropertyName("id")] long Id,
+        [property: JsonPropertyName("requestId")] string RequestId) : LinkMessage;
+
+    public sealed record PhotoNew(
+        [property: JsonPropertyName("item")] PhotoInfo Item) : LinkMessage;
+
+    public sealed record PhotoRemoved(
+        [property: JsonPropertyName("id")] long Id) : LinkMessage;
+
     public sealed record CallLogRequest(
         [property: JsonPropertyName("limit")] int Limit = 100) : LinkMessage;
 
@@ -438,7 +488,9 @@ public abstract record LinkMessage
         [property: JsonPropertyName("totalBytes")] long TotalBytes,
         [property: JsonPropertyName("senderName")] string SenderName,
         [property: JsonPropertyName("preferredRoutes")] IReadOnlyList<string> PreferredRoutes,
-        [property: JsonPropertyName("senderWifiP2pAddress")] string? SenderWifiP2pAddress = null)
+        [property: JsonPropertyName("senderWifiP2pAddress")] string? SenderWifiP2pAddress = null,
+        /// <summary>Set when the offer answers a photoFetch; accepted without a prompt.</summary>
+        [property: JsonPropertyName("requestId")] string? RequestId = null)
         : LinkMessage
     {
         // Kotlin data classes with List members get structural equality from List.equals.

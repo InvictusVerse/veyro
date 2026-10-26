@@ -87,4 +87,7 @@ public enum class Capability(public val bit: Int) {
 
     /** Call state, call log and call actions from the PC (ADR-027). */
     CALLS(0x1000),
+
+    /** Recent photos browsed on the PC, originals fetched on demand (ADR-034). */
+    PHOTOS(0x2000),
 }

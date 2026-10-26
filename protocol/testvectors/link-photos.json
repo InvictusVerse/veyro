@@ -1,0 +1,16 @@
+{
+  "description": "Companion photo messages (ADR-034). Each 'json' is the LinkMessage payload as LinkJson encodes it (discriminator 't', nulls omitted, defaults encoded). Both clients must decode each entry to the listed type and re-encode to semantically identical JSON.",
+  "vectors": [
+    { "type": "photosReq", "json": "{\"t\":\"photosReq\",\"limit\":2000}" },
+    {
+      "type": "photos",
+      "json": "{\"t\":\"photos\",\"items\":[{\"id\":4021,\"name\":\"IMG_20261026_101500.jpg\",\"ts\":1793009700000,\"width\":4000,\"height\":3000,\"size\":3145728,\"mime\":\"image/jpeg\",\"bucket\":\"camera\"}]}"
+    },
+    { "type": "photoThumbReq", "json": "{\"t\":\"photoThumbReq\",\"ids\":[4021,4020],\"size\":256}" },
+    { "type": "photoThumb", "json": "{\"t\":\"photoThumb\",\"id\":4021,\"jpeg\":\"/9j/4AAQSkZJRg==\"}" },
+    { "type": "photoThumb", "json": "{\"t\":\"photoThumb\",\"id\":4020}" },
+    { "type": "photoFetch", "json": "{\"t\":\"photoFetch\",\"id\":4021,\"requestId\":\"r-1\"}" },
+    { "type": "photoNew", "json": "{\"t\":\"photoNew\",\"item\":{\"id\":4022,\"name\":\"Screenshot_20261026.png\",\"ts\":1793009800000,\"mime\":\"image/png\",\"bucket\":\"screenshots\"}}" },
+    { "type": "photoRemoved", "json": "{\"t\":\"photoRemoved\",\"id\":4019}" }
+  ]
+}

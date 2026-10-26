@@ -192,6 +192,8 @@ public sealed interface LinkMessage {
         val senderName: String,
         val preferredRoutes: List<String> = emptyList(),
         val senderWifiP2pAddress: String? = null,
+        /** Set when this offer answers a `photoFetch`; the receiver accepts it without a prompt. */
+        val requestId: String? = null,
     ) : LinkMessage
 
     @Serializable
@@ -556,6 +558,63 @@ public sealed interface LinkMessage {
         val durationSec: Long = 0,
         /** `in` | `out` | `missed` | `rejected` | `blocked` */
         val type: String,
+    )
+
+    // ── Companion: photos (ADR-034), gated by PHOTOS (0x2000) ──────────────────────────────
+    //
+    // Phone Link-style recent photos. The PC lists metadata, pulls thumbnails for what is on
+    // screen, and fetches an original as a normal transfer whose offer carries [requestId].
+    // File names and images are user data: never log them.
+
+    /** PC to phone: newest-first photo list. */
+    @Serializable
+    @SerialName("photosReq")
+    public data class PhotosRequest(val limit: Int = 2000) : LinkMessage
+
+    @Serializable
+    @SerialName("photos")
+    public data class Photos(val items: List<PhotoInfo>) : LinkMessage
+
+    /** PC to phone: thumbnails for up to 50 ids. Answered by one [PhotoThumb] per id. */
+    @Serializable
+    @SerialName("photoThumbReq")
+    public data class PhotoThumbRequest(val ids: List<Long>, val size: Int = 256) : LinkMessage
+
+    @Serializable
+    @SerialName("photoThumb")
+    public data class PhotoThumb(
+        val id: Long,
+        /** JPEG, longest side <= requested size (max 512), <= 48 KiB, base64. Absent if unreadable. */
+        val jpeg: String? = null,
+    ) : LinkMessage
+
+    /** PC to phone: send the original. The phone answers with a TransferOffer carrying [requestId]. */
+    @Serializable
+    @SerialName("photoFetch")
+    public data class PhotoFetch(val id: Long, val requestId: String) : LinkMessage
+
+    /** Phone to PC: a photo was added (camera, screenshot) since the list was sent. */
+    @Serializable
+    @SerialName("photoNew")
+    public data class PhotoNew(val item: PhotoInfo) : LinkMessage
+
+    @Serializable
+    @SerialName("photoRemoved")
+    public data class PhotoRemoved(val id: Long) : LinkMessage
+
+    @Serializable
+    public data class PhotoInfo(
+        /** MediaStore `_ID`. */
+        val id: Long,
+        val name: String,
+        /** Date taken (or added) in epoch ms. */
+        val ts: Long,
+        val width: Int? = null,
+        val height: Int? = null,
+        val size: Long? = null,
+        val mime: String? = null,
+        /** `camera` | `screenshots` */
+        val bucket: String? = null,
     )
 
     @Serializable

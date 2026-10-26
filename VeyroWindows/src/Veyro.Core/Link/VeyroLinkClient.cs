@@ -5,6 +5,8 @@ using Veyro.Core.Models;
 using Veyro.Core.Protocol;
 using Veyro.Core.Transfer;
 
+using Veyro.Core.Diagnostics;
+
 namespace Veyro.Core.Link;
 
 /// <summary>
@@ -115,6 +117,9 @@ public sealed class VeyroLinkClient
                 ?? throw new InvalidDataException("Peer closed before returning TransferDecision.");
             switch (message.Envelope.Payload)
             {
+                // Android opens every session with its own Hello (not HelloAck); it arrives before
+                // the decision. Treating it as a protocol error failed every PC-to-phone send.
+                case LinkMessage.Hello:
                 case LinkMessage.HelloAck:
                 case LinkMessage.Pong:
                 case LinkMessage.MediaState:
@@ -134,8 +139,13 @@ public sealed class VeyroLinkClient
                     continue;
                 case LinkMessage.TransferDecision decision when decision.TransferId == transferId:
                     return decision;
+                case LinkMessage.Cancel cancel when cancel.TransferId == transferId:
+                    return new LinkMessage.TransferDecision(transferId, false, cancel.Reason);
                 default:
-                    throw new InvalidDataException("Expected a matching TransferDecision.");
+                    // Unrelated or newer message types are not errors while waiting; the session
+                    // stays authenticated and ordered. Only the type name is logged.
+                    VeyroTrace.Info($"Skipping '{message.Envelope.Payload.GetType().Name}' while waiting for TransferDecision");
+                    continue;
             }
         }
     }
