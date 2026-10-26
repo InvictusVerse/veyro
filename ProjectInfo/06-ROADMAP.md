@@ -136,6 +136,31 @@ handshake, i.e. after P3. They do not need to wait for P4.
 
 ---
 
+## Phone Link parity map (ADR-024)
+
+Features a Phone Link-class companion is expected to have, taken from public descriptions of
+Windows Phone Link and Sefirah. Implementation is clean-room from Veyro's own spec.
+
+| Feature | Veyro today | Phase | Main Android dependency | Main Windows dependency |
+|---|---|---|---|---|
+| File transfer, both directions | Android done; Windows VTC1 done, end-to-end unproven | P5 | done | listener + discovery wiring |
+| Share-sheet / Explorer "Send to phone" | Android share target done | P5 | done | `IExplorerCommand`, Share Target |
+| Clipboard sync (text, then images) | not built | P6 | Android 10+ background-read limits: share sheet, QS tile, notification action; optional Shizuku | clipboard listener |
+| Notification mirroring + actionable toasts | not built | P6 | `NotificationListenerService` (restricted setting on sideload; Android 15 hides sensitive ones) | app-notification toasts |
+| Media control (PC playback from phone) | Windows `MediaSessionsControl` stub | P6 | media-style remote UI | `GlobalSystemMediaTransportControlsSessionManager` |
+| Battery / signal / device status | not built | P6 | `BatteryManager` | Control Center sidebar |
+| SMS read and send | Windows `MessagesPage` stub | P7 | `READ_SMS`/`SEND_SMS` (Play policy restricts; sideload/default-SMS only) | Messages page |
+| Calls: see and answer | Windows `CallsPage` stub | P7 | Bluetooth HFP is the only way PC audio works; call-state notify over LAN | HFP client |
+| Phone storage in Explorer | not built | P7 | SAF/`MANAGE_EXTERNAL_STORAGE` file server over the secure link | Cloud Files API sync root |
+| Screen mirroring + control | Windows `ScreenMirrorService` stub | P8 | scrcpy via ADB (external process) | scrcpy launcher |
+| Folder sync | not built | P7 (existing) | reuses P4 chunk/hash | reuses VTC1 |
+
+Order rationale: P5 end-to-end transfer must work on two real devices before anything else is
+layered on the same link. P6 features are small messages on the existing session; P7 features need
+heavy permissions or OS integrations; mirroring depends on an external tool.
+
+---
+
 ## Explicitly deferred, with reasons
 
 | Item | Why not now |

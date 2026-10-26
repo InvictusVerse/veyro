@@ -690,3 +690,26 @@ Decouple the control plane from the data plane while preserving the established 
 
 **Status.** Accepted.
 
+
+---
+
+## ADR-024 — Phone Link feature parity is clean-room; Sefirah is a feature list, not a source
+
+**Decided 2026-10-26.**
+
+**Context.** The product goal is a Windows Phone Link equivalent. The closest open project,
+Sefirah (shrimqy/Sefirah, Sefirah-Android), covers most of that surface but is **GPL-3.0**. Veyro
+is proprietary during development and may be open-sourced later under a licence of the author's
+choosing. Copying GPL code and rewriting it to look different still produces a derivative work.
+
+**Decision.**
+1. Only Sefirah's **public feature descriptions** (README, store listing) are consulted. Its source
+   is not cloned into this tree, read for implementation, or translated. Same rule as the
+   GPL WinUI app removed on 2026-10-15 (`03-ARCHITECTURE.md`, provenance section).
+2. Each feature is specified in `04-PROTOCOL.md` and implemented from that spec, on Veyro's existing
+   secure link (ADR-020/ADR-022), with Veyro's own UI.
+3. Where a feature depends on a third-party tool (scrcpy for mirroring), Veyro integrates the tool
+   as an external process under its own licence; it does not vendor the tool's code.
+
+**Consequences.** Slower than porting, but the codebase stays licence-clean and can be released
+under any licence later. The parity list lives in `06-ROADMAP.md`.
