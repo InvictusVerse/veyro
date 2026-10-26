@@ -290,57 +290,107 @@ public class VeyroContainer(context: Context) {
             stagingDir = File(appContext.cacheDir, "staging"),
             destinationProvider = { destinationDirectory() },
             localName = { runCatching { settingsStore.deviceName.first() }.getOrDefault("Veyro device") },
-            endpointsFor = { id ->
-                val current = discoveryManager.peers.value.firstOrNull { it.deviceId == id }?.endpoints.orEmpty()
-                if (current.isNotEmpty()) {
-                    lastKnownEndpoints[id] = current to System.currentTimeMillis()
-                    current
-                } else {
-                    val cached = lastKnownEndpoints[id]
-                    if (cached != null && (System.currentTimeMillis() - cached.second) < LAST_KNOWN_ENDPOINT_TTL_MS) {
-                        cached.first
-                    } else {
-                        emptyList()
-                    }
-                }
-            },
+            endpointsFor = { id -> knownEndpoints(id) },
             autoAcceptFor = { deviceId ->
                 // REQ-T03: per-device, default off, never for an unpaired device. `find` returning
                 // null for an unknown peer is what enforces the last part.
                 trustStore.find(deviceId)?.takeUnless { it.revoked }?.autoAcceptTransfers == true
             },
-            discoverEndpoints = { id, timeoutMs ->
-                val handle = discoveryManager.openWindow(
-                    DiscoveryRequest(
-                        reason = DiscoveryReason.TRANSFER,
-                        timeoutMillis = timeoutMs + 2_000L,
-                        includeUnpaired = false,
-                    ),
-                )
-                try {
-                    withTimeoutOrNull(timeoutMs) {
-                        discoveryManager.peers
-                            .mapNotNull { peers ->
-                                peers.firstOrNull { it.deviceId == id }?.endpoints?.takeIf { it.isNotEmpty() }
-                            }
-                            .first()
-                    }?.also { fresh ->
-                        lastKnownEndpoints[id] = fresh to System.currentTimeMillis()
-                    }.orEmpty()
-                } finally {
-                    handle.close()
-                }
-            },
+            discoverEndpoints = { id, timeoutMs -> discoverEndpoints(id, timeoutMs) },
             storagePublisher = storagePublisher,
             onTransferCompleted = { transfer ->
                 historyStore.append(transfer)
             },
+            // "Always accept from this PC" on the prompt; only ever for a paired, unrevoked peer.
+            rememberAutoAccept = { deviceId ->
+                if (trustStore.find(deviceId)?.revoked == false) trustStore.setAutoAccept(deviceId, true)
+            },
         )
+    }
+
+    /** What discovery currently reports for [id], else what it reported in the last minute. */
+    private fun knownEndpoints(id: DeviceId): List<Endpoint> {
+        val current = discoveryManager.peers.value.firstOrNull { it.deviceId == id }?.endpoints.orEmpty()
+        if (current.isNotEmpty()) {
+            lastKnownEndpoints[id] = current to System.currentTimeMillis()
+            return current
+        }
+        val cached = lastKnownEndpoints[id]
+        return if (cached != null && (System.currentTimeMillis() - cached.second) < LAST_KNOWN_ENDPOINT_TTL_MS) {
+            cached.first
+        } else {
+            emptyList()
+        }
+    }
+
+    /** Opens one bounded discovery window and waits up to [timeoutMs] for [id] to appear. */
+    private suspend fun discoverEndpoints(id: DeviceId, timeoutMs: Long): List<Endpoint> {
+        val handle = discoveryManager.openWindow(
+            DiscoveryRequest(
+                reason = DiscoveryReason.TRANSFER,
+                timeoutMillis = timeoutMs + 2_000L,
+                includeUnpaired = false,
+            ),
+        )
+        return try {
+            withTimeoutOrNull(timeoutMs) {
+                discoveryManager.peers
+                    .mapNotNull { peers ->
+                        peers.firstOrNull { it.deviceId == id }?.endpoints?.takeIf { it.isNotEmpty() }
+                    }
+                    .first()
+            }?.also { fresh ->
+                lastKnownEndpoints[id] = fresh to System.currentTimeMillis()
+            }.orEmpty()
+        } finally {
+            handle.close()
+        }
     }
 
     private companion object {
         const val LAST_KNOWN_ENDPOINT_TTL_MS = 60_000L
     }
+
+    // ── Background running (ADR-036) ───────────────────────────────────────────────────────
+
+    /** Whether any Activity is started. Written by VeyroApplication's lifecycle callbacks. */
+    public val appVisible: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    /** The incoming-file notification while the app is not visible. */
+    public val offerNotifier: OfferNotifier by lazy {
+        OfferNotifier(
+            context = appContext,
+            scope = appScope,
+            coordinator = { transferCoordinator },
+            appVisible = appVisible,
+        )
+    }
+
+    /** Keeps the session to the paired PC alive in the background and drives the service. */
+    public val backgroundController: BackgroundController by lazy {
+        BackgroundController(
+            context = appContext,
+            scope = appScope,
+            dispatchers = dispatchers,
+            settings = settingsStore,
+            trustStore = trustStore,
+            connectionManager = { connectionManager },
+            networkMonitor = networkMonitor,
+            discoveredPeers = discoveryManager.peers,
+            knownEndpoints = { id -> knownEndpoints(id) },
+            discoverEndpoints = { id, timeoutMs -> discoverEndpoints(id, timeoutMs) },
+            ensureReceiving = {
+                // Building the coordinator installs the receive loop on every session.
+                transferCoordinator
+                offerNotifier.start()
+            },
+        )
+    }
+
+    /** Whether Android exempts Veyro from battery optimisation, for the Settings row. */
+    public fun isIgnoringBatteryOptimizations(): Boolean =
+        appContext.getSystemService(android.os.PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(appContext.packageName) == true
 
     // ── Companion: notification mirroring (ADR-025) ────────────────────────────────────────
 

@@ -44,6 +44,10 @@ public class TcpDataReceiver(
 
     private companion object {
         const val TAG = "TcpDataReceiver"
+
+        /** Chunk sizes a sender may announce in `ItemBegin`; VTC1 payloads stay under 16 MiB. */
+        const val MIN_CHUNK_SIZE = 64 * 1024
+        const val MAX_CHUNK_SIZE = 8 * 1024 * 1024
     }
 
     private var serverSocket: ServerSocket? = null
@@ -205,7 +209,8 @@ public class TcpDataReceiver(
                     chunkSize = chunkSize,
                 )
             } catch (e: Exception) {
-                VeyroLog.w(TAG, e) { "[$transferId] Failed to open PartFile for ${item.relativePath}" }
+                // Index only: file names are user data and are never logged.
+                VeyroLog.w(TAG) { "[$transferId] Failed to open PartFile for item #${item.index} (${e.javaClass.simpleName})" }
                 continue
             }
             parts[item.index] = part
@@ -255,7 +260,23 @@ public class TcpDataReceiver(
 
                 when (frame) {
                     is TcpFrame.ItemBegin -> {
-                        VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-begin-received] Item #${frame.itemIndex} (seq=${frame.seq}, size=${frame.sizeBytes})" }
+                        VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-begin-received] Item #${frame.itemIndex} (seq=${frame.seq}, size=${frame.sizeBytes}, chunkSize=${frame.chunkSize})" }
+                        // The sender owns the chunk plan and states it here: Windows streams
+                        // 4 MiB chunks, Android 512 KiB. A part opened with a different size would
+                        // reject every full-size chunk, so it is reopened with the sender's.
+                        val existing = parts[frame.itemIndex]
+                        val item = offerItems.firstOrNull { it.index == frame.itemIndex }
+                        if (existing != null && item != null && existing.chunkSize != frame.chunkSize &&
+                            frame.chunkSize in MIN_CHUNK_SIZE..MAX_CHUNK_SIZE
+                        ) {
+                            runCatching { existing.close() }
+                            parts[frame.itemIndex] = PartFile.open(
+                                destinationDir = destinationDir,
+                                relativePath = item.relativePath,
+                                sizeBytes = item.sizeBytes,
+                                chunkSize = frame.chunkSize,
+                            )
+                        }
                     }
 
                     is TcpFrame.Chunk -> {
@@ -337,6 +358,11 @@ public class TcpDataReceiver(
                             results += itemRes
                             VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-result-notified] Emitting ItemResult for #${frame.itemIndex} (ok=${itemRes.isVerified})" }
                             onItemVerified(itemRes)
+                            writeItemResult(output, transferId, frame.itemIndex, itemRes.isVerified, itemRes.errorMessage)
+                        } else {
+                            // An ItemEnd for an item this receiver never opened: answer it, so a
+                            // sender waiting on the data socket fails the item instead of hanging.
+                            writeItemResult(output, transferId, frame.itemIndex, false, "UNKNOWN_ITEM")
                         }
                     }
 
@@ -393,6 +419,37 @@ public class TcpDataReceiver(
         metrics?.markTransferComplete()
         metrics?.logBreakdown()
         TcpReceiveOutcome.Completed(route, results)
+    }
+
+    /** Receiver-side sequence for frames written back to the sender; AuthAck used 1. */
+    private var outboundSeq = 1L
+
+    /**
+     * Answers an `ItemEnd` with a VTC1 [TcpFrame.ItemResult] on the data socket (04-PROTOCOL.md
+     * 7.3). The WebSocket `itemResult` is still sent by the caller for Android senders; the Windows
+     * sender reads only this one and blocks until it arrives.
+     */
+    private fun writeItemResult(
+        output: BufferedOutputStream,
+        transferId: String,
+        itemIndex: Int,
+        ok: Boolean,
+        error: String?,
+    ) {
+        try {
+            TcpFrameCodec.writeFrame(
+                output,
+                TcpFrame.ItemResult(
+                    seq = ++outboundSeq,
+                    transferId = transferId,
+                    itemIndex = itemIndex,
+                    ok = ok,
+                    errorMessage = error,
+                ),
+            )
+        } catch (t: Throwable) {
+            VeyroLog.w(TAG) { "[$transferId] Could not write ItemResult for #$itemIndex on TCP (${t.javaClass.simpleName})" }
+        }
     }
 
     /**

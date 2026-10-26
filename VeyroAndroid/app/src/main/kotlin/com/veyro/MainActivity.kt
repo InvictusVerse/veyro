@@ -32,6 +32,7 @@ import com.veyro.di.VeyroViewModelFactory
 import com.veyro.navigation.VeyroNavHost
 import com.veyro.ui.components.InboundPairingDialog
 import com.veyro.ui.components.InboundTransferDialog
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.IOException
 
 /**
@@ -46,9 +47,16 @@ import java.io.IOException
  */
 public class MainActivity : ComponentActivity() {
 
-    private companion object {
-        const val TAG = "MainActivity"
+    public companion object {
+        private const val TAG = "MainActivity"
+
+        /** From the background notification's Send files: open Send for [EXTRA_SEND_TO]. */
+        public const val ACTION_SEND_FILES: String = "com.veyro.action.SEND_FILES"
+        public const val EXTRA_SEND_TO: String = "com.veyro.extra.SEND_TO"
     }
+
+    /** A device id to open the Send screen for, consumed by the nav host. */
+    private val sendRequest = MutableStateFlow<String?>(null)
 
     private val pickFiles = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -74,6 +82,7 @@ public class MainActivity : ComponentActivity() {
 
         val container = (application as VeyroApplication).container
         val factory = VeyroViewModelFactory(container)
+        readSendRequest(intent)
 
         setContent {
             VeyroTheme {
@@ -103,13 +112,28 @@ public class MainActivity : ComponentActivity() {
                             onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
                             onRequestMessagingPermissions = ::requestMessagingPermissions,
                             onRequestPhotosPermission = ::requestPhotosPermission,
+                            sendRequest = sendRequest,
+                            onSendRequestHandled = { sendRequest.value = null },
                         )
                     }
                 }
                 InboundPairingDialog(connectionManager = container.connectionManager)
-                InboundTransferDialog(transferCoordinator = container.transferCoordinator)
+                InboundTransferDialog(
+                    transferCoordinator = container.transferCoordinator,
+                    customDestination = container.settingsStore.destinationDir,
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        readSendRequest(intent)
+    }
+
+    private fun readSendRequest(intent: Intent?) {
+        if (intent?.action != ACTION_SEND_FILES) return
+        sendRequest.value = intent.getStringExtra(EXTRA_SEND_TO)
     }
 
     private fun requestRequiredPermissions() {

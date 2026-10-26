@@ -12,4 +12,6 @@ dependencies {
     api(project(":core:model"))
     implementation(project(":core:common"))
     implementation(libs.androidx.core.ktx)
+    // The background service collects its host's status Flow (ADR-036). Already on the classpath.
+    implementation(libs.kotlinx.coroutines.android)
 }

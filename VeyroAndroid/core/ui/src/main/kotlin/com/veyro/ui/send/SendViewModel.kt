@@ -133,7 +133,7 @@ public class SendViewModel(
 
             _state.value = _state.value.copy(
                 isSending = false,
-                outcome = describe(result),
+                outcome = describe(result, targetName),
             )
 
             // Clear the selection only on success. After a failure the user almost certainly wants
@@ -146,7 +146,7 @@ public class SendViewModel(
         coordinator.cancel()
     }
 
-    private fun describe(result: SendResult): String = when (result) {
+    private fun describe(result: SendResult, targetName: String): String = when (result) {
         is SendResult.Success -> {
             val failed = result.results.count { !it.isVerified }
             if (failed == 0) {
@@ -157,7 +157,8 @@ public class SendViewModel(
                 "Sent, but $failed file(s) failed verification and were not saved"
             }
         }
-        SendResult.Declined -> "The other device declined"
+        // The receiver's own reason (declined, timeout, busy, error), not a generic decline.
+        is SendResult.Declined -> result.reason.message(targetName)
         SendResult.Cancelled -> "Cancelled"
         is SendResult.Failed -> result.reason
     }

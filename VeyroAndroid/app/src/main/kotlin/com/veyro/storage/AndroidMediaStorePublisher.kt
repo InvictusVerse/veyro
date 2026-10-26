@@ -51,7 +51,8 @@ public class AndroidMediaStorePublisher(
     ): StoragePublishResult = withContext(Dispatchers.IO) {
         val fileName = relativePath.substringAfterLast('/')
         val resolvedMimeType = mimeType ?: detectMimeType(fileName)
-        VeyroLog.i(TAG) { "Publishing $fileName ($sizeBytes bytes, mime=$resolvedMimeType) to destination" }
+        // File names are user data: never logged, here or in a failure reason.
+        VeyroLog.i(TAG) { "Publishing an item ($sizeBytes bytes, mime=$resolvedMimeType) to destination" }
 
         // If user specified custom destination folder, write there instead of MediaStore
         val customDir = customDestinationDir?.invoke()
@@ -149,9 +150,9 @@ public class AndroidMediaStorePublisher(
         val insertedUri: Uri
         try {
             insertedUri = contentResolver.insert(collectionUri, values)
-                ?: return StoragePublishResult.Failed("ContentResolver failed to insert row for $fileName into $collectionUri")
+                ?: return StoragePublishResult.Failed("ContentResolver failed to insert a row into $collectionUri")
         } catch (t: Throwable) {
-            VeyroLog.e(TAG, t) { "ContentResolver.insert threw for $fileName" }
+            VeyroLog.e(TAG) { "ContentResolver.insert threw ${t.javaClass.simpleName}" }
             return StoragePublishResult.Failed("Insert exception: ${t.message}", t)
         }
 
@@ -212,7 +213,7 @@ public class AndroidMediaStorePublisher(
             sourceFile.delete()
 
             VeyroLog.i(TAG) {
-                "[diagnostics:mediastore] item $fileName committed to MediaStore: size=$totalCopied bytes, uri=$insertedUri, dir=$relativeDir, mime=$mimeType"
+                "[diagnostics:mediastore] item committed to MediaStore: size=$totalCopied bytes, uri=$insertedUri, dir=$relativeDir, mime=$mimeType"
             }
             return StoragePublishResult.Success(
                 destinationUri = insertedUri.toString(),
@@ -221,7 +222,7 @@ public class AndroidMediaStorePublisher(
                 bytesWritten = totalCopied,
             )
         } catch (t: Throwable) {
-            VeyroLog.e(TAG, t) { "Publication write failed for $fileName: ${t.message}" }
+            VeyroLog.e(TAG) { "Publication write failed (${t.javaClass.simpleName})" }
             pendingUri?.let { uriToDelete ->
                 runCatching { contentResolver.delete(uriToDelete, null, null) }
             }

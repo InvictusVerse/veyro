@@ -59,11 +59,19 @@ public class TransferCoordinator(
     private val discoverEndpoints: (suspend (DeviceId, Long) -> List<Endpoint>)? = null,
     private val storagePublisher: TransferStoragePublisher? = null,
     private val onTransferCompleted: (suspend (Transfer) -> Unit)? = null,
+    /** Turns on auto-accept for a device ("Always accept from this PC" on the prompt). */
+    private val rememberAutoAccept: (suspend (DeviceId) -> Unit)? = null,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     public companion object {
         private const val TAG = "TransferCoordinator"
-        private const val OFFER_TIMEOUT_MS = 60_000L
+
+        /**
+         * How long an incoming offer waits for an answer before it is declined with `timeout`.
+         * Matches the PC's consent prompt, so both sides give up at the same moment.
+         */
+        public const val OFFER_TIMEOUT_MS: Long = 60_000L
         private const val CONNECT_WAIT_MS = 15_000L
         private const val DISCOVERY_WAIT_MS = 5_000L
         private const val RECEIVE_RETRY_DELAY_MS = 250L
@@ -108,6 +116,9 @@ public class TransferCoordinator(
         @Volatile var accepted = false
     }
 
+    /** Wire reason for each offer [authorize] refused, read once by the runner. */
+    private val declineReasons = ConcurrentHashMap<String, String>()
+
     /** Sessions that already have a receive loop; one loop per session, never two. */
     private val drivenSessions: MutableSet<PeerConnection> =
         Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap()))
@@ -144,6 +155,7 @@ public class TransferCoordinator(
                         handledId = offer.transferId
                         authorize(connection, offer)
                     },
+                    declineReason = { id -> declineReasons.remove(id) ?: DeclineReason.DECLINED.wire },
                     publisher = storagePublisher,
                     onProgress = { bytesRecv, totalBytes, item, stage, speedBps, etaSec ->
                         val now = System.currentTimeMillis()
@@ -501,8 +513,11 @@ public class TransferCoordinator(
                     )
                     SendResult.Success(outcome.results)
                 }
-                TransferRunner.SendOutcome.Declined -> {
-                    VeyroLog.w(TAG) { "[$transferId] Transfer declined by receiver" }
+                is TransferRunner.SendOutcome.Declined -> {
+                    VeyroLog.w(TAG) { "[$transferId] Transfer declined by receiver (${outcome.reason})" }
+                    // The receiver's own reason, not a generic "declined": busy and error ask for
+                    // a different reaction than a real no.
+                    val message = outcome.reason.message(peerName)
                     val transferRecord = Transfer(
                         id = transferId,
                         peerDeviceId = peerDeviceId,
@@ -510,7 +525,10 @@ public class TransferCoordinator(
                         direction = TransferDirection.SEND,
                         items = staged.items,
                         totalBytes = totalSourceBytes,
-                        state = TransferState.DECLINED,
+                        state = when (outcome.reason) {
+                            DeclineReason.DECLINED, DeclineReason.TIMEOUT -> TransferState.DECLINED
+                            DeclineReason.BUSY, DeclineReason.ERROR -> TransferState.FAILED
+                        },
                         startedAtEpochMillis = System.currentTimeMillis(),
                         finishedAtEpochMillis = System.currentTimeMillis(),
                     )
@@ -518,10 +536,10 @@ public class TransferCoordinator(
                     runCatching { onTransferCompleted?.invoke(transferRecord) }
                     _activeTransfer.value = _activeTransfer.value?.copy(
                         stage = TransferStage.FAILED,
-                        statusText = "Declined by $peerName",
-                        errorMessage = "Transfer declined by receiver",
+                        statusText = message,
+                        errorMessage = message,
                     )
-                    SendResult.Declined
+                    SendResult.Declined(outcome.reason)
                 }
                 TransferRunner.SendOutcome.Cancelled -> {
                     VeyroLog.w(TAG) { "[$transferId] Transfer cancelled" }
@@ -639,7 +657,7 @@ public class TransferCoordinator(
             VeyroLog.i(TAG) { "[$transferId] Requested send finished: ${outcome.javaClass.simpleName}" }
             when (outcome) {
                 is TransferRunner.SendOutcome.Done -> SendResult.Success(outcome.results)
-                TransferRunner.SendOutcome.Declined -> SendResult.Declined
+                is TransferRunner.SendOutcome.Declined -> SendResult.Declined(outcome.reason)
                 TransferRunner.SendOutcome.Cancelled -> SendResult.Cancelled
                 is TransferRunner.SendOutcome.Failed -> SendResult.Failed(outcome.reason)
             }
@@ -666,9 +684,23 @@ public class TransferCoordinator(
 
     // ── Receiving ──────────────────────────────────────────────────────────────────────────
 
-    public suspend fun respondToOffer(transferId: String, accept: Boolean) {
+    /**
+     * The user's answer to [pendingOffer], from the prompt or the notification; whichever answers
+     * first wins and later answers are ignored. [alwaysAccept] (only meaningful with [accept])
+     * turns on auto-accept for the sending device before the transfer starts.
+     */
+    public suspend fun respondToOffer(transferId: String, accept: Boolean, alwaysAccept: Boolean = false) {
+        val offer = _pendingOffer.value?.takeIf { it.transferId == transferId }
+        if (accept && alwaysAccept) {
+            val peer = offer?.peerDeviceId
+            val remember = rememberAutoAccept
+            if (peer != null && remember != null) {
+                runCatching { remember(peer) }
+                    .onFailure { VeyroLog.w(TAG) { "[$transferId] Could not save auto-accept (${it.javaClass.simpleName})" } }
+            }
+        }
         mutex.withLock {
-            pending[transferId]?.let { it.accepted = accept; it.answered = true }
+            pending[transferId]?.takeUnless { it.answered }?.let { it.accepted = accept; it.answered = true }
         }
         if (!accept && _activeTransfer.value?.transferId == transferId) {
             _activeTransfer.value = _activeTransfer.value?.copy(
@@ -686,20 +718,27 @@ public class TransferCoordinator(
         // Defense in depth: Check if transfer is already completed or actively in progress
         if (completedTransfers.contains(transferId)) {
             VeyroLog.w(TAG) { "[$transferId] Rejecting TransferOffer: transfer was already completed" }
+            declineReasons[transferId] = DeclineReason.BUSY.wire
             return false
         }
         if (!activeTransfers.add(transferId)) {
             VeyroLog.w(TAG) { "[$transferId] Rejecting TransferOffer: transfer is already actively being processed" }
+            declineReasons[transferId] = DeclineReason.BUSY.wire
             return false
         }
 
+        val files = offer.items.filterNot { it.isDir }
         val uiOffer = IncomingOffer(
             transferId = transferId,
             peerName = offer.senderName,
-            fileCount = offer.items.count { !it.isDir },
+            fileCount = files.size,
             totalBytes = offer.totalBytes,
-            topLevelNames = offer.items.filterNot { it.isDir }
-                .map { it.relPath.substringBefore('/') }.distinct().take(5),
+            topLevelNames = files.map { it.relPath.substringBefore('/') }.distinct().take(5),
+            peerDeviceId = peerId,
+            files = files.take(IncomingOffer.MAX_LISTED_FILES).map {
+                IncomingOffer.ListedFile(name = it.relPath.substringAfterLast('/'), sizeBytes = it.size)
+            },
+            expiresAtEpochMillis = clock() + OFFER_TIMEOUT_MS,
         )
 
         val autoAccept = peerId != null && autoAcceptFor(peerId)
@@ -731,13 +770,14 @@ public class TransferCoordinator(
         _pendingOffer.value = uiOffer
         try {
             _incomingOffers.emit(uiOffer)
-            val deadline = System.currentTimeMillis() + OFFER_TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline) {
+            val deadline = uiOffer.expiresAtEpochMillis
+            while (clock() < deadline) {
                 if (decision.answered) {
                     VeyroLog.i(TAG) { "[$transferId] User answered offer: accepted=${decision.accepted}" }
                     if (!decision.accepted) {
                         activeTransfers.remove(transferId)
                         completedTransfers.add(transferId)
+                        declineReasons[transferId] = DeclineReason.DECLINED.wire
                         _activeTransfer.value = _activeTransfer.value?.copy(
                             stage = TransferStage.FAILED,
                             statusText = "Declined transfer",
@@ -746,9 +786,22 @@ public class TransferCoordinator(
                     }
                     return decision.accepted
                 }
+                // The sender gave up (its own timeout or a cancel) or the session dropped: close
+                // the prompt now rather than let the user accept something that is gone.
+                if (!session.isConnected || session.mailbox(transferId).isCancelled) {
+                    VeyroLog.i(TAG) { "[$transferId] Offer withdrawn before an answer" }
+                    activeTransfers.remove(transferId)
+                    completedTransfers.add(transferId)
+                    _activeTransfer.value = _activeTransfer.value?.copy(
+                        stage = TransferStage.CANCELLED,
+                        statusText = "${offer.senderName} withdrew the transfer",
+                    )
+                    return false
+                }
                 kotlinx.coroutines.delay(100)
             }
             VeyroLog.w(TAG) { "[$transferId] Transfer offer timed out awaiting user decision" }
+            declineReasons[transferId] = DeclineReason.TIMEOUT.wire
             activeTransfers.remove(transferId)
             completedTransfers.add(transferId)
             _activeTransfer.value = _activeTransfer.value?.copy(
@@ -812,7 +865,20 @@ public data class IncomingOffer(
     val fileCount: Int,
     val totalBytes: Long,
     val topLevelNames: List<String>,
+    /** The sending device, for its fingerprint and "Always accept"; null if the session has none. */
+    val peerDeviceId: DeviceId? = null,
+    /** The first [MAX_LISTED_FILES] files, name and size, for the prompt's rows. */
+    val files: List<ListedFile> = emptyList(),
+    /** When the offer is declined with `timeout` if nobody answers ([TransferCoordinator.OFFER_TIMEOUT_MS]). */
+    val expiresAtEpochMillis: Long = 0L,
 ) {
+    /** One row of the prompt. User data: shown, never logged. */
+    public data class ListedFile(val name: String, val sizeBytes: Long)
+
+    public companion object {
+        public const val MAX_LISTED_FILES: Int = 3
+    }
+
     public fun summary(): String = when {
         fileCount <= 0 -> "an empty transfer"
         fileCount == 1 -> topLevelNames.firstOrNull() ?: "1 file"
@@ -822,7 +888,7 @@ public data class IncomingOffer(
 
 public sealed interface SendResult {
     public data class Success(val results: List<ItemResult>) : SendResult
-    public data object Declined : SendResult
+    public data class Declined(val reason: DeclineReason = DeclineReason.DECLINED) : SendResult
     public data object Cancelled : SendResult
     public data class Failed(val reason: String) : SendResult
 }

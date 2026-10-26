@@ -37,6 +37,10 @@ public class SettingsViewModel(
     private val missingMessagingPermissions: () -> List<String> = { emptyList() },
     /** Whether the photo read permission is held. Re-read on every screen resume. */
     private val photosPermissionGranted: () -> Boolean = { false },
+    /** Whether Android exempts Veyro from battery optimisation. Re-read on every screen resume. */
+    private val batteryOptimizationIgnored: () -> Boolean = { false },
+    /** Told when a background setting changes, so a stale Disconnect does not keep it off. */
+    private val onBackgroundSettingChanged: () -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -103,6 +107,26 @@ public class SettingsViewModel(
         settingsStore.photosEnabled
             .onEach { _state.value = _state.value.copy(photosEnabled = it) }
             .launchIn(viewModelScope)
+
+        settingsStore.runInBackground
+            .onEach { _state.value = _state.value.copy(runInBackground = it) }
+            .launchIn(viewModelScope)
+
+        settingsStore.startOnBoot
+            .onEach { _state.value = _state.value.copy(startOnBoot = it) }
+            .launchIn(viewModelScope)
+    }
+
+    /** ADR-036. The background service follows the stored value. */
+    public fun setRunInBackground(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setRunInBackground(enabled)
+            onBackgroundSettingChanged()
+        }
+    }
+
+    public fun setStartOnBoot(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setStartOnBoot(enabled) }
     }
 
     /** The runtime permission is requested by the Activity; this only stores the choice. */
@@ -134,6 +158,7 @@ public class SettingsViewModel(
             policyAccessGranted = policyAccessGranted(),
             missingMessagingPermissions = missingMessagingPermissions(),
             photosPermissionGranted = photosPermissionGranted(),
+            batteryOptimizationIgnored = batteryOptimizationIgnored(),
         )
     }
 

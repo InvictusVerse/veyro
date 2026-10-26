@@ -52,6 +52,10 @@ public class FileSettingsStore(
         // ADR-030. Defaulted false so a pre-onboarding file decodes; existing installs with a
         // trusted peer are migrated to true by the onboarding gate, not here.
         val onboardingComplete: Boolean = false,
+        // ADR-036. Defaulted so older files decode; background running is on unless turned off,
+        // start-on-boot is off unless turned on.
+        val runInBackground: Boolean = true,
+        val startOnBoot: Boolean = false,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -129,6 +133,20 @@ public class FileSettingsStore(
 
     override suspend fun setOnboardingComplete(complete: Boolean) {
         update { it.copy(onboardingComplete = complete) }
+    }
+
+    override val runInBackground: Flow<Boolean> =
+        state.asStateFlow().map { it.runInBackground }
+
+    override suspend fun setRunInBackground(enabled: Boolean) {
+        update { it.copy(runInBackground = enabled) }
+    }
+
+    override val startOnBoot: Flow<Boolean> =
+        state.asStateFlow().map { it.startOnBoot }
+
+    override suspend fun setStartOnBoot(enabled: Boolean) {
+        update { it.copy(startOnBoot = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

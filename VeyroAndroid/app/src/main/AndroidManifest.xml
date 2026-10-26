@@ -41,6 +41,10 @@
          Acquired only for the duration of an active transfer, never while idle (NFR-03). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Background running (ADR-036): used only by the Settings button that explains why and asks;
+         never requested on its own. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Progress and incoming-offer notifications. Runtime-requested on API 33+. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -109,6 +113,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Accept / Decline on the incoming-file notification. Only our own PendingIntents reach it. -->
+        <receiver
+            android:name=".di.OfferActionReceiver"
+            android:exported="false" />
 
     </application>
 

@@ -44,6 +44,15 @@ public data class SettingsUiState(
     /** Whether the photo read permission is held. Photos are served only with it. */
     val photosPermissionGranted: Boolean = false,
 
+    /** Keep the connection to the paired PC in the background (ADR-036). On by default. */
+    val runInBackground: Boolean = true,
+
+    /** Start that connection after the phone boots. Off by default. */
+    val startOnBoot: Boolean = false,
+
+    /** Whether Android exempts Veyro from battery optimisation (asked only from Settings). */
+    val batteryOptimizationIgnored: Boolean = false,
+
     /**
      * Set when the identity could not be loaded at all. This is the "your identity was lost"
      * state from `05-SECURITY.md` section 7, and it must be shown rather than hidden behind a

@@ -27,11 +27,11 @@ public class VeyroNotifications(private val context: Context) {
     public companion object {
         public const val CHANNEL_PROGRESS: String = "veyro.transfer.progress"
         public const val CHANNEL_OFFERS: String = "veyro.transfer.offers"
-        public const val CHANNEL_DISCOVERABLE: String = "veyro.discoverable"
+        public const val CHANNEL_BACKGROUND: String = "veyro.background"
 
         public const val ID_PROGRESS: Int = 1001
         public const val ID_OFFER: Int = 1002
-        public const val ID_DISCOVERABLE: Int = 1003
+        public const val ID_BACKGROUND: Int = 1003
     }
 
     private val manager: NotificationManager? =
@@ -68,13 +68,14 @@ public class VeyroNotifications(private val context: Context) {
 
         manager.createNotificationChannel(
             NotificationChannel(
-                CHANNEL_DISCOVERABLE,
-                "Discoverable",
+                CHANNEL_BACKGROUND,
+                "Connection to your PC",
+                // Low: always present while running in the background, never makes a sound.
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
                 description =
-                    "Shown while Veyro is visible to your other devices, so it is never " +
-                        "discoverable without you knowing."
+                    "Shown while Veyro keeps the connection to your PC open in the background, " +
+                        "so it never runs without you knowing."
                 setShowBadge(false)
             },
         )
@@ -122,25 +123,55 @@ public class VeyroNotifications(private val context: Context) {
         totalBytesLabel: String,
         acceptIntent: PendingIntent,
         declineIntent: PendingIntent,
-    ): Notification = Notification.Builder(context, CHANNEL_OFFERS)
-        .setContentTitle("$peerName wants to send you $summary")
-        .setContentText(totalBytesLabel)
-        .setSmallIcon(android.R.drawable.stat_sys_download)
-        .setAutoCancel(false)
-        .setOngoing(true)
-        .addAction(Notification.Action.Builder(null, "Accept", acceptIntent).build())
-        .addAction(Notification.Action.Builder(null, "Decline", declineIntent).build())
-        .build()
-
-    public fun discoverable(stopIntent: PendingIntent?): Notification {
-        val builder = Notification.Builder(context, CHANNEL_DISCOVERABLE)
-            .setContentTitle("Veyro is discoverable")
-            .setContentText("Your other devices can see this one.")
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+        /** Opens the full prompt in the app. */
+        contentIntent: PendingIntent? = null,
+        /** When the offer is declined automatically; shown as a countdown and used as the timeout. */
+        expiresAtEpochMillis: Long = 0L,
+    ): Notification {
+        val builder = Notification.Builder(context, CHANNEL_OFFERS)
+            .setContentTitle("$peerName wants to send you $summary")
+            .setContentText(totalBytesLabel)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setCategory(Notification.CATEGORY_RECOMMENDATION)
+            .setAutoCancel(false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-        stopIntent?.let {
-            builder.addAction(Notification.Action.Builder(null, "Stop", it).build())
+            .addAction(Notification.Action.Builder(null, "Accept", acceptIntent).build())
+            .addAction(Notification.Action.Builder(null, "Decline", declineIntent).build())
+        contentIntent?.let { builder.setContentIntent(it) }
+        val remaining = expiresAtEpochMillis - System.currentTimeMillis()
+        if (remaining > 0) {
+            // Counts down to the same moment the prompt in the app declines on its own.
+            builder.setWhen(expiresAtEpochMillis)
+                .setShowWhen(true)
+                .setUsesChronometer(true)
+                .setChronometerCountDown(true)
+                .setTimeoutAfter(remaining)
+        }
+        return builder.build()
+    }
+
+    /** The background service's persistent notification (ADR-036). */
+    public fun background(
+        title: String,
+        text: String,
+        contentIntent: PendingIntent?,
+        sendIntent: PendingIntent?,
+        disconnectIntent: PendingIntent?,
+    ): Notification {
+        val builder = Notification.Builder(context, CHANNEL_BACKGROUND)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+        contentIntent?.let { builder.setContentIntent(it) }
+        sendIntent?.let { builder.addAction(Notification.Action.Builder(null, "Send files", it).build()) }
+        disconnectIntent?.let { builder.addAction(Notification.Action.Builder(null, "Disconnect", it).build()) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
         return builder.build()
     }

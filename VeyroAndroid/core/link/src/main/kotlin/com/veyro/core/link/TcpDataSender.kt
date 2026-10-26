@@ -5,9 +5,14 @@ import com.veyro.core.common.VeyroLog
 import com.veyro.core.model.TransferRoute
 import com.veyro.core.protocol.tcp.TcpFrame
 import com.veyro.core.protocol.tcp.TcpFrameCodec
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
@@ -15,6 +20,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -48,6 +54,37 @@ public class TcpDataSender(
 
     public val isConnected: Boolean
         get() = !isClosed && socket?.isConnected == true && socket?.isClosed == false
+
+    /** Set by [startInboundReader]; while it runs it is the only reader of the socket. */
+    @Volatile
+    private var inboundReader: Job? = null
+
+    /**
+     * Reads what the receiver writes back on the data socket after [TcpFrame.AuthAck] and hands
+     * each frame to [onFrame], until EOF or the socket closes.
+     *
+     * The Windows receiver answers every `ItemEnd` with a VTC1 [TcpFrame.ItemResult] on this socket
+     * and sends nothing on the WebSocket, so a sender that only waited on the WebSocket timed out
+     * on every item (the photo-fetch "spins forever" report). Reading here is what lets
+     * [TransferRunner] accept the result from either channel.
+     */
+    public fun startInboundReader(scope: CoroutineScope, onFrame: suspend (TcpFrame) -> Unit): Job {
+        val inp = input ?: throw IOException("Socket not connected")
+        return scope.launch(dispatchers.io) {
+            while (isActive && !isClosed) {
+                val frame = try {
+                    TcpFrameCodec.readFrameOrNull(inp)
+                } catch (e: SocketTimeoutException) {
+                    // Idle while chunks stream the other way; keep listening.
+                    continue
+                } catch (t: Throwable) {
+                    break
+                }
+                if (frame == null) break
+                onFrame(frame)
+            }
+        }.also { inboundReader = it }
+    }
 
     /**
      * Connects to the receiver's raw TCP endpoint, performs the [TcpFrame.Auth] handshake,
@@ -272,6 +309,15 @@ public class TcpDataSender(
             if (!s.isClosed && s.isConnected && !s.isOutputShutdown) {
                 VeyroLog.i(TAG) { "[tcp-sender:shutdown-output] Shutting down socket output (half-close FIN sent)" }
                 runCatching { s.shutdownOutput() }
+            }
+
+            // With an inbound reader running it owns the input stream: wait for it to see EOF
+            // instead of reading concurrently.
+            inboundReader?.let { reader ->
+                if (withTimeoutOrNull(timeoutMs) { reader.join() } != null) {
+                    VeyroLog.i(TAG) { "[tcp-sender:peer-eof-confirmed] Peer closed socket gracefully (clean EOF)" }
+                }
+                return@withContext
             }
 
             // Drain peer EOF / close with timeout

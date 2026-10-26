@@ -1,6 +1,7 @@
 package com.veyro.core.data
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import java.io.File
 
 /** User-visible settings that are not per-peer trust (REQ-I05, feature:settings). */
@@ -40,4 +41,17 @@ public interface SettingsStore {
     public val onboardingComplete: Flow<Boolean>
 
     public suspend fun setOnboardingComplete(complete: Boolean)
+
+    /**
+     * Keep the session to the paired PC alive in the background (ADR-036). On by default, so it
+     * takes effect from the first pairing; it only runs while a PC is paired.
+     */
+    public val runInBackground: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setRunInBackground(enabled: Boolean) {}
+
+    /** Start the background connection after the phone boots (ADR-036). Off by default. */
+    public val startOnBoot: Flow<Boolean> get() = flowOf(false)
+
+    public suspend fun setStartOnBoot(enabled: Boolean) {}
 }

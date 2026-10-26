@@ -1,7 +1,10 @@
 package com.veyro
 
+import android.app.Activity
 import android.app.Application
 import android.content.pm.ApplicationInfo
+import android.os.Bundle
+import com.veyro.core.service.BackgroundHost
 import com.veyro.di.VeyroContainer
 
 /**
@@ -15,10 +18,16 @@ import com.veyro.di.VeyroContainer
  * mirror's observer, which only waits on the setting: with mirroring off (the default) it never
  * reaches the connection layer, and with it on it only uses a session something else opened
  * (ADR-025).
+ *
+ * Background running (ADR-036) starts from the first visible Activity, from boot, or from the
+ * service's own sticky restart, never from here: a process started for the notification listener
+ * must not try to start a foreground service, which Android 12+ refuses from the background.
  */
-public class VeyroApplication : Application() {
+public class VeyroApplication : Application(), BackgroundHost.Provider {
 
     public val container: VeyroContainer by lazy { VeyroContainer(this) }
+
+    override val backgroundHost: BackgroundHost get() = container.backgroundController
 
     override fun onCreate() {
         super.onCreate()
@@ -35,5 +44,31 @@ public class VeyroApplication : Application() {
         container.callBridge.start()
         // ADR-034. Same rule, behind "Photos on PC".
         container.photoBridge.start()
+        registerActivityLifecycleCallbacks(VisibilityTracker())
+    }
+
+    /** Counts started Activities, so the offer notification knows when the prompt cannot be seen. */
+    private inner class VisibilityTracker : ActivityLifecycleCallbacks {
+        private var started = 0
+
+        override fun onActivityStarted(activity: Activity) {
+            started++
+            if (started == 1) {
+                container.appVisible.value = true
+                container.backgroundController.onAppVisible()
+                container.offerNotifier.start()
+            }
+        }
+
+        override fun onActivityStopped(activity: Activity) {
+            started = (started - 1).coerceAtLeast(0)
+            if (started == 0) container.appVisible.value = false
+        }
+
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+        override fun onActivityResumed(activity: Activity) = Unit
+        override fun onActivityPaused(activity: Activity) = Unit
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+        override fun onActivityDestroyed(activity: Activity) = Unit
     }
 }

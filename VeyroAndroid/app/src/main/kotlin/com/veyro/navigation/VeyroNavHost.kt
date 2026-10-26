@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,7 @@ import com.veyro.ui.send.SendScreen
 import com.veyro.ui.send.SendViewModel
 import com.veyro.ui.settings.SettingsViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The root navigation graph: the tabbed [MainScreen] plus every pushed screen, each with its own
@@ -72,12 +74,22 @@ public fun VeyroNavHost(
     onRequestMessagingPermissions: () -> Unit = {},
     /** The photo read permission, requested when "Photos on PC" is turned on (ADR-034). */
     onRequestPhotosPermission: () -> Unit = {},
+    /** A device to open Send for, from the background notification (ADR-036). */
+    sendRequest: StateFlow<String?> = MutableStateFlow(null),
+    onSendRequestHandled: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
 
     val homeViewModel = viewModel<HomeViewModel>(factory = viewModelFactory)
     val devicesViewModel = viewModel<DevicesViewModel>(factory = viewModelFactory)
+
+    val pendingSend by sendRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingSend) {
+        val deviceId = pendingSend ?: return@LaunchedEffect
+        navController.navigate(VeyroDestination.Send(deviceId))
+        onSendRequestHandled()
+    }
 
     var showTransferDialog by remember { mutableStateOf(false) }
     val activeTransfer by (transferCoordinator?.activeTransfer ?: remember { MutableStateFlow(null) })

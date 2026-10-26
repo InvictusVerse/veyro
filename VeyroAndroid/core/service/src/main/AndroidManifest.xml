@@ -5,26 +5,42 @@
          about them. Manifest merging pulls these into :app. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- The background connection to the paired PC (ADR-036). Its API 34 runtime prerequisite is
+         met by CHANGE_WIFI_MULTICAST_STATE below, a normal permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Only acts when the user turned on "Start on boot" (off by default). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application>
         <!--
-          dataSync, not connectedDevice: this is a bulk data transfer over IP, which is what
-          dataSync describes. connectedDevice is for companion-device interaction (Bluetooth,
-          Wear), and claiming it for a Wi-Fi file transfer would be the wrong declaration even
-          though Android would accept it.
+          dataSync, not connectedDevice: this is a bulk data transfer over IP with a bounded
+          lifetime, which is what dataSync describes.
         -->
         <service
             android:name="com.veyro.core.service.VeyroTransferService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!--
+          connectedDevice: keeps the link to the paired PC open for as long as the user wants
+          (ADR-036). dataSync would be capped at 6 h/day on Android 15 and could not start at boot.
+        -->
         <service
-            android:name="com.veyro.core.service.VeyroDiscoverableService"
+            android:name="com.veyro.core.service.VeyroBackgroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- Exported only because the system sends BOOT_COMPLETED; it does nothing else. -->
+        <receiver
+            android:name="com.veyro.core.service.VeyroBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

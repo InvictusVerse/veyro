@@ -298,7 +298,7 @@ class TransferTest {
             resolveFile = { srcFile },
         )
 
-        assertEquals(TransferRunner.SendOutcome.Declined, outcome)
+        assertEquals(TransferRunner.SendOutcome.Declined(DeclineReason.DECLINED), outcome)
         receiverJob.join()
 
         assertFalse(File(destDir, "reject.txt").exists())

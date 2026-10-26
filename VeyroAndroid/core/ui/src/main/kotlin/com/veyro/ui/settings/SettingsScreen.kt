@@ -2,6 +2,11 @@
 // Modified for Veyro.
 package com.veyro.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -135,6 +140,44 @@ public fun SettingsScreen(
             )
         }
 
+        item { SectionLabel("Background") }
+
+        item {
+            SwitchPreferenceWidget(
+                title = "Run in background",
+                subtitle = "Keeps the connection to your PC open after you close Veyro, so " +
+                    "notifications, photos and files keep working. A silent notification shows while it runs.",
+                icon = VeyroIcons.Sync,
+                checked = state.runInBackground,
+                onCheckedChanged = viewModel::setRunInBackground,
+            )
+        }
+
+        item {
+            SwitchPreferenceWidget(
+                title = "Start on boot",
+                subtitle = "Reconnects to your PC after the phone restarts, without opening Veyro.",
+                icon = VeyroIcons.RestartAlt,
+                checked = state.startOnBoot && state.runInBackground,
+                enabled = state.runInBackground,
+                onCheckedChanged = viewModel::setStartOnBoot,
+            )
+        }
+
+        item {
+            TextPreferenceWidget(
+                title = if (state.batteryOptimizationIgnored) "Battery optimisation is off for Veyro" else "Stay connected with the screen off",
+                subtitle = if (state.batteryOptimizationIgnored) {
+                    "Android lets Veyro keep the PC connection open. Tap to review it."
+                } else {
+                    "Some phones close background connections to save battery. Tap to let Veyro " +
+                        "keep the PC connection open. Veyro does not poll; it only reconnects when the network changes."
+                },
+                icon = if (state.batteryOptimizationIgnored) VeyroIcons.Check else VeyroIcons.Battery,
+                onPreferenceClick = { requestBatteryExemption(context, alreadyExempt = state.batteryOptimizationIgnored) },
+            )
+        }
+
         item { SectionLabel("Permissions") }
 
         item { NotificationAccessRow(granted = state.notificationAccessGranted) }
@@ -240,6 +283,27 @@ public fun SettingsScreen(
                 TextButton(onClick = { showResetConfirm = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+/**
+ * Asks Android to exempt Veyro from battery optimisation, only from this explicit row (ADR-036).
+ * Already exempt, or on a ROM without the direct request, it opens the system list instead.
+ */
+private fun requestBatteryExemption(context: Context, alreadyExempt: Boolean) {
+    val direct = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${context.packageName}"),
+    )
+    val list = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    for (intent in if (alreadyExempt) listOf(list) else listOf(direct, list)) {
+        try {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: ActivityNotFoundException) {
+            // Try the next one.
+        } catch (_: SecurityException) {
+        }
     }
 }
 

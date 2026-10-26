@@ -36,8 +36,13 @@ public class VeyroViewModelFactory(
             connectedPeerId = container.connectedPeerId,
             sendMediaCommand = { container.mediaMirror.sendMediaCommand(it) },
             trustedPeers = container.trustStore.peers,
-            connectPeer = { id, name, endpoints -> container.connectionManager.connect(id, name, endpoints) },
-            disconnectPeer = { container.connectionManager.disconnect() },
+            // Through the background controller (ADR-036), so a Disconnect here is not undone by
+            // the background reconnect a few seconds later, and a Connect resumes it.
+            connectPeer = { id, name, endpoints ->
+                container.backgroundController.onUserConnect()
+                container.connectionManager.connect(id, name, endpoints)
+            },
+            disconnectPeer = { container.backgroundController.onUserDisconnect() },
         ) as T
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) -> DevicesViewModel(
@@ -83,6 +88,8 @@ public class VeyroViewModelFactory(
             policyAccessGranted = container::isPolicyAccessGranted,
             missingMessagingPermissions = container::missingMessagingPermissions,
             photosPermissionGranted = container::isPhotosPermissionGranted,
+            batteryOptimizationIgnored = container::isIgnoringBatteryOptimizations,
+            onBackgroundSettingChanged = { container.backgroundController.onSettingChanged() },
         ) as T
 
         else -> error("Unknown ViewModel ${modelClass.name}; add it to VeyroViewModelFactory")

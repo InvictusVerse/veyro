@@ -19,6 +19,8 @@ import com.veyro.core.transfer.PartFile
 import com.veyro.core.transfer.RollingSpeedCalculator
 import com.veyro.core.transfer.StoragePublishResult
 import com.veyro.core.transfer.TransferStoragePublisher
+import com.veyro.core.protocol.tcp.TcpFrame
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.Job
@@ -264,6 +266,36 @@ public class TransferRunner(
         /** Set when this send answers a peer request (`photoFetch`, ADR-034); goes on the offer. */
         requestId: String? = null,
         resolveFile: (TransferItem) -> File,
+    ): SendOutcome {
+        val outcome = try {
+            sendOffered(session, items, senderName, transferId, onProgress, requestId, resolveFile)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            tellPeerFailed(session, transferId, DeclineReason.ERROR.wire)
+            throw t
+        }
+        // Every failure after the offer went out ends with a cancel naming the transfer, so the
+        // receiver stops waiting at once instead of at its own timeout (the PC's photo viewer
+        // spun until then).
+        if (outcome is SendOutcome.Failed) tellPeerFailed(session, transferId, outcome.cancelReason)
+        return outcome
+    }
+
+    private suspend fun tellPeerFailed(session: PeerConnection, transferId: String, reason: String) {
+        if (!session.isConnected) return
+        runCatching { session.send(LinkMessage.Cancel(transferId, reason)) }
+            .onFailure { VeyroLog.w(TAG) { "[$transferId] Could not send cancel after failure (${it.javaClass.simpleName})" } }
+    }
+
+    private suspend fun sendOffered(
+        session: PeerConnection,
+        items: List<TransferItem>,
+        senderName: String,
+        transferId: String,
+        onProgress: ((bytesSent: Long, totalBytes: Long, item: TransferItem, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)?,
+        requestId: String?,
+        resolveFile: (TransferItem) -> File,
     ): SendOutcome = withContext(dispatchers.io) {
         cancelled = false
         val files = items.filterNot { it.isDirectory }
@@ -310,7 +342,7 @@ public class TransferRunner(
                 files.firstOrNull()?.let { firstItem ->
                     onProgress?.invoke(0L, totalBytes, firstItem, TransferStage.FAILED, 0L, null)
                 }
-                return@withContext SendOutcome.Failed("No answer from the other device")
+                return@withContext SendOutcome.Failed("No answer from the other device", DeclineReason.TIMEOUT.wire)
             }
 
             VeyroLog.i(TAG) {
@@ -318,11 +350,12 @@ public class TransferRunner(
             }
 
             if (!decision.accept) {
-                VeyroLog.w(TAG) { "[$transferId] Receiver declined transfer offer: ${decision.reason}" }
+                val why = DeclineReason.fromWire(decision.reason)
+                VeyroLog.w(TAG) { "[$transferId] Receiver declined transfer offer: ${decision.reason} ($why)" }
                 files.firstOrNull()?.let { firstItem ->
                     onProgress?.invoke(0L, totalBytes, firstItem, TransferStage.FAILED, 0L, null)
                 }
-                return@withContext SendOutcome.Declined
+                return@withContext SendOutcome.Declined(why)
             }
 
             val targetPort = decision.tcpPort ?: run {
@@ -429,6 +462,19 @@ public class TransferRunner(
                 }
             }
 
+            // The receiver may answer on the data socket (Windows always does, Android does both):
+            // an ItemResult or Cancel there lands in the same mailbox the WebSocket fills, and
+            // whichever arrives first wins.
+            tcpSender.startInboundReader(this) { frame ->
+                when (frame) {
+                    is TcpFrame.ItemResult -> mailbox.deliverItemResult(
+                        LinkMessage.ItemResult(transferId, frame.itemIndex, frame.ok, frame.errorMessage),
+                    )
+                    is TcpFrame.Cancel -> mailbox.deliverCancel(LinkMessage.Cancel(transferId, frame.reason))
+                    else -> Unit
+                }
+            }
+
             // 4. Stream items over raw TCP
             val speedCalculator = RollingSpeedCalculator()
             val results = mutableListOf<ItemResult>()
@@ -485,7 +531,7 @@ public class TransferRunner(
 
                     val chunkCount = ChunkMath.chunkCount(item.sizeBytes, CHUNK_SIZE)
                     VeyroLog.i(TAG) {
-                        "[$transferId] Streaming item #${item.index} (${item.relativePath}, ${item.sizeBytes} bytes, $chunkCount chunks) via raw TCP ($activeRoute)"
+                        "[$transferId] Streaming item #${item.index} (${item.sizeBytes} bytes, $chunkCount chunks) via raw TCP ($activeRoute)"
                     }
 
                     // Send ItemBegin over raw TCP and WebSocket
@@ -500,9 +546,20 @@ public class TransferRunner(
                         ),
                     )
 
-                    // Resume support
-                    val alreadyHave = decision.resume?.get(item.index)?.toSet() ?: emptySet()
-                    val needed = (0 until chunkCount).filterNot { it in alreadyHave }
+                    // Resume: `decision.resume` lists, per item, the chunks the receiver still
+                    // NEEDS (LinkMessages.TransferDecision; both receivers fill it with their
+                    // missing chunks). This used to be read as "already have", which sent exactly
+                    // the chunks a resuming receiver did not ask for.
+                    val needed = decision.resume?.get(item.index)
+                        ?.filter { it in 0 until chunkCount }
+                        ?.distinct()
+                        ?.sorted()
+                        ?: (0 until chunkCount).toList()
+                    if (needed.size < chunkCount) {
+                        val neededSet = needed.toHashSet()
+                        sent += (0 until chunkCount).filterNot { it in neededSet }
+                            .sumOf { ChunkMath.lengthOf(it, item.sizeBytes, CHUNK_SIZE).toLong() }
+                    }
 
                     // Open file handle once per item for high performance chunk streaming
                     RandomAccessFile(source, "r").use { sourceRaf ->
@@ -639,13 +696,15 @@ public class TransferRunner(
         session: PeerConnection,
         destinationDir: File,
         authorize: suspend (LinkMessage.TransferOffer) -> Boolean,
-    ): ReceiveResult = receive(session, destinationDir, null, authorize, null)
+    ): ReceiveResult = receive(session = session, destinationDir = destinationDir, publisher = null, authorize = authorize, onProgress = null)
 
     public suspend fun receive(
         session: PeerConnection,
         destinationDir: File,
         publisher: TransferStoragePublisher? = null,
         authorize: suspend (LinkMessage.TransferOffer) -> Boolean = { true },
+        /** Wire reason for a refused offer, by transfer id; asked only after [authorize] said no. */
+        declineReason: (transferId: String) -> String = { DeclineReason.DECLINED.wire },
         onProgress: ((bytesReceived: Long, totalBytes: Long, item: TransferItem?, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)? = null,
     ): ReceiveResult = withContext(dispatchers.io) {
         val offerEnvelope = session.receiveOffer()
@@ -659,12 +718,13 @@ public class TransferRunner(
 
         val allowed = authorize(offer)
         if (!allowed) {
-            VeyroLog.w(TAG) { "[$transferId] Receiver declined offer from ${offer.senderName}" }
+            val reason = declineReason(transferId)
+            VeyroLog.w(TAG) { "[$transferId] Receiver declined offer from ${offer.senderName} (reason=$reason)" }
             session.send(
                 LinkMessage.TransferDecision(
                     transferId = transferId,
                     accept = false,
-                    reason = "User declined",
+                    reason = reason,
                 ),
             )
             session.closeMailbox(transferId)
@@ -672,8 +732,18 @@ public class TransferRunner(
             return@withContext ReceiveResult.EMPTY
         }
 
-        val hasTcpRoute = offer.preferredRoutes.any {
+        // A route list naming neither known route (a peer that wrote "LANTCP", say, or an old one
+        // that sent none) still gets a complete LAN_TCP endpoint: an accept without host, port and
+        // token is unusable to a VTC1 sender ("Peer accepted without a complete VTC1 endpoint").
+        // Only if such a sender then streams base64 chunks on the WebSocket does this receiver
+        // switch to the legacy chunk path; a Windows peer never does.
+        val knownRoute = offer.preferredRoutes.any {
             it == TransferRoute.WIFI_DIRECT.name || it == TransferRoute.LAN_TCP.name
+        }
+        if (!knownRoute) {
+            VeyroLog.w(TAG) {
+                "[$transferId] Offer names no known route (preferredRoutes=${offer.preferredRoutes}); offering LAN_TCP with a full endpoint"
+            }
         }
 
         // Check resume chunks
@@ -694,27 +764,6 @@ public class TransferRunner(
         }
 
         val startedAt = clock()
-
-        if (!hasTcpRoute) {
-            VeyroLog.i(TAG) { "[$transferId] Peer offered WebSocket-only transfer (preferredRoutes=${offer.preferredRoutes})" }
-            session.send(
-                LinkMessage.TransferDecision(
-                    transferId = transferId,
-                    accept = true,
-                    resume = resume.takeIf { it.isNotEmpty() },
-                    route = TransferRoute.LAN_TCP.name,
-                ),
-            )
-            return@withContext receiveOverWebSocket(
-                session = session,
-                mailbox = mailbox,
-                offer = offer,
-                destinationDir = destinationDir,
-                publisher = publisher,
-                startedAt = startedAt,
-                onProgress = onProgress,
-            )
-        }
 
         destinationDir.mkdirs()
         val tcpReceiver = TcpDataReceiver(dispatchers)
@@ -756,11 +805,12 @@ public class TransferRunner(
                     "[$transferId] [route-neg:failed] Receiver cannot determine a reachable LAN IPv4 address (session.localHost=${session.localHost}, session.remoteHost=${session.remoteHost}). Failing route negotiation."
                 }
                 tcpReceiver.close()
+                // Never an accept without an endpoint: say why instead (04-PROTOCOL.md 6.4).
                 session.send(
                     LinkMessage.TransferDecision(
                         transferId = transferId,
                         accept = false,
-                        reason = "Receiver has no reachable LAN IPv4 address",
+                        reason = DeclineReason.ERROR.wire,
                     ),
                 )
                 session.closeMailbox(transferId)
@@ -812,10 +862,16 @@ public class TransferRunner(
             destinationStorageType = if (publisher != null) "MEDIASTORE" else "APP_INTERNAL",
         )
 
+        // Legacy chunk mode, only for an offer without a known route: the per-item WebSocket
+        // messages seen so far, handed to the WebSocket receiver if the sender starts streaming
+        // base64 chunks there instead of dialling the endpoint.
+        val legacyBacklog: MutableList<LinkMessage>? = if (knownRoute) null else mutableListOf()
+        val switchedToLegacy = CompletableDeferred<Unit>()
+
         // Monitor control messages (Cancel and TransferEnd) on WebSocket in background
         val controlCollector = launch {
             while (session.isConnected) {
-                val msg = mailbox.payloadChannel.receiveCatching().getOrNull()
+                val msg = mailbox.payloadChannel.receiveCatching().getOrNull() ?: break
                 when (msg) {
                     is LinkMessage.Cancel -> {
                         VeyroLog.w(TAG) { "[$transferId] Cancel received on WebSocket: ${msg.reason}" }
@@ -825,6 +881,14 @@ public class TransferRunner(
                     is LinkMessage.TransferEnd -> {
                         VeyroLog.i(TAG) { "[$transferId] TransferEnd received on WebSocket (completed=${msg.completed})" }
                         tcpReceiver.notifyTransferEnd(msg.completed)
+                        break
+                    }
+                    is LinkMessage.ItemBegin, is LinkMessage.ItemEnd -> legacyBacklog?.add(msg)
+                    is LinkMessage.Chunk -> if (legacyBacklog != null) {
+                        VeyroLog.w(TAG) { "[$transferId] Sender streams chunks on the WebSocket; switching to the legacy chunk path" }
+                        legacyBacklog.add(msg)
+                        switchedToLegacy.complete(Unit)
+                        tcpReceiver.closeSocketImmediately()
                         break
                     }
                     else -> Unit
@@ -884,6 +948,19 @@ public class TransferRunner(
 
             controlCollector.cancel()
 
+            if (switchedToLegacy.isCompleted && legacyBacklog != null) {
+                return@withContext receiveOverWebSocket(
+                    session = session,
+                    mailbox = mailbox,
+                    offer = offer,
+                    destinationDir = destinationDir,
+                    publisher = publisher,
+                    startedAt = startedAt,
+                    onProgress = onProgress,
+                    backlog = legacyBacklog.toList(),
+                )
+            }
+
             when (tcpOutcome) {
                 is TcpReceiveOutcome.Completed -> {
                     val allOk = tcpOutcome.results.isNotEmpty() && tcpOutcome.results.all { it.isVerified }
@@ -941,6 +1018,8 @@ public class TransferRunner(
         publisher: TransferStoragePublisher?,
         startedAt: Long,
         onProgress: ((bytesReceived: Long, totalBytes: Long, item: TransferItem?, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)?,
+        /** Messages already taken off the mailbox before the switch to this path, in order. */
+        backlog: List<LinkMessage> = emptyList(),
     ): ReceiveResult {
         val transferId = offer.transferId
         val speedCalculator = RollingSpeedCalculator()
@@ -1059,6 +1138,10 @@ public class TransferRunner(
 
         try {
             var isDone = false
+            for (msg in backlog) {
+                if (isDone) break
+                isDone = processMessage(msg)
+            }
             while (!isDone && session.isConnected) {
                 val res = mailbox.payloadChannel.receiveCatching()
                 val msg = res.getOrNull()
@@ -1122,9 +1205,18 @@ public class TransferRunner(
             val results: List<ItemResult>,
             val route: TransferRoute = TransferRoute.LAN_TCP,
         ) : SendOutcome
-        public data object Declined : SendOutcome
+        /** The receiver said no; [reason] is its wire reason, mapped (04-PROTOCOL.md 6.4). */
+        public data class Declined(val reason: DeclineReason = DeclineReason.DECLINED) : SendOutcome
         public data object Cancelled : SendOutcome
-        public data class Failed(val reason: String) : SendOutcome
+
+        /**
+         * The send failed after the offer went out. [cancelReason] is the `cancel` reason sent to
+         * the receiver so it stops waiting: `timeout` when it never answered, `error` otherwise.
+         */
+        public data class Failed(
+            val reason: String,
+            val cancelReason: String = DeclineReason.ERROR.wire,
+        ) : SendOutcome
     }
 }
 

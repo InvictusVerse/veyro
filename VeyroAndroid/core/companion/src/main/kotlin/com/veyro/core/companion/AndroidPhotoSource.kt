@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Size
+import android.webkit.MimeTypeMap
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.link.LinkMessage
@@ -152,9 +153,11 @@ public class AndroidPhotoSource(
     }
 
     override suspend fun original(id: Long): OutgoingFile? = read(null) {
-        query(arrayOf(ID, NAME, SIZE, MODIFIED), "$SCOPE AND $ID = ?", arrayOf(id.toString()), null)?.use { c ->
+        query(arrayOf(ID, NAME, SIZE, MODIFIED, MIME), "$SCOPE AND $ID = ?", arrayOf(id.toString()), null)?.use { c ->
             if (!c.moveToFirst()) return@use null
-            val name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "photo-$id.jpg"
+            // The PC picks the viewer from the extension (there is no MIME on the wire), so a
+            // display name without one gets it from MIME_TYPE.
+            val name = withExtension(c.getString(1)?.takeIf { it.isNotBlank() } ?: "photo-$id", c.getString(4))
             val bytes = if (c.isNull(2)) -1L else c.getLong(2)
             val modified = if (c.isNull(3)) 0L else c.getLong(3) * 1000L
             val uri = ContentUris.withAppendedId(collection, id)
@@ -167,6 +170,20 @@ public class AndroidPhotoSource(
                 },
             )
         }
+    }
+
+    private fun withExtension(name: String, mime: String?): String {
+        if (name.substringAfterLast('/').contains('.')) return name
+        val extension = when (mime?.lowercase()) {
+            "image/jpeg", null -> "jpg"
+            "image/png" -> "png"
+            "image/heic" -> "heic"
+            "image/heif" -> "heif"
+            "image/webp" -> "webp"
+            "image/gif" -> "gif"
+            else -> MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
+        }
+        return "$name.$extension"
     }
 
     private fun inScope(id: Long): Boolean =
