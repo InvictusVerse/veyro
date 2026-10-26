@@ -1,3 +1,7 @@
+<!--
+    Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/MainPage.xaml, GPL-3.0.
+    Modified for Veyro: Veyro view models, Transfers tab and banner, honest empty states.
+-->
 <Page
     x:Class="Veyro.Views.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -5,28 +9,32 @@
     xmlns:converters="using:Veyro.Converters"
     xmlns:models="using:Veyro.Data.Models"
     xmlns:userControls="using:Veyro.UserControls"
-    Background="Transparent">
+    xmlns:viewModels="using:Veyro.ViewModels"
+    x:Name="PageRoot"
+    Background="{ThemeResource App.PageBackgroundBrush}">
 
     <Page.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <converters:BooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" Inverse="True" />
-        <converters:EmptyObjectToVisibilityConverter x:Key="EmptyObjectToVisibilityConverter" />
-        <converters:EmptyObjectToVisibilityConverter x:Key="InverseEmptyObjectToVisibilityConverter" Inverse="True" />
     </Page.Resources>
 
     <Grid
         AllowDrop="True"
         DragOver="Grid_DragOver"
         Drop="Page_Drop">
-        <!-- Control Center sidebar + main content NavigationView -->
         <NavigationView
             x:Name="SideBar"
             CompactPaneLength="48"
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
             IsSettingsVisible="False"
-            OpenPaneLength="350"
-            PaneDisplayMode="Left">
+            LayoutUpdated="SideBar_LayoutUpdated"
+            OpenPaneLength="360"
+            PaneClosed="SideBar_PaneClosed"
+            PaneClosing="SideBar_PaneClosing"
+            PaneDisplayMode="Left"
+            PaneOpening="SideBar_PaneOpening"
+            SizeChanged="SideBar_SizeChanged">
             <NavigationView.Resources>
                 <Thickness x:Key="NavigationViewContentGridBorderThickness">0</Thickness>
                 <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
@@ -35,123 +43,242 @@
             </NavigationView.Resources>
 
             <NavigationView.PaneCustomContent>
-                <Grid Padding="12,36,12,12" VerticalAlignment="Stretch" RowSpacing="12">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <Grid
+                    x:Name="PaneCustomRoot"
+                    Padding="0,32,0,0"
+                    VerticalAlignment="Stretch">
 
-                    <!-- Connected / Paired Device Control Center -->
-                    <userControls:DeviceControlCenter
-                        Grid.Row="0"
-                        Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-                    <!-- Media Playback Card -->
-                    <Border
-                        Grid.Row="1"
-                        Padding="12"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                        <userControls:MediaSessionsControl />
-                    </Border>
-
-                    <!-- Notifications Feed -->
-                    <userControls:NotificationsControl
-                        Grid.Row="2"
-                        Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-                    <!-- No Device Paired / Available Devices Discovery View -->
+                    <!--  Compact rail (narrow window)  -->
                     <Grid
-                        Grid.Row="0"
-                        Grid.RowSpan="3"
-                        Margin="0,8,0,0"
-                        RowSpacing="12"
-                        Visibility="{x:Bind ViewModel.HasNoActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        x:Name="CompactPaneContent"
+                        Padding="0,4,0,8"
+                        RowSpacing="8"
+                        Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Button
+                            Grid.Row="0"
+                            Width="40"
+                            Height="36"
+                            Padding="0"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Open side pane"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="OpenSideBar_Click"
+                            ToolTipService.ToolTip="Open side pane">
+                            <FontIcon Glyph="&#xE76C;" />
+                        </Button>
+                        <Button
+                            Grid.Row="1"
+                            Width="36"
+                            Height="52"
+                            Padding="4"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="OpenSideBar_Click"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="{x:Bind ViewModel.Device.ConnectionStatusText, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Viewbox Width="24" Height="44">
+                                <Grid Width="54" Height="100" CornerRadius="8">
+                                    <Rectangle
+                                        Opacity="0.5"
+                                        RadiusX="4"
+                                        RadiusY="4"
+                                        Stroke="Black"
+                                        StrokeThickness="2" />
+                                    <Border
+                                        Margin="3"
+                                        CornerRadius="4"
+                                        Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Offset="0" Color="#FF0070FF" />
+                                                <GradientStop Offset="1" Color="#FF2E90FF" />
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                </Grid>
+                            </Viewbox>
+                        </Button>
+                        <ScrollViewer
+                            Grid.Row="2"
+                            HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Auto">
+                            <ItemsRepeater ItemsSource="{x:Bind NotificationsViewModel.Notifications, Mode=OneWay}">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Orientation="Vertical" Spacing="4" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:NotificationItemViewModel">
+                                        <Button
+                                            Width="36"
+                                            Height="36"
+                                            Padding="4"
+                                            HorizontalAlignment="Center"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Click="OpenSideBar_Click"
+                                            CornerRadius="6"
+                                            ToolTipService.ToolTip="{x:Bind AppName, Mode=OneWay}">
+                                            <Grid>
+                                                <Image
+                                                    Width="28"
+                                                    Height="28"
+                                                    Source="{x:Bind Icon, Mode=OneWay}"
+                                                    Visibility="{x:Bind HasIcon, Mode=OneWay}" />
+                                                <FontIcon
+                                                    FontSize="14"
+                                                    Glyph="&#xE91C;"
+                                                    Visibility="{x:Bind HasNoIcon, Mode=OneWay}" />
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!--  Expanded pane  -->
+                    <Grid
+                        x:Name="ExpandedPaneContent"
+                        Margin="12,0,12,12"
+                        VerticalAlignment="Stretch"
+                        RowSpacing="8">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <Grid Grid.Row="0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                        <userControls:DeviceControlCenter
+                            Grid.Row="0"
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <StackPanel Grid.Row="1" Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Rectangle Height="1" Fill="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                            <!--  Media card: only while the phone reports a session  -->
+                            <Border
+                                Margin="0,8,0,0"
+                                Padding="12"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Visibility="{x:Bind MediaViewModel.HasSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <userControls:MediaSessionsControl />
+                            </Border>
+                        </StackPanel>
+
+                        <userControls:NotificationsControl
+                            Grid.Row="2"
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <!--  No phone paired: pair one, or pick a phone discovery sees  -->
+                        <Grid
+                            Grid.Row="0"
+                            Grid.RowSpan="3"
+                            Margin="0,20,0,0"
+                            RowSpacing="12"
+                            Visibility="{x:Bind ViewModel.HasNoActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
                             <TextBlock
-                                Grid.Column="0"
-                                VerticalAlignment="Center"
+                                Grid.Row="0"
                                 FontSize="18"
                                 FontWeight="SemiBold"
-                                Text="Available Devices" />
-                            <Button
-                                Grid.Column="1"
-                                Click="RefreshDiscovery_Click"
-                                ToolTipService.ToolTip="Scan LAN (mDNS + UDP)">
-                                <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                            </Button>
+                                Text="No phone paired" />
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Install Veyro on your Android phone, then pair it with this PC."
+                                    TextWrapping="Wrap" />
+                                <Button Click="PairPhone_Click" Style="{StaticResource AccentButtonStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon FontSize="14" Glyph="&#xED14;" />
+                                        <TextBlock Text="Pair a phone" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+
+                            <TextBlock
+                                Grid.Row="2"
+                                Margin="0,12,0,0"
+                                FontWeight="SemiBold"
+                                Text="Available devices" />
+
+                            <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="8">
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.DiscoveredDevices, Mode=OneWay}">
+                                        <ItemsRepeater.Layout>
+                                            <StackLayout Orientation="Vertical" Spacing="8" />
+                                        </ItemsRepeater.Layout>
+                                        <ItemsRepeater.ItemTemplate>
+                                            <DataTemplate x:DataType="models:DiscoveredDeviceUiModel">
+                                                <Button
+                                                    Padding="12"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Left"
+                                                    Click="DiscoveredDevice_Click"
+                                                    Tag="{x:Bind DeviceId}">
+                                                    <Grid ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
+                                                        <StackPanel Grid.Column="1" Spacing="4">
+                                                            <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" />
+                                                            <TextBlock
+                                                                FontSize="12"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                Text="{x:Bind VerificationKey}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
+                                    <TextBlock
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="No phone with Veyro open is visible on this network. Keep both devices on the same Wi-Fi or hotspot."
+                                        TextWrapping="Wrap"
+                                        Visibility="{x:Bind ViewModel.HasNoDiscoveredDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                </StackPanel>
+                            </ScrollViewer>
                         </Grid>
 
-                        <Border
-                            Grid.Row="1"
-                            Padding="12"
-                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8">
-                            <StackPanel Spacing="4">
-                                <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="This PC Fingerprint" />
-                                <TextBlock
-                                    FontFamily="Consolas"
-                                    FontWeight="SemiBold"
-                                    Text="{x:Bind GeneralViewModel.Fingerprint, Mode=OneWay}" />
-                            </StackPanel>
-                        </Border>
-
-                        <ListView
-                            Grid.Row="2"
-                            IsItemClickEnabled="True"
-                            ItemClick="DiscoveredDevice_ItemClick"
-                            ItemsSource="{x:Bind ViewModel.DiscoveredDevices, Mode=OneWay}"
-                            SelectionMode="None">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="models:DiscoveredDeviceUiModel">
-                                    <Grid Padding="8" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <FontIcon Grid.Column="0" Glyph="&#xE8EA;" />
-                                        <StackPanel Grid.Column="1" Spacing="2">
-                                            <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" />
-                                            <TextBlock
-                                                FontSize="12"
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Text="{x:Bind VerificationKey}" />
-                                        </StackPanel>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-
-                        <TextBlock
-                            Grid.Row="2"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            Margin="16"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="No nearby Veyro devices found. Keep both devices on the same Wi-Fi or hotspot, then scan again."
-                            TextAlignment="Center"
-                            Visibility="{x:Bind ViewModel.HasNoDiscoveredDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <Button
+                            x:Name="CollapsePaneButton"
+                            Grid.Row="0"
+                            Width="40"
+                            Height="32"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            AutomationProperties.Name="Close side pane"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="CloseSideBar_Click"
+                            ToolTipService.ToolTip="Close side pane"
+                            Visibility="Collapsed">
+                            <FontIcon Glyph="&#xE76B;" />
+                        </Button>
                     </Grid>
                 </Grid>
             </NavigationView.PaneCustomContent>
 
-            <!-- Right Content Area: Top Navigation Tabs + Active Transfer Banner + Frame -->
             <Grid Margin="0,32,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -169,23 +296,41 @@
                     Loaded="MainNavigationView_Loaded"
                     PaneDisplayMode="Top"
                     SelectionChanged="NavigationView_SelectionChanged">
+                    <NavigationView.Resources>
+                        <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+                    </NavigationView.Resources>
                     <NavigationView.MenuItems>
-                        <NavigationViewItem Content="Transfers" Tag="Transfers">
-                            <NavigationViewItem.Icon>
-                                <FontIcon Glyph="&#xE898;" />
-                            </NavigationViewItem.Icon>
-                        </NavigationViewItem>
-                        <NavigationViewItem Content="Messages" Tag="Messages">
-                            <NavigationViewItem.Icon>
-                                <FontIcon Glyph="&#xE8BD;" />
-                            </NavigationViewItem.Icon>
-                        </NavigationViewItem>
-                        <NavigationViewItem Content="Calls" Tag="Calls">
+                        <NavigationViewItem
+                            x:Name="CallsNavigationItem"
+                            Content="Calls"
+                            Tag="Calls"
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE717;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="Apps" Tag="Apps">
+                        <NavigationViewItem
+                            x:Name="MessagesNavigationItem"
+                            Content="Messages"
+                            Tag="Messages"
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE8BD;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem
+                            x:Name="TransfersNavigationItem"
+                            Content="Transfers"
+                            Tag="Transfers">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE898;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem
+                            x:Name="AppsNavigationItem"
+                            Content="Apps"
+                            Tag="Apps"
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xED35;" />
                             </NavigationViewItem.Icon>
@@ -193,7 +338,7 @@
                     </NavigationView.MenuItems>
                 </NavigationView>
 
-                <!-- Authoritative Single Active Transfer Banner -->
+                <!--  Single authoritative active-transfer banner  -->
                 <userControls:ActiveTransferBanner Grid.Row="1" />
 
                 <Frame

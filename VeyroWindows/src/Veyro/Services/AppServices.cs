@@ -1,3 +1,6 @@
+using Veyro.Core.Devices;
+using Veyro.Core.Diagnostics;
+
 namespace Veyro.Services;
 
 public sealed class AppThemeModeService : IAppThemeModeService
@@ -19,12 +22,21 @@ public sealed class AppThemeModeService : IAppThemeModeService
     }
 }
 
+/// <summary>
+/// The sidebar device switcher (multi-device). Paired phones come from the trust store only;
+/// <see cref="PairedDeviceUiModel.IsConnected"/> follows <see cref="IPeerSessionRegistry"/> live.
+/// Discovery (untrusted) only feeds the unpaired "available devices" list and the "seen on the
+/// network" hint. Selection rules live in <see cref="PairedDeviceDirectory"/> (tested in Core).
+/// </summary>
 public sealed class DeviceManagerService : IDeviceManager
 {
     private readonly ITrustStore _trustStore;
     private readonly IDiscoveryService _discovery;
+    private readonly IPeerSessionRegistry _sessions;
+    private readonly DispatcherQueue? _dispatcher;
     private readonly object _discoveryGate = new();
     private IReadOnlyList<PeerDevice> _latestDiscovered = [];
+    private IReadOnlyList<PairedDeviceEntry> _entries = [];
     private PairedDeviceUiModel? _activeDevice;
 
     public ObservableCollection<PairedDeviceUiModel> PairedDevices { get; } = [];
@@ -38,66 +50,123 @@ public sealed class DeviceManagerService : IDeviceManager
             if (!ReferenceEquals(_activeDevice, value))
             {
                 _activeDevice = value;
+                MarkActive();
                 ActiveDeviceChanged?.Invoke(_activeDevice);
             }
         }
     }
 
     public event Action<PairedDeviceUiModel?>? ActiveDeviceChanged;
+    public event Action<string>? ConnectionChanged;
+    public event Action? DiscoveryChanged;
 
-    public DeviceManagerService(ITrustStore trustStore, IDiscoveryService discovery)
+    public DeviceManagerService(ITrustStore trustStore, IDiscoveryService discovery, IPeerSessionRegistry sessions)
     {
         _trustStore = trustStore;
         _discovery = discovery;
+        _sessions = sessions;
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
         _discovery.PeersUpdated += peers =>
         {
             lock (_discoveryGate) _latestDiscovered = peers;
+            Post(SyncDiscovered);
         };
+        _sessions.SessionOpened += peerId => Post(() => OnConnectionChanged(peerId, opened: true));
+        _sessions.SessionClosed += peerId => Post(() => OnConnectionChanged(peerId, opened: false));
         ReloadPairedDevices();
     }
 
     public void ReloadPairedDevices()
     {
+        string? currentId = _activeDevice?.DeviceId;
+        _entries = PairedDeviceDirectory.Build(_trustStore.GetTrustedPeers(), _sessions.IsConnected);
+
         PairedDevices.Clear();
-        foreach (var trusted in _trustStore.GetTrustedPeers())
+        foreach (PairedDeviceEntry entry in _entries)
         {
-            byte[] pk = Convert.FromBase64String(trusted.PublicKeyBase64);
-            var uiModel = new PairedDeviceUiModel
+            PairedDevices.Add(new PairedDeviceUiModel
             {
-                DeviceId = trusted.DeviceId,
-                Name = trusted.DisplayName,
-                Fingerprint = DeviceId.FormatFingerprint(pk),
-                Platform = trusted.Platform,
-                IsConnected = false
-            };
-            uiModel.AudioStreams.Add(new AudioStreamModel("media", "Media", "\uE8D6", 70));
-            uiModel.AudioStreams.Add(new AudioStreamModel("ring", "Ring", "\uEA8F", 80));
-            uiModel.AudioStreams.Add(new AudioStreamModel("alarm", "Alarm", "\uE823", 90));
-            PairedDevices.Add(uiModel);
+                DeviceId = entry.DeviceId,
+                Name = entry.DisplayName,
+                Fingerprint = FingerprintOf(entry.PublicKeyBase64),
+                Platform = entry.Platform,
+                IsConnected = entry.IsConnected
+            });
         }
 
-        ActiveDevice = PairedDevices.FirstOrDefault();
+        // A rebuilt list holds new objects: always raise, so every page re-reads the phone.
+        _activeDevice = Find(PairedDeviceDirectory.SelectAfterReload(_entries, currentId));
+        MarkActive();
+        ActiveDeviceChanged?.Invoke(_activeDevice);
+        SyncDiscovered();
     }
 
-    public Task RefreshDiscoveryAsync()
+    public void SelectNext(int delta)
     {
-        return RefreshDiscoveryCoreAsync();
+        if (PairedDevices.Count < 2) return;
+        ActiveDevice = Find(PairedDeviceDirectory.Step(_entries, _activeDevice?.DeviceId, delta)) ?? ActiveDevice;
     }
 
+    public IReadOnlyList<string> GetSeenEndpoints(string deviceId)
+    {
+        PeerDevice? peer = FindDiscoveredPeer(deviceId);
+        return peer is null ? [] : peer.Endpoints.Select(endpoint => $"{endpoint.Host}:{endpoint.Port}").ToList();
+    }
+
+    public async Task RefreshDiscoveryAsync()
+    {
+        try
+        {
+            await _discovery.StartAsync().ConfigureAwait(true);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Discovery start failed", error);
+        }
+        lock (_discoveryGate) _latestDiscovered = _discovery.DiscoveredPeers;
+        Post(SyncDiscovered);
+    }
+
+    /// <summary>Discovery record for a paired phone, used to reach it for an outbound transfer. Untrusted.</summary>
     public PeerDevice? FindDiscoveredPeer(string deviceId)
     {
         lock (_discoveryGate)
             return _latestDiscovered.FirstOrDefault(peer => string.Equals(peer.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
     }
 
-    private async Task RefreshDiscoveryCoreAsync()
+    private void OnConnectionChanged(string peerId, bool opened)
     {
-        await _discovery.StartAsync().ConfigureAwait(true);
+        PairedDeviceUiModel? device = Find(peerId);
+        if (device is null)
+        {
+            // A session from a peer missing from the list (just paired): rebuild from trust.
+            if (opened && _trustStore.GetPeer(peerId) is not null) ReloadPairedDevices();
+            return;
+        }
+
+        bool connected = _sessions.IsConnected(peerId);
+        device.IsConnected = connected;
+        _entries = _entries
+            .Select(entry => string.Equals(entry.DeviceId, peerId, StringComparison.OrdinalIgnoreCase) ? entry with { IsConnected = connected } : entry)
+            .ToList();
+        ConnectionChanged?.Invoke(device.DeviceId);
+
+        if (opened)
+        {
+            PairedDeviceUiModel? follow = Find(PairedDeviceDirectory.SelectAfterSessionOpened(_entries, _activeDevice?.DeviceId, peerId));
+            if (follow is not null) ActiveDevice = follow;
+        }
+    }
+
+    private void SyncDiscovered()
+    {
         IReadOnlyList<PeerDevice> peers;
         lock (_discoveryGate) peers = _latestDiscovered;
         DiscoveredDevices.Clear();
-        foreach (var peer in peers)
+        foreach (PeerDevice peer in peers)
         {
+            // Paired phones are listed in the switcher; this list is for phones to pair.
+            if (Find(peer.DeviceId) is not null) continue;
             DiscoveredDevices.Add(new DiscoveredDeviceUiModel(
                 peer.DeviceId,
                 peer.DisplayName,
@@ -105,9 +174,37 @@ public sealed class DeviceManagerService : IDeviceManager
                 string.Join(", ", peer.Endpoints.Select(endpoint => $"{endpoint.Host}:{endpoint.Port}")),
                 peer.Platform));
         }
+        DiscoveryChanged?.Invoke();
+    }
+
+    private void MarkActive()
+    {
+        foreach (PairedDeviceUiModel device in PairedDevices) device.IsActive = ReferenceEquals(device, _activeDevice);
+    }
+
+    private PairedDeviceUiModel? Find(string? deviceId)
+        => deviceId is null
+            ? null
+            : PairedDevices.FirstOrDefault(device => string.Equals(device.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+
+    private static string FingerprintOf(string publicKeyBase64)
+    {
+        try { return DeviceId.FormatFingerprint(Convert.FromBase64String(publicKeyBase64)); }
+        catch (FormatException) { return string.Empty; }
+        catch (ArgumentException) { return string.Empty; }
+    }
+
+    private void Post(Action action)
+    {
+        if (_dispatcher is null || _dispatcher.HasThreadAccess) action();
+        else _dispatcher.TryEnqueue(() => action());
     }
 }
 
+/// <summary>
+/// Outbound file transfer to a paired phone over VTC1 (ADR-020/022). Progress, speed and the
+/// remaining time come only from bytes actually sent; history is the persisted store.
+/// </summary>
 public sealed class FileTransferService : IFileTransferService
 {
     private readonly ITransferHistoryStore _historyStore;
@@ -138,14 +235,19 @@ public sealed class FileTransferService : IFileTransferService
         }
     }
 
+    private static bool IsFinished(ActiveTransfer transfer)
+        => transfer.Stage is TransferStage.Completed or TransferStage.Failed or TransferStage.Cancelled;
+
     public async Task SendFilesAsync(PairedDeviceUiModel target, IReadOnlyList<string> filePaths)
     {
         if (filePaths.Count == 0) return;
+        if (ActiveTransfer is { } running && !IsFinished(running)) return; // one at a time, as the banner shows
 
         var items = filePaths
             .Where(File.Exists)
             .Select((p, idx) => new TransferItem(idx, Path.GetFileName(p), new FileInfo(p).Length, string.Empty))
             .ToList();
+        if (items.Count == 0) return;
 
         long totalBytes = items.Sum(i => i.SizeBytes);
         ActiveTransfer = new ActiveTransfer(
@@ -159,7 +261,7 @@ public sealed class FileTransferService : IFileTransferService
             TotalBytes: totalBytes,
             SpeedBytesPerSecond: 0,
             EstimatedRemaining: null,
-            CurrentFileName: items.FirstOrDefault()?.RelativePath,
+            CurrentFileName: items.Count == 1 ? items[0].RelativePath : $"{items.Count} files",
             Items: items);
 
         ActiveTransferChanged?.Invoke(ActiveTransfer);
@@ -170,26 +272,33 @@ public sealed class FileTransferService : IFileTransferService
             ActiveTransfer = ActiveTransfer with
             {
                 Stage = TransferStage.Failed,
-                ErrorMessage = peer is null ? "Peer is not currently discoverable." : "Peer is not paired."
+                ErrorMessage = trusted is null
+                    ? "This phone is not paired any more."
+                    : "The phone is not visible on the network. Open Veyro on the phone, keep both on the same Wi-Fi, then try again."
             };
             ActiveTransferChanged?.Invoke(ActiveTransfer);
+            await RecordAsync(ActiveTransfer, VerificationOutcome.Failed).ConfigureAwait(true);
             return;
         }
 
         _transferCancellation?.Cancel();
         _transferCancellation?.Dispose();
         _transferCancellation = new CancellationTokenSource();
+        var clock = Stopwatch.StartNew();
         try
         {
             ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Connecting };
             ActiveTransferChanged?.Invoke(ActiveTransfer);
             var progress = new Progress<long>(bytes =>
             {
-                if (ActiveTransfer is null) return;
+                if (ActiveTransfer is null || IsFinished(ActiveTransfer)) return;
+                long? rate = TransferProgressMath.AverageBytesPerSecond(bytes, clock.Elapsed);
                 ActiveTransfer = ActiveTransfer with
                 {
                     Stage = TransferStage.Transferring,
-                    BytesTransferred = bytes
+                    BytesTransferred = bytes,
+                    SpeedBytesPerSecond = rate ?? 0,
+                    EstimatedRemaining = TransferProgressMath.EstimateRemaining(bytes, ActiveTransfer.TotalBytes, rate)
                 };
                 ActiveTransferChanged?.Invoke(ActiveTransfer);
             });
@@ -201,34 +310,21 @@ public sealed class FileTransferService : IFileTransferService
             {
                 Stage = TransferStage.Completed,
                 BytesTransferred = result.BytesTransferred,
+                EstimatedRemaining = null,
                 Items = verifiedItems
             };
-            await _historyStore.UpsertAsync(new TransferRecord(
-                ActiveTransfer.TransferId,
-                ActiveTransfer.PeerDeviceId,
-                ActiveTransfer.PeerDisplayName,
-                false,
-                DateTimeOffset.UtcNow,
-                ActiveTransfer.TotalBytes,
-                VerificationOutcome.Verified,
-                verifiedItems)).ConfigureAwait(true);
-            History.Insert(0, new TransferRecord(
-                ActiveTransfer.TransferId,
-                ActiveTransfer.PeerDeviceId,
-                ActiveTransfer.PeerDisplayName,
-                false,
-                DateTimeOffset.UtcNow,
-                ActiveTransfer.TotalBytes,
-                VerificationOutcome.Verified,
-                verifiedItems));
+            await RecordAsync(ActiveTransfer, VerificationOutcome.Verified).ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
-            ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Cancelled, ErrorMessage = "Transfer cancelled." };
+            ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Cancelled, EstimatedRemaining = null, ErrorMessage = "Transfer cancelled." };
         }
         catch (Exception error)
         {
-            ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Failed, ErrorMessage = error.Message };
+            // Type only: exception messages can name the user's files.
+            VeyroTrace.Warn($"Outbound transfer failed: {error.GetType().Name}");
+            ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Failed, EstimatedRemaining = null, ErrorMessage = error.Message };
+            await RecordAsync(ActiveTransfer, VerificationOutcome.Failed).ConfigureAwait(true);
         }
         finally
         {
@@ -238,19 +334,39 @@ public sealed class FileTransferService : IFileTransferService
 
     public void CancelCurrentTransfer()
     {
-        if (ActiveTransfer is null) return;
+        if (ActiveTransfer is null || IsFinished(ActiveTransfer)) return;
         _transferCancellation?.Cancel();
-        ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Cancelled };
+        ActiveTransfer = ActiveTransfer with { Stage = TransferStage.Cancelled, EstimatedRemaining = null };
         ActiveTransferChanged?.Invoke(ActiveTransfer);
     }
-}
 
-public sealed class ScreenMirrorService : IScreenMirrorService
-{
-    public bool IsMirroring { get; private set; }
-
-    public Task StartMirroringAsync(PairedDeviceUiModel device)
+    public void DismissFinishedTransfer()
     {
-        return Task.CompletedTask;
+        if (ActiveTransfer is null || !IsFinished(ActiveTransfer)) return;
+        ActiveTransfer = null;
+        ActiveTransferChanged?.Invoke(null);
+    }
+
+    private async Task RecordAsync(ActiveTransfer transfer, VerificationOutcome outcome)
+    {
+        var record = new TransferRecord(
+            transfer.TransferId,
+            transfer.PeerDeviceId,
+            transfer.PeerDisplayName,
+            transfer.IsIncoming,
+            DateTimeOffset.UtcNow,
+            transfer.TotalBytes,
+            outcome,
+            transfer.Items,
+            ErrorMessage: outcome == VerificationOutcome.Failed ? transfer.ErrorMessage : null);
+        try
+        {
+            await _historyStore.UpsertAsync(record).ConfigureAwait(true);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Saving transfer history failed: {error.GetType().Name}");
+        }
+        History.Insert(0, record);
     }
 }

@@ -1,3 +1,6 @@
+// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/MediaSessionsControl.xaml.cs, GPL-3.0.
+// Modified for Veyro.
+
 using Microsoft.UI.Xaml.Controls.Primitives;
 
 namespace Veyro.UserControls;
@@ -38,6 +41,8 @@ public sealed partial class MediaSessionsControl : UserControl
     private async void Previous_Click(object sender, RoutedEventArgs e) => await ViewModel.PreviousAsync();
 
     private async void Next_Click(object sender, RoutedEventArgs e) => await ViewModel.NextAsync();
+
+    private void Volume_Click(object sender, RoutedEventArgs e) => ViewModel.IsVolumeOpen = !ViewModel.IsVolumeOpen;
 
     // Model-driven updates (ticks, phone snapshots, layout coercion) are not user input: only a
     // focused slider outside a model update counts as the user seeking or changing volume.

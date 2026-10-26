@@ -1,3 +1,11 @@
+<!--
+    Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/SettingsPage.xaml,
+    src/Sefirah/Views/Settings/GeneralPage.xaml, src/Sefirah/Views/Settings/DevicesPage.xaml and
+    src/Sefirah/Views/Settings/AboutPage.xaml, GPL-3.0.
+    Modified for Veyro: one page with Sefirah's left section list, settings cards without the
+    CommunityToolkit package, Veyro identity, devices, Bluetooth calling and about sections.
+    Only settings that something acts on are shown.
+-->
 <Page
     x:Class="Veyro.Views.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -5,60 +13,206 @@
     xmlns:contracts="using:Veyro.Data.Contracts"
     xmlns:converters="using:Veyro.Converters"
     xmlns:models="using:Veyro.Data.Models"
-    Padding="24">
+    Background="Transparent"
+    Loaded="Page_Loaded">
 
     <Page.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </Page.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Spacing="16">
-            <TextBlock FontSize="22" FontWeight="SemiBold" Text="Settings" />
+    <NavigationView
+        x:Name="SettingsNav"
+        BorderThickness="0"
+        IsBackButtonVisible="Collapsed"
+        IsPaneOpen="True"
+        IsPaneToggleButtonVisible="False"
+        IsSettingsVisible="False"
+        OpenPaneLength="240"
+        PaneDisplayMode="Left"
+        SelectionChanged="SettingsNav_SelectionChanged">
+        <NavigationView.Resources>
+            <Thickness x:Key="NavigationViewContentGridBorderThickness">1,0,0,0</Thickness>
+            <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="Transparent" />
+        </NavigationView.Resources>
+        <NavigationView.PaneHeader>
+            <TextBlock
+                x:Name="PaneHeaderText"
+                Margin="24,16,0,16"
+                FontSize="22"
+                FontWeight="SemiBold"
+                Text="Settings" />
+        </NavigationView.PaneHeader>
+        <NavigationView.MenuItems>
+            <NavigationViewItem x:Name="GeneralItem" Content="General" Icon="Setting" Tag="general" />
+            <NavigationViewItem x:Name="DevicesItem" Content="Devices" Icon="CellPhone" Tag="devices" />
+            <NavigationViewItem x:Name="BluetoothItem" Content="Bluetooth calling" Tag="bluetooth">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE702;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem x:Name="AboutItem" Content="About" Tag="about">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE946;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+        </NavigationView.MenuItems>
 
-            <!-- Device Identity & Fingerprint Card -->
-            <Border
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Spacing="12">
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Device Identity (X25519 + DPAPI)" />
-                    <TextBox
-                        Header="Device Display Name"
-                        Text="{x:Bind ViewModel.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                    <StackPanel Spacing="4">
-                        <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Device ID (Crockford Base32)" />
-                        <TextBlock FontFamily="Consolas" IsTextSelectionEnabled="True" Text="{x:Bind ViewModel.DeviceId, Mode=OneWay}" />
-                    </StackPanel>
-                    <StackPanel Spacing="4">
-                        <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Verification Fingerprint" />
-                        <TextBlock FontFamily="Consolas" FontWeight="SemiBold" IsTextSelectionEnabled="True" Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}" />
-                    </StackPanel>
-                    <Button Click="ResetIdentity_Click" Content="Reset Identity Key" />
+        <ScrollViewer Padding="40,20,40,24" VerticalScrollBarVisibility="Auto">
+            <Grid MaxWidth="1000" HorizontalAlignment="Stretch">
+
+                <!--  General  -->
+                <StackPanel x:Name="GeneralSection" Spacing="4">
+                    <TextBlock Margin="0,0,0,8" FontSize="28" FontWeight="SemiBold" Text="General" />
+
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="This PC" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE7F8;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Device name" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="The name phones see when they find this PC. Applies the next time Veyro starts." />
+                            </StackPanel>
+                            <TextBox
+                                Grid.Column="2"
+                                Width="240"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Device name"
+                                MaxLength="64"
+                                Text="{x:Bind ViewModel.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE72E;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Fingerprint" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="Compare it with the one the phone shows when pairing." />
+                                <TextBlock
+                                    FontFamily="Consolas"
+                                    FontWeight="SemiBold"
+                                    IsTextSelectionEnabled="True"
+                                    Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}" />
+                                <TextBlock
+                                    FontFamily="Consolas"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    IsTextSelectionEnabled="True"
+                                    Text="{x:Bind ViewModel.DeviceId, Mode=OneWay}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Received files" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE8B7;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Save files to" />
+                                <TextBlock
+                                    Style="{StaticResource SettingsCardDescriptionStyle}"
+                                    IsTextSelectionEnabled="True"
+                                    Text="{x:Bind ViewModel.DownloadDirectory, Mode=OneWay}" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="A new folder applies the next time Veyro starts." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                <Button Click="OpenDownloads_Click" Content="Open" />
+                                <Button Click="ChangeDownloads_Click" Content="Change" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Startup and window" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE7E8;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Start Veyro when I sign in" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ViewModel.AutoStartText, Mode=OneWay}" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                Grid.Column="2"
+                                MinWidth="0"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Start Veyro when I sign in"
+                                IsEnabled="{x:Bind ViewModel.CanChangeAutoStart, Mode=OneWay}"
+                                IsOn="{x:Bind ViewModel.AutoStartOnLogin, Mode=TwoWay}"
+                                OffContent=""
+                                OnContent="" />
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE921;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Keep running in the notification area when closed" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ViewModel.TrayText, Mode=OneWay}" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                Grid.Column="2"
+                                MinWidth="0"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Keep running in the notification area when closed"
+                                IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}"
+                                OffContent=""
+                                OnContent="" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Identity" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE8D7;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Reset identity key" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="Creates a new key for this PC. Every phone has to pair again." />
+                            </StackPanel>
+                            <Button Grid.Column="2" VerticalAlignment="Center" Click="ResetIdentity_Click" Content="Reset" />
+                        </Grid>
+                    </Border>
                 </StackPanel>
-            </Border>
 
-            <!-- Devices Card (ADR-030): paired phones and the QR pairing screen -->
-            <Border
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Spacing="12">
-                    <Grid>
+                <!--  Devices  -->
+                <StackPanel x:Name="DevicesSectionPanel" Spacing="8" Visibility="Collapsed">
+                    <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock
-                            VerticalAlignment="Center"
-                            FontSize="16"
-                            FontWeight="SemiBold"
-                            Text="Devices" />
+                        <TextBlock FontSize="28" FontWeight="SemiBold" Text="Devices" />
                         <Button
                             Grid.Column="1"
+                            VerticalAlignment="Center"
                             Click="PairNewDevice_Click"
                             Style="{StaticResource AccentButtonStyle}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -67,146 +221,206 @@
                             </StackPanel>
                         </Button>
                     </Grid>
+
                     <ItemsRepeater ItemsSource="{x:Bind Devices.PairedDevices, Mode=OneWay}">
                         <ItemsRepeater.Layout>
-                            <StackLayout Orientation="Vertical" Spacing="4" />
+                            <StackLayout Orientation="Vertical" Spacing="8" />
                         </ItemsRepeater.Layout>
                         <ItemsRepeater.ItemTemplate>
                             <DataTemplate x:DataType="models:PairedDeviceUiModel">
-                                <Grid
-                                    Padding="10,8"
-                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                    ColumnSpacing="12"
-                                    CornerRadius="6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
-                                        <TextBlock FontWeight="SemiBold" Text="{x:Bind Name, Mode=OneWay}" />
-                                        <TextBlock
-                                            FontFamily="Consolas"
-                                            FontSize="12"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Text="{x:Bind Fingerprint}" />
-                                    </StackPanel>
-                                </Grid>
+                                <Border Style="{StaticResource SettingsCardStyle}">
+                                    <Grid ColumnSpacing="15">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Width="30" Height="53">
+                                            <Rectangle
+                                                Opacity="0.5"
+                                                RadiusX="4"
+                                                RadiusY="4"
+                                                Stroke="Black"
+                                                StrokeThickness="2">
+                                                <Rectangle.Fill>
+                                                    <SolidColorBrush Opacity="0.1" Color="{ThemeResource SystemBaseLowColor}" />
+                                                </Rectangle.Fill>
+                                            </Rectangle>
+                                            <Rectangle
+                                                Margin="2"
+                                                RadiusX="4"
+                                                RadiusY="4"
+                                                Stroke="Black"
+                                                StrokeThickness="1" />
+                                            <Border Margin="3" CornerRadius="4" Opacity="{x:Bind StatusOpacity, Mode=OneWay}">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                        <GradientStop Offset="0" Color="#FF0070FF" />
+                                                        <GradientStop Offset="1" Color="#FF2E90FF" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                            <TextBlock Text="{x:Bind Name, Mode=OneWay}" />
+                                            <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ConnectionStatusText, Mode=OneWay}" />
+                                            <TextBlock
+                                                FontFamily="Consolas"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="{x:Bind Fingerprint}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                            <Button
+                                                MinWidth="110"
+                                                Click="SelectDevice_Click"
+                                                IsEnabled="{x:Bind IsNotActive, Mode=OneWay}"
+                                                Tag="{x:Bind DeviceId}">
+                                                <TextBlock Text="{x:Bind SelectText, Mode=OneWay}" />
+                                            </Button>
+                                            <Button
+                                                VerticalAlignment="Stretch"
+                                                AutomationProperties.Name="Remove device"
+                                                Click="RemoveDevice_Click"
+                                                Tag="{x:Bind DeviceId}"
+                                                ToolTipService.ToolTip="Remove device">
+                                                <FontIcon FontSize="14" Glyph="&#xE74D;" />
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
                             </DataTemplate>
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
-                    <TextBlock
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="No phone is paired yet. Select Pair new device and scan the code with Veyro on your phone."
-                        TextWrapping="Wrap"
-                        Visibility="{x:Bind Devices.HasNoPairedDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                </StackPanel>
-            </Border>
 
-            <!-- Discovery & Storage Card -->
-            <Border
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Spacing="12">
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Discovery &amp; Transfers" />
-                    <ToggleSwitch
-                        Header="Discoverable on LAN (mDNS + UDP Beacon)"
-                        IsOn="{x:Bind ViewModel.IsDiscoverable, Mode=TwoWay}" />
-                    <TextBox
-                        Header="Received Files Folder"
-                        Text="{x:Bind ViewModel.DownloadDirectory, Mode=TwoWay}" />
-                </StackPanel>
-            </Border>
-
-            <!-- Bluetooth calling Card (ADR-029) -->
-            <Border
-                x:Name="BluetoothCard"
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Spacing="12">
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Bluetooth calling" />
-                    <TextBlock
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="Lets you answer phone calls and talk through this PC's speakers and microphone. Bluetooth is used only for call audio and call control; files, notifications and messages keep using the encrypted Wi-Fi link."
-                        TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <ProgressRing
-                            Width="16"
-                            Height="16"
-                            IsActive="{x:Bind Bluetooth.IsBusy, Mode=OneWay}" />
+                    <StackPanel
+                        Margin="0,32"
+                        HorizontalAlignment="Center"
+                        Spacing="8"
+                        Visibility="{x:Bind Devices.HasNoPairedDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <FontIcon FontSize="32" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE8EA;" />
                         <TextBlock
-                            AutomationProperties.LiveSetting="Polite"
-                            Text="{x:Bind Bluetooth.StatusText, Mode=OneWay}"
+                            HorizontalAlignment="Center"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="No phone is paired yet. Select Pair new device and scan the code with Veyro on your phone."
+                            TextAlignment="Center"
                             TextWrapping="Wrap" />
                     </StackPanel>
-                    <StackPanel Spacing="12" Visibility="{x:Bind Bluetooth.IsSupported, Converter={StaticResource BooleanToVisibilityConverter}}">
-                        <Button Click="PairBluetooth_Click" Content="Pair phone over Bluetooth" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <ComboBox
-                                HorizontalAlignment="Stretch"
-                                Header="Phone for calls"
-                                ItemsSource="{x:Bind Bluetooth.Phones, Mode=OneWay}"
-                                PlaceholderText="No Bluetooth phone found"
-                                SelectedIndex="{x:Bind Bluetooth.SelectedIndex, Mode=TwoWay}">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate x:DataType="contracts:BluetoothPhoneInfo">
-                                        <TextBlock Text="{x:Bind Name}" />
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-                            <Button
-                                Grid.Column="1"
-                                VerticalAlignment="Bottom"
-                                AutomationProperties.Name="Refresh Bluetooth phones"
-                                Click="RefreshBluetooth_Click"
-                                ToolTipService.ToolTip="Refresh">
-                                <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                            </Button>
-                        </Grid>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button
-                                Click="ConnectBluetooth_Click"
-                                Content="Connect"
-                                IsEnabled="{x:Bind Bluetooth.CanConnect, Mode=OneWay}"
-                                Style="{StaticResource AccentButtonStyle}" />
-                            <Button
-                                Click="DisconnectBluetooth_Click"
-                                Content="Disconnect"
-                                IsEnabled="{x:Bind Bluetooth.CanDisconnect, Mode=OneWay}" />
+                </StackPanel>
+
+                <!--  Bluetooth calling (ADR-029)  -->
+                <StackPanel x:Name="BluetoothSectionPanel" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Margin="0,0,0,8" FontSize="28" FontWeight="SemiBold" Text="Bluetooth calling" />
+                    <TextBlock
+                        Margin="0,0,0,12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Answer phone calls and talk through this PC's speakers and microphone. Bluetooth carries only call audio and call control; files, notifications and messages keep using the encrypted Wi-Fi link."
+                        TextWrapping="Wrap" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <ProgressRing
+                                Width="16"
+                                Height="16"
+                                IsActive="{x:Bind Bluetooth.IsBusy, Mode=OneWay}" />
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                AutomationProperties.LiveSetting="Polite"
+                                Text="{x:Bind Bluetooth.StatusText, Mode=OneWay}"
+                                TextWrapping="Wrap" />
                         </StackPanel>
+                    </Border>
+                    <StackPanel Spacing="4" Visibility="{x:Bind Bluetooth.IsSupported, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon VerticalAlignment="Center" Glyph="&#xE717;" />
+                                <ComboBox
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Stretch"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Phone for calls"
+                                    ItemsSource="{x:Bind Bluetooth.Phones, Mode=OneWay}"
+                                    PlaceholderText="No Bluetooth phone found"
+                                    SelectedIndex="{x:Bind Bluetooth.SelectedIndex, Mode=TwoWay}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="contracts:BluetoothPhoneInfo">
+                                            <TextBlock Text="{x:Bind Name}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                    <Button
+                                        AutomationProperties.Name="Refresh Bluetooth phones"
+                                        Click="RefreshBluetooth_Click"
+                                        ToolTipService.ToolTip="Refresh">
+                                        <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                                    </Button>
+                                    <Button
+                                        Click="ConnectBluetooth_Click"
+                                        Content="Connect"
+                                        IsEnabled="{x:Bind Bluetooth.CanConnect, Mode=OneWay}"
+                                        Style="{StaticResource AccentButtonStyle}" />
+                                    <Button
+                                        Click="DisconnectBluetooth_Click"
+                                        Content="Disconnect"
+                                        IsEnabled="{x:Bind Bluetooth.CanDisconnect, Mode=OneWay}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon VerticalAlignment="Center" Glyph="&#xE702;" />
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Pair phone over Bluetooth" />
+                                    <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="Pairing happens in Windows Bluetooth settings. Come back and refresh afterwards." />
+                                </StackPanel>
+                                <Button Grid.Column="2" VerticalAlignment="Center" Click="PairBluetooth_Click" Content="Open Bluetooth settings" />
+                            </Grid>
+                        </Border>
                     </StackPanel>
                 </StackPanel>
-            </Border>
 
-            <!-- System & Tray Behavior Card -->
-            <Border
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Spacing="12">
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="System Integration" />
-                    <ToggleSwitch
-                        Header="Start Veyro on Windows Login"
-                        IsOn="{x:Bind ViewModel.AutoStartOnLogin, Mode=TwoWay}" />
-                    <ToggleSwitch
-                        Header="Minimize to System Tray on Close"
-                        IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}" />
+                <!--  About  -->
+                <StackPanel x:Name="AboutSection" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Margin="0,0,0,8" FontSize="28" FontWeight="SemiBold" Text="About" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Image Width="32" Height="32" VerticalAlignment="Center">
+                                <Image.Source>
+                                    <BitmapImage UriSource="{ThemeResource IconPath}" />
+                                </Image.Source>
+                            </Image>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Veyro" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ViewModel.VersionText}" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ViewModel.ProtocolText}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Licence" />
+                            <TextBlock
+                                Style="{StaticResource SettingsCardDescriptionStyle}"
+                                Text="Veyro is free software under the GNU General Public License v3.0. Parts of its interface and Bluetooth calling are adapted from Sefirah by shrimqy (GPL-3.0); see THIRD_PARTY_NOTICES.md." />
+                            <HyperlinkButton Padding="0,4" Content="Sefirah on GitHub" NavigateUri="https://github.com/shrimqy/Sefirah" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-            </Border>
-        </StackPanel>
-    </ScrollViewer>
+            </Grid>
+        </ScrollViewer>
+    </NavigationView>
 </Page>

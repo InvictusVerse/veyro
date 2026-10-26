@@ -44,18 +44,3 @@ public sealed class DpapiSeedStore : ISeedStore
             File.Delete(_filePath);
     }
 }
-
-public sealed class SystemTrayService : ISystemTrayService
-{
-    public bool IsAvailable { get; private set; }
-
-    public void Initialize(nint windowHandle)
-    {
-        IsAvailable = windowHandle != 0;
-    }
-
-    public void Dispose()
-    {
-        IsAvailable = false;
-    }
-}

@@ -1,19 +1,33 @@
+<!--
+    Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/CallsPage.xaml, GPL-3.0.
+    Modified for Veyro: call history and the current call from CallsPageViewModel (ADR-027) on the
+    left, Sefirah's dial pad on the right. Contact search is not in Veyro's protocol yet.
+-->
 <Page
     x:Class="Veyro.Views.CallsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:converters="using:Veyro.Converters"
     xmlns:viewModels="using:Veyro.ViewModels"
-    Padding="24"
     Loaded="Page_Loaded"
     Unloaded="Page_Unloaded">
 
     <Page.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+        <Style x:Key="DialPadKeyStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="MinHeight" Value="52" />
+            <Setter Property="MinWidth" Value="72" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="FontSize" Value="22" />
+            <Setter Property="FontWeight" Value="SemiLight" />
+        </Style>
     </Page.Resources>
 
     <Grid>
-        <!-- Phone not connected / feature off -->
+        <!--  Phone not connected / feature off  -->
         <StackPanel
             MaxWidth="440"
             HorizontalAlignment="Center"
@@ -29,154 +43,141 @@
                 TextWrapping="Wrap" />
         </StackPanel>
 
-        <Grid
-            RowSpacing="16"
-            Visibility="{x:Bind ViewModel.IsAvailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
+        <Grid Visibility="{x:Bind ViewModel.IsAvailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" MinWidth="280" />
+            </Grid.ColumnDefinitions>
 
-            <Grid Grid.Row="0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Spacing="4">
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="Calls" />
-                    <TextBlock
-                        FontSize="13"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="{x:Bind ViewModel.HeaderText, Mode=OneWay}" />
-                </StackPanel>
-                <Button
-                    Grid.Column="1"
-                    VerticalAlignment="Top"
-                    AutomationProperties.Name="Refresh call history"
-                    Click="Refresh_Click"
-                    ToolTipService.ToolTip="Refresh">
-                    <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                </Button>
-            </Grid>
+            <!--  Call history  -->
+            <Grid
+                Grid.Column="0"
+                Padding="16,12,16,0"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="0,0,1,0"
+                RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-            <!-- Current call -->
-            <Border
-                Grid.Row="1"
-                Padding="16,12"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Visibility="{x:Bind ViewModel.HasCurrentCall, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <Grid ColumnSpacing="12">
+                <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <FontIcon Grid.Column="0" Glyph="&#xE717;" />
-                    <StackPanel Grid.Column="1" Spacing="2">
-                        <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.CurrentCallTitle, Mode=OneWay}" />
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="Calls" />
                         <TextBlock
-                            FontSize="12"
+                            FontSize="13"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="{x:Bind ViewModel.CurrentCallText, Mode=OneWay}" />
+                            Text="{x:Bind ViewModel.HeaderText, Mode=OneWay}"
+                            TextWrapping="Wrap" />
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
-                        <Button
-                            Click="Answer_Click"
-                            Content="{x:Bind ViewModel.AnswerText, Mode=OneWay}"
-                            Style="{StaticResource AccentButtonStyle}"
-                            Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        <Button
-                            Click="Silence_Click"
-                            Content="Silence"
-                            Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        <Button
-                            Click="Decline_Click"
-                            Content="Decline"
-                            Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        <Button
-                            Click="End_Click"
-                            Content="End call"
-                            Visibility="{x:Bind ViewModel.IsInCall, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                    </StackPanel>
+                    <Button
+                        Grid.Column="1"
+                        VerticalAlignment="Top"
+                        AutomationProperties.Name="Refresh call history"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Click="Refresh_Click"
+                        ToolTipService.ToolTip="Refresh">
+                        <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                    </Button>
                 </Grid>
-            </Border>
 
-            <!-- Dial box -->
-            <Grid Grid.Row="2" ColumnSpacing="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBox
-                    Grid.Column="0"
-                    AutomationProperties.Name="Number to dial"
-                    KeyDown="DialBox_KeyDown"
-                    MaxLength="64"
-                    PlaceholderText="Enter a number to call from the phone"
-                    Text="{x:Bind ViewModel.DialNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <Button
-                    Grid.Column="1"
-                    Click="Dial_Click"
-                    IsEnabled="{x:Bind ViewModel.CanDial, Mode=OneWay}"
-                    Style="{StaticResource AccentButtonStyle}">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon FontSize="14" Glyph="&#xE717;" />
-                        <TextBlock Text="Call" />
-                    </StackPanel>
-                </Button>
-            </Grid>
+                <!--  Current call  -->
+                <Border
+                    Grid.Row="1"
+                    Padding="16,12"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Visibility="{x:Bind ViewModel.HasCurrentCall, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE717;" />
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.CurrentCallTitle, Mode=OneWay}" />
+                            <TextBlock
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind ViewModel.CurrentCallText, Mode=OneWay}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                            <Button
+                                Click="Answer_Click"
+                                Content="{x:Bind ViewModel.AnswerText, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Button
+                                Click="Silence_Click"
+                                Content="Silence"
+                                Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Button
+                                Click="Decline_Click"
+                                Content="Decline"
+                                Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Button
+                                Click="End_Click"
+                                Content="End call"
+                                Visibility="{x:Bind ViewModel.IsInCall, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
-            <StackPanel Grid.Row="3" Spacing="8">
-                <TextBlock
-                    FontSize="12"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
-                    TextWrapping="Wrap"
-                    Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                <ProgressBar
-                    IsIndeterminate="True"
-                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Recent calls" />
-            </StackPanel>
+                <StackPanel Grid.Row="2" Spacing="8">
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
+                        TextWrapping="Wrap"
+                        Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <ProgressBar
+                        IsIndeterminate="True"
+                        Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </StackPanel>
 
-            <ListView
-                Grid.Row="4"
-                AutomationProperties.Name="Recent calls"
-                ItemsSource="{x:Bind ViewModel.Entries, Mode=OneWay}"
-                SelectionMode="None">
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem">
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                    </Style>
-                </ListView.ItemContainerStyle>
-                <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="viewModels:CallLogItemViewModel">
-                        <Border
-                            Margin="0,0,0,8"
-                            Padding="16,10"
-                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8">
-                            <Grid ColumnSpacing="12">
+                <ListView
+                    Grid.Row="3"
+                    AutomationProperties.Name="Recent calls"
+                    ItemsSource="{x:Bind ViewModel.Entries, Mode=OneWay}"
+                    SelectionMode="None">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:CallLogItemViewModel">
+                            <Grid Height="64" Padding="0,8" ColumnSpacing="12">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <FontIcon
+                                <Border
                                     Grid.Column="0"
-                                    AutomationProperties.Name="{x:Bind TypeText}"
-                                    Glyph="{x:Bind Glyph}"
-                                    ToolTipService.ToolTip="{x:Bind TypeText}" />
-                                <StackPanel Grid.Column="1" Spacing="2">
+                                    Width="40"
+                                    Height="40"
+                                    VerticalAlignment="Center"
+                                    Background="{ThemeResource ControlAltFillColorTertiaryBrush}"
+                                    CornerRadius="20">
+                                    <FontIcon
+                                        AutomationProperties.Name="{x:Bind TypeText}"
+                                        FontSize="16"
+                                        Glyph="{x:Bind Glyph}"
+                                        ToolTipService.ToolTip="{x:Bind TypeText}" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                     <TextBlock
                                         FontWeight="SemiBold"
                                         Text="{x:Bind Title}"
@@ -201,30 +202,125 @@
                                     Grid.Column="3"
                                     VerticalAlignment="Center"
                                     AutomationProperties.Name="{x:Bind CallLabel}"
+                                    Background="Transparent"
+                                    BorderThickness="0"
                                     Click="CallBack_Click"
                                     IsEnabled="{x:Bind CanCall}"
                                     ToolTipService.ToolTip="Call on the phone">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <FontIcon FontSize="12" Glyph="&#xE717;" />
-                                        <TextBlock Text="Call" />
-                                    </StackPanel>
+                                    <FontIcon FontSize="14" Glyph="&#xE717;" />
                                 </Button>
                             </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
 
-            <TextBlock
-                Grid.Row="4"
-                MaxWidth="440"
+                <TextBlock
+                    Grid.Row="3"
+                    MaxWidth="440"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="{x:Bind ViewModel.EmptyText}"
+                    TextAlignment="Center"
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind ViewModel.HasNoEntries, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+            </Grid>
+
+            <!--  Dial pad  -->
+            <StackPanel
+                Grid.Column="1"
+                Padding="16"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="{x:Bind ViewModel.EmptyText}"
-                TextAlignment="Center"
-                TextWrapping="Wrap"
-                Visibility="{x:Bind ViewModel.HasNoEntries, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                Spacing="16">
+                <TextBox
+                    x:Name="DialBox"
+                    MinWidth="236"
+                    HorizontalAlignment="Center"
+                    AutomationProperties.Name="Number to dial"
+                    FontSize="22"
+                    KeyDown="DialBox_KeyDown"
+                    MaxLength="64"
+                    PlaceholderText="Enter a number"
+                    Text="{x:Bind ViewModel.DialNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    TextAlignment="Center" />
+
+                <Grid
+                    HorizontalAlignment="Center"
+                    ColumnSpacing="10"
+                    RowSpacing="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Row="0" Grid.Column="0" Click="DialKey_Click" Content="1" Style="{StaticResource DialPadKeyStyle}" Tag="1" />
+                    <Button Grid.Row="0" Grid.Column="1" Click="DialKey_Click" Content="2" Style="{StaticResource DialPadKeyStyle}" Tag="2" />
+                    <Button Grid.Row="0" Grid.Column="2" Click="DialKey_Click" Content="3" Style="{StaticResource DialPadKeyStyle}" Tag="3" />
+                    <Button Grid.Row="1" Grid.Column="0" Click="DialKey_Click" Content="4" Style="{StaticResource DialPadKeyStyle}" Tag="4" />
+                    <Button Grid.Row="1" Grid.Column="1" Click="DialKey_Click" Content="5" Style="{StaticResource DialPadKeyStyle}" Tag="5" />
+                    <Button Grid.Row="1" Grid.Column="2" Click="DialKey_Click" Content="6" Style="{StaticResource DialPadKeyStyle}" Tag="6" />
+                    <Button Grid.Row="2" Grid.Column="0" Click="DialKey_Click" Content="7" Style="{StaticResource DialPadKeyStyle}" Tag="7" />
+                    <Button Grid.Row="2" Grid.Column="1" Click="DialKey_Click" Content="8" Style="{StaticResource DialPadKeyStyle}" Tag="8" />
+                    <Button Grid.Row="2" Grid.Column="2" Click="DialKey_Click" Content="9" Style="{StaticResource DialPadKeyStyle}" Tag="9" />
+                    <Button Grid.Row="3" Grid.Column="0" Click="DialKey_Click" Content="*" Style="{StaticResource DialPadKeyStyle}" Tag="*" />
+                    <Button
+                        Grid.Row="3"
+                        Grid.Column="1"
+                        AutomationProperties.Name="0, right-click for plus"
+                        Click="DialKey_Click"
+                        RightTapped="DialZero_RightTapped"
+                        Style="{StaticResource DialPadKeyStyle}"
+                        Tag="0">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock HorizontalAlignment="Center" Text="0" />
+                            <TextBlock HorizontalAlignment="Center" FontSize="12" Opacity="0.75" Text="+" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Row="3" Grid.Column="2" Click="DialKey_Click" Content="#" Style="{StaticResource DialPadKeyStyle}" Tag="#" />
+                </Grid>
+
+                <Grid HorizontalAlignment="Center" ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="72" />
+                    </Grid.ColumnDefinitions>
+                    <Button
+                        Grid.Column="1"
+                        Width="48"
+                        Height="48"
+                        Padding="0"
+                        HorizontalAlignment="Center"
+                        AutomationProperties.Name="Call on the phone"
+                        Click="Dial_Click"
+                        CornerRadius="24"
+                        IsEnabled="{x:Bind ViewModel.CanDial, Mode=OneWay}"
+                        Style="{StaticResource AccentButtonStyle}"
+                        ToolTipService.ToolTip="Call on the phone">
+                        <FontIcon FontSize="18" Glyph="&#xE717;" />
+                    </Button>
+                    <Button
+                        Grid.Column="2"
+                        Width="48"
+                        Height="48"
+                        Padding="0"
+                        HorizontalAlignment="Center"
+                        AutomationProperties.Name="Delete last digit"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Click="Backspace_Click"
+                        ToolTipService.ToolTip="Delete">
+                        <FontIcon FontSize="18" Glyph="&#xE750;" />
+                    </Button>
+                </Grid>
+            </StackPanel>
         </Grid>
     </Grid>
 </Page>

@@ -1,18 +1,15 @@
 namespace Veyro.Data.Models;
 
 /// <summary>
-/// Observable UI model for a paired peer shown in the Veyro Control Center sidebar.
+/// A paired phone in the sidebar device switcher. Identity comes from the trust store and
+/// <see cref="IsConnected"/> from the live session registry; nothing here has a made-up default.
+/// Battery, ringer, media and notifications are read from their services by the view models,
+/// and only while the phone reports them.
 /// </summary>
 public sealed class PairedDeviceUiModel : INotifyPropertyChanged
 {
     private string _name = string.Empty;
     private bool _isConnected;
-    private bool _isConnecting;
-    private int _batteryLevel = 85;
-    private bool _isCharging;
-    private RingerMode _ringerMode = RingerMode.Normal;
-    private bool _dndEnabled;
-    private bool _bluetoothEnabled = true;
 
     public string DeviceId { get; init; } = string.Empty;
     public string Fingerprint { get; init; } = string.Empty;
@@ -24,6 +21,7 @@ public sealed class PairedDeviceUiModel : INotifyPropertyChanged
         set { if (_name != value) { _name = value; OnPropertyChanged(); } }
     }
 
+    /// <summary>True while the phone holds an authenticated session with this PC.</summary>
     public bool IsConnected
     {
         get => _isConnected;
@@ -34,62 +32,36 @@ public sealed class PairedDeviceUiModel : INotifyPropertyChanged
                 _isConnected = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(ConnectionStatusText));
+                OnPropertyChanged(nameof(StatusOpacity));
             }
         }
     }
 
-    public bool IsConnecting
+    public string ConnectionStatusText => IsConnected ? "Connected" : "Disconnected";
+
+    private bool _isActive;
+
+    /// <summary>This is the phone the pages currently follow.</summary>
+    public bool IsActive
     {
-        get => _isConnecting;
+        get => _isActive;
         set
         {
-            if (_isConnecting != value)
+            if (_isActive != value)
             {
-                _isConnecting = value;
+                _isActive = value;
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(ConnectionStatusText));
+                OnPropertyChanged(nameof(IsNotActive));
+                OnPropertyChanged(nameof(SelectText));
             }
         }
     }
 
-    public string ConnectionStatusText => IsConnecting ? "Connecting..." : (IsConnected ? "Connected" : "Disconnected");
+    public bool IsNotActive => !_isActive;
+    public string SelectText => _isActive ? "Selected" : "Select";
 
-    public int BatteryLevel
-    {
-        get => _batteryLevel;
-        set { if (_batteryLevel != value) { _batteryLevel = value; OnPropertyChanged(); OnPropertyChanged(nameof(BatteryText)); } }
-    }
-
-    public bool IsCharging
-    {
-        get => _isCharging;
-        set { if (_isCharging != value) { _isCharging = value; OnPropertyChanged(); } }
-    }
-
-    public string BatteryText => $"{BatteryLevel}%";
-
-    public RingerMode RingerMode
-    {
-        get => _ringerMode;
-        set { if (_ringerMode != value) { _ringerMode = value; OnPropertyChanged(); } }
-    }
-
-    public bool DndEnabled
-    {
-        get => _dndEnabled;
-        set { if (_dndEnabled != value) { _dndEnabled = value; OnPropertyChanged(); } }
-    }
-
-    public bool BluetoothEnabled
-    {
-        get => _bluetoothEnabled;
-        set { if (_bluetoothEnabled != value) { _bluetoothEnabled = value; OnPropertyChanged(); } }
-    }
-
-    public ObservableCollection<string> Addresses { get; } = [];
-    public ObservableCollection<AudioStreamModel> AudioStreams { get; } = [];
-    public ObservableCollection<MediaSessionModel> MediaSessions { get; } = [];
-    public ObservableCollection<NotificationModel> Notifications { get; } = [];
+    /// <summary>Sefirah dims the phone's status row while it is offline.</summary>
+    public double StatusOpacity => IsConnected ? 1.0 : 0.4;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? prop = null)
@@ -111,6 +83,7 @@ public sealed record NetworkCheckUiModel(
     public bool HasAction => ActionText is not null;
 }
 
+/// <summary>A phone seen by discovery (untrusted: shown for pairing only, never as identity proof).</summary>
 public sealed record DiscoveredDeviceUiModel(
     string DeviceId,
     string Name,

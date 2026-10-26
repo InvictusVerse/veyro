@@ -36,7 +36,7 @@ public sealed class VeyroContainer
     public IAppThemeModeService ThemeModeService { get; }
     public IDeviceManager DeviceManager { get; }
     public IFileTransferService FileTransferService { get; }
-    public IScreenMirrorService ScreenMirrorService { get; }
+    public ILoginStartupService LoginStartup { get; }
     public INotificationToastService NotificationToastService { get; }
     public IBluetoothCallingService BluetoothCalling { get; }
     public CallRouter CallRouter { get; }
@@ -94,11 +94,13 @@ public sealed class VeyroContainer
             IdentityManager.PublicKey.Span,
             controlPort: () => LinkServer.IsRunning ? LinkServer.Port : 0);
 
-        SystemTrayService = new SystemTrayService();
+        // Tray clicks arrive long after construction, once the main window exists.
+        SystemTrayService = new SystemTrayService(open: App.ShowMainWindow, quit: App.ExitApplication);
+        LoginStartup = new LoginStartupService();
         ThemeModeService = new AppThemeModeService();
-        DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService);
+        // Paired phones from the trust store, connected state from the live sessions.
+        DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService, PeerSessions);
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager);
-        ScreenMirrorService = new ScreenMirrorService();
         // ADR-029: Bluetooth hands-free call audio (Windows 11); answers route through CallRouter.
         BluetoothCalling = new BluetoothCallingService(SettingsStore);
         CallRouter = new CallRouter(Calls, BluetoothCalling);
@@ -113,13 +115,13 @@ public sealed class VeyroContainer
         PhoneMediaViewModel = new PhoneMediaViewModel(PhoneMedia, DeviceManager);
         DeviceStatusViewModel = new DeviceStatusViewModel(DeviceStatus, DeviceManager);
 
-        MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService, ScreenMirrorService);
+        MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService);
         TransfersPageViewModel = new TransfersPageViewModel(DeviceManager, FileTransferService, SettingsStore);
         MessagesViewModel = new MessagesViewModel(Messaging, DeviceManager);
         CallsPageViewModel = new CallsPageViewModel(Calls, CallRouter, DeviceManager);
         BluetoothCallingViewModel = new BluetoothCallingViewModel(BluetoothCalling, DeviceManager);
-        AppsViewModel = new AppsViewModel(DeviceManager);
-        GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore);
+        AppsViewModel = new AppsViewModel();
+        GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);
 
         // ADR-030: QR pairing screen (shared by onboarding and Settings) and first-run flow.

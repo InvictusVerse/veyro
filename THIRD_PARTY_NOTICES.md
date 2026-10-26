@@ -35,6 +35,23 @@ Adapted files (Veyro path <- Sefirah path):
 - `VeyroWindows/src/Veyro/UserControls/PairingView.xaml.cs` <- `src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml.cs`
 - `VeyroWindows/src/Veyro/Dialogs/ConnectionRequestDialog.xaml` <- `src/Sefirah/Dialogs/ConnectionRequestDialog.xaml`
 - `VeyroWindows/src/Veyro/Dialogs/ConnectionRequestDialog.xaml.cs` <- `src/Sefirah/Dialogs/ConnectionRequestDialog.xaml.cs`, `src/Sefirah/ViewModels/Dialogs/ConnectionRequestViewModel.cs`
+- `VeyroWindows/src/Veyro/App.xaml` <- `src/Sefirah/App.xaml`
+- `VeyroWindows/src/Veyro/Views/MainPage.xaml` <- `src/Sefirah/Views/MainPage.xaml`
+- `VeyroWindows/src/Veyro/Views/MainPage.xaml.cs` <- `src/Sefirah/Views/MainPage.xaml.cs`
+- `VeyroWindows/src/Veyro/ViewModels/MainPageViewModel.cs` <- `src/Sefirah/ViewModels/MainPageViewModel.cs`
+- `VeyroWindows/src/Veyro/ViewModels/DeviceStatusViewModel.cs` <- `src/Sefirah/Converters/Converters.cs` (battery and ringer glyph tables)
+- `VeyroWindows/src/Veyro/UserControls/DeviceControlCenter.xaml` <- `src/Sefirah/UserControls/DeviceControlCenter.xaml`
+- `VeyroWindows/src/Veyro/UserControls/DeviceControlCenter.xaml.cs` <- `src/Sefirah/UserControls/DeviceControlCenter.xaml.cs`
+- `VeyroWindows/src/Veyro/UserControls/MediaSessionsControl.xaml` <- `src/Sefirah/UserControls/MediaSessionsControl.xaml`
+- `VeyroWindows/src/Veyro/UserControls/MediaSessionsControl.xaml.cs` <- `src/Sefirah/UserControls/MediaSessionsControl.xaml.cs`
+- `VeyroWindows/src/Veyro/UserControls/NotificationsControl.xaml` <- `src/Sefirah/UserControls/NotificationsControl.xaml`
+- `VeyroWindows/src/Veyro/UserControls/NotificationsControl.xaml.cs` <- `src/Sefirah/UserControls/NotificationsControl.xaml.cs`
+- `VeyroWindows/src/Veyro/UserControls/TitleBar.xaml` <- `src/Sefirah/UserControls/TitleBar.xaml`
+- `VeyroWindows/src/Veyro/Views/CallsPage.xaml` <- `src/Sefirah/Views/CallsPage.xaml`
+- `VeyroWindows/src/Veyro/Views/CallsPage.xaml.cs` <- `src/Sefirah/Views/CallsPage.xaml.cs`
+- `VeyroWindows/src/Veyro/Views/MessagesPage.xaml` <- `src/Sefirah/Views/MessagesPage.xaml`
+- `VeyroWindows/src/Veyro/Views/SettingsPage.xaml` <- `src/Sefirah/Views/SettingsPage.xaml`, `src/Sefirah/Views/Settings/GeneralPage.xaml`, `src/Sefirah/Views/Settings/DevicesPage.xaml`, `src/Sefirah/Views/Settings/AboutPage.xaml`
+- `VeyroWindows/src/Veyro/Views/SettingsPage.xaml.cs` <- `src/Sefirah/Views/SettingsPage.xaml.cs`
 
 ## Others
 

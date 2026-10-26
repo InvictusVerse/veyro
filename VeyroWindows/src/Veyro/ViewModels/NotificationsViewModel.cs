@@ -17,6 +17,14 @@ public sealed class NotificationsViewModel : BaseViewModel
     public ObservableCollection<NotificationItemViewModel> Notifications { get; } = [];
     public bool HasNoNotifications => Notifications.Count == 0;
 
+    /// <summary>Why the feed is empty: offline phones have no mirrored notifications at all.</summary>
+    public string EmptyText => _deviceManager.ActiveDevice switch
+    {
+        null => string.Empty,
+        { IsConnected: false } => "Notifications from the phone appear here while it is connected.",
+        _ => "No notifications. Turn on notification mirroring in Veyro on the phone if you expect some."
+    };
+
     public NotificationsViewModel(INotificationMirrorService mirror, IDeviceManager deviceManager)
     {
         _mirror = mirror;
@@ -33,6 +41,11 @@ public sealed class NotificationsViewModel : BaseViewModel
         {
             _peerId = device?.DeviceId;
             Sync();
+            OnPropertyChanged(nameof(EmptyText));
+        });
+        _deviceManager.ConnectionChanged += peerId => Post(() =>
+        {
+            if (string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) OnPropertyChanged(nameof(EmptyText));
         });
         Sync();
     }
@@ -121,10 +134,47 @@ public sealed class NotificationItemViewModel : BaseViewModel
     private string _replyText = string.Empty;
     private string _statusText = string.Empty;
 
+    private string? _iconSource;
+    private Microsoft.UI.Xaml.Media.ImageSource? _icon;
+
     public NotificationItemViewModel(MirroredNotification model)
     {
         _model = model;
         Actions = BuildActions(model);
+        _ = UpdateIconAsync(model.IconPngBase64);
+    }
+
+    /// <summary>The app icon the phone sent (at most 16 KiB PNG), or null: then a generic glyph is shown.</summary>
+    public Microsoft.UI.Xaml.Media.ImageSource? Icon => _icon;
+    public bool HasIcon => _icon is not null;
+    public bool HasNoIcon => _icon is null;
+
+    private async Task UpdateIconAsync(string? base64)
+    {
+        if (base64 == _iconSource) return;
+        _iconSource = base64;
+        Microsoft.UI.Xaml.Media.ImageSource? image = null;
+        if (base64 is not null)
+        {
+            try
+            {
+                byte[] bytes = Convert.FromBase64String(base64);
+                var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage { DecodePixelWidth = 48 };
+                using var stream = new MemoryStream(bytes);
+                await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+                image = bitmap;
+            }
+            catch (Exception)
+            {
+                // Untrusted bytes: anything that does not decode is simply not shown.
+                image = null;
+            }
+        }
+        if (base64 != _iconSource) return;
+        _icon = image;
+        OnPropertyChanged(nameof(Icon));
+        OnPropertyChanged(nameof(HasIcon));
+        OnPropertyChanged(nameof(HasNoIcon));
     }
 
     public string PeerId => _model.PeerId;
@@ -176,6 +226,7 @@ public sealed class NotificationItemViewModel : BaseViewModel
     {
         _model = model;
         Actions = BuildActions(model);
+        _ = UpdateIconAsync(model.IconPngBase64);
         if (!model.CanReply) IsReplyOpen = false;
         foreach (string name in new[]
                  {

@@ -1,3 +1,6 @@
+// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/CallsPage.xaml.cs, GPL-3.0.
+// Modified for Veyro.
+
 using Microsoft.UI.Xaml.Input;
 using Windows.System;
 
@@ -19,6 +22,31 @@ public sealed partial class CallsPage : Page
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshAsync();
 
     private async void Dial_Click(object sender, RoutedEventArgs e) => await ViewModel.DialAsync();
+
+    private void DialKey_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is string key) Append(key);
+    }
+
+    // Sefirah: holding or right-clicking 0 types "+".
+    private void DialZero_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        Append("+");
+    }
+
+    private void Backspace_Click(object sender, RoutedEventArgs e)
+    {
+        string number = ViewModel.DialNumber ?? string.Empty;
+        if (number.Length > 0) ViewModel.DialNumber = number[..^1];
+    }
+
+    private void Append(string key)
+    {
+        string number = ViewModel.DialNumber ?? string.Empty;
+        if (number.Length < DialBox.MaxLength) ViewModel.DialNumber = number + key;
+        DialBox.SelectionStart = ViewModel.DialNumber?.Length ?? 0;
+    }
 
     private async void DialBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {

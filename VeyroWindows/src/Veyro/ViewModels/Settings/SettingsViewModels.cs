@@ -1,15 +1,24 @@
 namespace Veyro.ViewModels.Settings;
 
+/// <summary>
+/// Settings > General. Every switch is backed by something that acts on it: sign-in startup by
+/// the MSIX startup task, minimize-to-tray by the real tray icon. Name and received-files folder
+/// are read by the listener at start, so the page says they apply after a restart.
+/// </summary>
 public sealed class GeneralViewModel : BaseViewModel
 {
+    public const string AppliesAfterRestart = "Applies the next time Veyro starts.";
+
     private readonly IIdentityManager _identityManager;
     private readonly ISettingsStore _settingsStore;
+    private readonly ILoginStartupService _startup;
+    private readonly ISystemTrayService _tray;
 
     private string _deviceName;
-    private bool _isDiscoverable;
     private string _downloadDirectory;
-    private bool _autoStartOnLogin;
     private bool _minimizeToTrayOnClose;
+    private LoginStartupState _startupState = LoginStartupState.Unavailable;
+    private bool _startupBusy;
 
     public string DeviceId => _identityManager.DeviceId.Value;
     public string Fingerprint => _identityManager.Fingerprint;
@@ -19,18 +28,8 @@ public sealed class GeneralViewModel : BaseViewModel
         get => _deviceName;
         set
         {
-            if (SetProperty(ref _deviceName, value))
-                _ = _settingsStore.UpdateAsync(s => s with { DeviceName = value });
-        }
-    }
-
-    public bool IsDiscoverable
-    {
-        get => _isDiscoverable;
-        set
-        {
-            if (SetProperty(ref _isDiscoverable, value))
-                _ = _settingsStore.UpdateAsync(s => s with { IsDiscoverable = value });
+            if (SetProperty(ref _deviceName, value) && !string.IsNullOrWhiteSpace(value))
+                _ = _settingsStore.UpdateAsync(s => s with { DeviceName = value.Trim() });
         }
     }
 
@@ -39,20 +38,30 @@ public sealed class GeneralViewModel : BaseViewModel
         get => _downloadDirectory;
         set
         {
-            if (SetProperty(ref _downloadDirectory, value))
+            if (!string.IsNullOrWhiteSpace(value) && SetProperty(ref _downloadDirectory, value))
                 _ = _settingsStore.UpdateAsync(s => s with { DownloadDirectory = value });
         }
     }
 
+    /// <summary>The startup task's real state; toggling asks Windows and shows what it applied.</summary>
     public bool AutoStartOnLogin
     {
-        get => _autoStartOnLogin;
+        get => _startupState == LoginStartupState.Enabled;
         set
         {
-            if (SetProperty(ref _autoStartOnLogin, value))
-                _ = _settingsStore.UpdateAsync(s => s with { AutoStartOnLogin = value });
+            if (value != AutoStartOnLogin && !_startupBusy) _ = SetStartupAsync(value);
         }
     }
+
+    public bool CanChangeAutoStart => !_startupBusy && _startupState is LoginStartupState.Enabled or LoginStartupState.Disabled;
+
+    public string AutoStartText => _startupState switch
+    {
+        LoginStartupState.DisabledByUser => "Turned off in Windows Settings > Apps > Startup. Turn it on there.",
+        LoginStartupState.DisabledByPolicy => "Your organisation does not allow Veyro to start at sign-in.",
+        LoginStartupState.Unavailable => "Not available when Veyro runs without its installer package.",
+        _ => "Veyro starts when you sign in to Windows, so the phone can connect without opening it."
+    };
 
     public bool MinimizeToTrayOnClose
     {
@@ -64,17 +73,70 @@ public sealed class GeneralViewModel : BaseViewModel
         }
     }
 
-    public GeneralViewModel(IIdentityManager identityManager, ISettingsStore settingsStore)
+    public string TrayText => _tray.IsAvailable
+        ? "Closing the window keeps Veyro running in the notification area. Right-click the icon to quit."
+        : "The notification-area icon could not be created, so closing the window quits Veyro.";
+
+    public string VersionText
+    {
+        get
+        {
+            try
+            {
+                var version = global::Windows.ApplicationModel.Package.Current.Id.Version;
+                return $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
+            }
+            catch (Exception)
+            {
+                return typeof(GeneralViewModel).Assembly.GetName().Version?.ToString() ?? string.Empty;
+            }
+        }
+    }
+
+    public string ProtocolText => Constants.ProtocolVersionText;
+
+    public GeneralViewModel(IIdentityManager identityManager, ISettingsStore settingsStore, ILoginStartupService startup, ISystemTrayService tray)
     {
         _identityManager = identityManager;
         _settingsStore = settingsStore;
+        _startup = startup;
+        _tray = tray;
 
         var current = _settingsStore.Current;
         _deviceName = current.DeviceName;
-        _isDiscoverable = current.IsDiscoverable;
         _downloadDirectory = current.DownloadDirectory;
-        _autoStartOnLogin = current.AutoStartOnLogin;
         _minimizeToTrayOnClose = current.MinimizeToTrayOnClose;
+    }
+
+    /// <summary>Reads the startup task state; call when the page is shown.</summary>
+    public async Task RefreshAsync()
+    {
+        _startupState = await _startup.GetStateAsync();
+        RaiseStartup();
+        OnPropertyChanged(nameof(TrayText));
+    }
+
+    private async Task SetStartupAsync(bool enabled)
+    {
+        _startupBusy = true;
+        RaiseStartup();
+        try
+        {
+            _startupState = await _startup.SetEnabledAsync(enabled);
+            await _settingsStore.UpdateAsync(s => s with { AutoStartOnLogin = _startupState == LoginStartupState.Enabled });
+        }
+        finally
+        {
+            _startupBusy = false;
+            RaiseStartup();
+        }
+    }
+
+    private void RaiseStartup()
+    {
+        OnPropertyChanged(nameof(AutoStartOnLogin));
+        OnPropertyChanged(nameof(CanChangeAutoStart));
+        OnPropertyChanged(nameof(AutoStartText));
     }
 
     public void ResetIdentity()
@@ -222,11 +284,20 @@ public sealed class DevicesViewModel : BaseViewModel
     public ObservableCollection<DiscoveredDeviceUiModel> DiscoveredDevices => deviceManager.DiscoveredDevices;
     public bool HasNoPairedDevices => PairedDevices.Count == 0;
 
+    /// <summary>
+    /// Forgets the phone: it can no longer authenticate and must pair again. A session that is
+    /// open right now stays until it drops (the link layer owns it).
+    /// </summary>
     public async Task RevokeDeviceAsync(string deviceId)
     {
         await trustStore.RemoveAsync(deviceId);
-        var existing = PairedDevices.FirstOrDefault(d => d.DeviceId == deviceId);
-        if (existing is not null)
-            PairedDevices.Remove(existing);
+        deviceManager.ReloadPairedDevices();
+    }
+
+    /// <summary>Makes the phone the one every page follows.</summary>
+    public void Select(string deviceId)
+    {
+        PairedDeviceUiModel? device = PairedDevices.FirstOrDefault(d => string.Equals(d.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+        if (device is not null) deviceManager.ActiveDevice = device;
     }
 }

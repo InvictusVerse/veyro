@@ -6,6 +6,7 @@ namespace Veyro.Views;
 public sealed partial class TransfersPage : Page
 {
     public TransfersPageViewModel ViewModel => VeyroContainer.Instance.TransfersPageViewModel;
+    public MainPageViewModel Main => VeyroContainer.Instance.MainPageViewModel;
 
     public TransfersPage()
     {

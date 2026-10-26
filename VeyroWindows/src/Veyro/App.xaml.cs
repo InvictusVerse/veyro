@@ -141,17 +141,17 @@ public partial class App : Application
 
     private void Window_Closed(object sender, WindowEventArgs args)
     {
-        if (!HandleClosedEvents)
+        if (HandleClosedEvents &&
+            VeyroContainer.Instance.SettingsStore.Current.MinimizeToTrayOnClose &&
+            VeyroContainer.Instance.SystemTrayService.IsAvailable)
+        {
+            args.Handled = true;
+            MainWindow.AppWindow.Hide();
             return;
+        }
 
-        if (!VeyroContainer.Instance.SettingsStore.Current.MinimizeToTrayOnClose)
-            return;
-
-        if (!VeyroContainer.Instance.SystemTrayService.IsAvailable)
-            return;
-
-        args.Handled = true;
-        MainWindow.AppWindow.Hide();
+        // Really closing: take the notification-area icon away with the window.
+        VeyroContainer.Instance.SystemTrayService.Dispose();
     }
 
     public static void ShowMainWindow()

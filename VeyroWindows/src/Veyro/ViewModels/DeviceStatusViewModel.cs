@@ -1,3 +1,6 @@
+// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Converters/Converters.cs (BatteryStatusToIconConverter, RingerModeToIconConverter), GPL-3.0.
+// Modified for Veyro.
+
 using Veyro.Core.Diagnostics;
 
 namespace Veyro.ViewModels;
@@ -11,8 +14,9 @@ public sealed class DeviceStatusViewModel : BaseViewModel
 {
     /// <summary>The phone stops ringing on its own after 30 s (04-PROTOCOL.md 6.2).</summary>
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
+    /// <summary>Same order as Sefirah's ringer selector: Silent, Vibrate, Ring.</summary>
     private static readonly string[] RingerModes =
-        [DeviceStatusService.RingerNormal, DeviceStatusService.RingerVibrate, DeviceStatusService.RingerSilent];
+        [DeviceStatusService.RingerSilent, DeviceStatusService.RingerVibrate, DeviceStatusService.RingerNormal];
 
     private readonly IDeviceStatusService _status;
     private readonly DispatcherQueue? _dispatcher;
@@ -49,22 +53,43 @@ public sealed class DeviceStatusViewModel : BaseViewModel
     }
 
     public bool CanControl => _peerId is not null && _status.CanControl(_peerId);
-    public string BatteryText => _reported?.Battery is { } battery ? $"{battery}%" : "--%";
+
+    /// <summary>True only once the connected phone has reported a battery level.</summary>
+    public bool HasBattery => _reported?.Battery is not null;
+    public string BatteryText => _reported?.Battery is { } battery ? $"{battery}%" : string.Empty;
     public bool IsCharging => _reported?.Charging == true;
-    public string BatteryGlyph => IsCharging ? "\uE83E" : "\uE83F";
+
+    /// <summary>Battery glyph for the reported level, same table as Sefirah's BatteryStatusToIconConverter.</summary>
+    public string BatteryGlyph => _reported?.Battery is { } level ? BatteryGlyphFor(level, IsCharging) : string.Empty;
+
+    private static string BatteryGlyphFor(int level, bool charging)
+    {
+        int tens = Math.Clamp(level / 10, 0, 10);
+        if (charging)
+            return tens switch { 10 => "\uEA93", 9 => "\uE83E", _ => ((char)(0xE85A + tens)).ToString() };
+        return tens == 10 ? "\uE83F" : ((char)(0xE850 + tens)).ToString();
+    }
     public string BatteryLabel => _reported?.Battery is { } battery
         ? $"Phone battery {battery} percent{(IsCharging ? ", charging" : string.Empty)}"
-        : "Phone battery unknown";
+        : "Phone battery not reported";
 
-    /// <summary>Index into Normal / Vibrate / Silent, or -1 when the phone has not reported it.</summary>
+    /// <summary>Index into Silent / Vibrate / Ring, or -1 when the phone has not reported it.</summary>
     public int RingerIndex => Array.IndexOf(RingerModes, _reported?.Ringer ?? string.Empty);
     public bool HasRinger => RingerIndex >= 0;
+    public bool HasStatusRow => HasBattery || HasRinger || IsDndOn;
+
+    /// <summary>Connected and status-capable, but no devStatus yet: say so instead of showing a value.</summary>
+    public bool IsWaitingForStatus => CanControl && !HasStatusRow;
     public string RingerGlyph => _reported?.Ringer switch
     {
+        DeviceStatusService.RingerNormal => "\uEA8F",
         DeviceStatusService.RingerVibrate => "\uE877",
         DeviceStatusService.RingerSilent => "\uE7ED",
-        _ => "\uEA8F"
+        _ => string.Empty
     };
+    public bool IsRingerSilent => _reported?.Ringer == DeviceStatusService.RingerSilent;
+    public bool IsRingerVibrate => _reported?.Ringer == DeviceStatusService.RingerVibrate;
+    public bool IsRingerNormal => _reported?.Ringer == DeviceStatusService.RingerNormal;
     public string RingerLabel => _reported?.Ringer switch
     {
         DeviceStatusService.RingerNormal => "Ringer on",
@@ -155,8 +180,9 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         }
         foreach (string name in new[]
                  {
-                     nameof(CanControl), nameof(BatteryText), nameof(IsCharging), nameof(BatteryGlyph), nameof(BatteryLabel),
-                     nameof(RingerIndex), nameof(HasRinger), nameof(RingerGlyph), nameof(RingerLabel),
+                     nameof(CanControl), nameof(HasBattery), nameof(BatteryText), nameof(IsCharging), nameof(BatteryGlyph),
+                     nameof(BatteryLabel), nameof(RingerIndex), nameof(HasRinger), nameof(HasStatusRow), nameof(IsWaitingForStatus), nameof(RingerGlyph),
+                     nameof(RingerLabel), nameof(IsRingerSilent), nameof(IsRingerVibrate), nameof(IsRingerNormal),
                      nameof(IsDndOn), nameof(DndLabel)
                  })
         {

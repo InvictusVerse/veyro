@@ -34,6 +34,7 @@ public sealed class PhoneMediaViewModel : BaseViewModel
     private DateTimeOffset _volumeHoldUntil;
     private double _positionSeconds;
     private double _volume;
+    private bool _isVolumeOpen;
 
     public PhoneMediaViewModel(IPhoneMediaService media, IDeviceManager deviceManager)
     {
@@ -68,7 +69,21 @@ public sealed class PhoneMediaViewModel : BaseViewModel
     public bool HasSession => _session is not null;
     public bool HasNoSession => _session is null;
     public bool CanControl => _session is not null && _peerId is not null && _media.CanControl(_peerId);
-    public string Title => _session?.Title ?? "Unknown title";
+    public string Title => _session?.Title ?? string.Empty;
+    public bool HasTitle => !string.IsNullOrWhiteSpace(_session?.Title);
+
+    /// <summary>Sefirah's volume button reveals the volume slider under the track.</summary>
+    public bool IsVolumeOpen
+    {
+        get => _isVolumeOpen;
+        set
+        {
+            if (SetProperty(ref _isVolumeOpen, value)) OnPropertyChanged(nameof(ShowVolume));
+        }
+    }
+
+    public bool ShowVolume => _isVolumeOpen && HasVolume;
+    public string VolumeText => $"{Math.Round(_volume)}";
     public string Artist => _session?.Artist ?? string.Empty;
     public bool HasArtist => !string.IsNullOrWhiteSpace(_session?.Artist);
     public string AppName => _session?.App ?? string.Empty;
@@ -122,6 +137,7 @@ public sealed class PhoneMediaViewModel : BaseViewModel
         _volumeHoldUntil = DateTimeOffset.UtcNow + EchoHold;
         _volume = value;
         OnPropertyChanged(nameof(VolumeGlyph));
+        OnPropertyChanged(nameof(VolumeText));
         Restart(_volumeSend, () => _ = SendVolumeAsync());
     }
 
@@ -165,7 +181,8 @@ public sealed class PhoneMediaViewModel : BaseViewModel
         {
             foreach (string name in new[]
                      {
-                         nameof(HasSession), nameof(HasNoSession), nameof(CanControl), nameof(Title), nameof(Artist),
+                         nameof(HasSession), nameof(HasNoSession), nameof(CanControl), nameof(Title), nameof(HasTitle),
+                         nameof(ShowVolume), nameof(VolumeText), nameof(Artist),
                          nameof(HasArtist), nameof(AppName), nameof(HasAppName), nameof(IsPlaying), nameof(PlayPauseGlyph),
                          nameof(PlayPauseLabel), nameof(CanPrev), nameof(CanNext), nameof(CanSeek), nameof(CanSeekNow),
                          nameof(DurationSeconds), nameof(DurationText), nameof(HasVolume), nameof(Volume), nameof(VolumeGlyph)

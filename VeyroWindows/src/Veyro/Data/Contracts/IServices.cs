@@ -1,8 +1,14 @@
 namespace Veyro.Data.Contracts;
 
+/// <summary>
+/// The Veyro icon in the Windows notification area. <see cref="IsAvailable"/> is true only after
+/// the icon was actually added, so "minimize to tray" never hides the window without a way back.
+/// </summary>
 public interface ISystemTrayService : IDisposable
 {
     bool IsAvailable { get; }
+
+    /// <summary>Adds the icon for <paramref name="windowHandle"/>. UI thread. Failures leave IsAvailable false.</summary>
     void Initialize(nint windowHandle);
 }
 
@@ -12,16 +18,38 @@ public interface IAppThemeModeService
     void ApplyTheme(Window window, AppThemeMode mode);
 }
 
+/// <summary>
+/// Paired phones for the sidebar switcher (trust store) with live connection state (session
+/// registry), the phone the UI follows, and phones discovery currently sees. UI thread only;
+/// events are raised on the UI thread.
+/// </summary>
 public interface IDeviceManager
 {
     ObservableCollection<PairedDeviceUiModel> PairedDevices { get; }
+
+    /// <summary>Unpaired phones seen by discovery. Untrusted: offered for pairing only.</summary>
     ObservableCollection<DiscoveredDeviceUiModel> DiscoveredDevices { get; }
+
     PairedDeviceUiModel? ActiveDevice { get; set; }
     event Action<PairedDeviceUiModel?>? ActiveDeviceChanged;
+
+    /// <summary>A paired phone connected or disconnected (argument: device id).</summary>
+    event Action<string>? ConnectionChanged;
+
+    /// <summary>Discovery saw, refreshed or lost a phone.</summary>
+    event Action? DiscoveryChanged;
+
+    /// <summary>Starts discovery if needed and re-reads its current peers.</summary>
     Task RefreshDiscoveryAsync();
 
-    /// <summary>Re-reads the trust store, for example after a new device paired. UI thread.</summary>
+    /// <summary>Re-reads the trust store, for example after a new device paired or one was removed.</summary>
     void ReloadPairedDevices();
+
+    /// <summary>Moves the selection through the paired phones (mouse wheel over the phone).</summary>
+    void SelectNext(int delta);
+
+    /// <summary>Addresses discovery currently reports for the phone; empty when it is not seen. Untrusted.</summary>
+    IReadOnlyList<string> GetSeenEndpoints(string deviceId);
 }
 
 public interface IFileTransferService
@@ -31,7 +59,11 @@ public interface IFileTransferService
     event Action<ActiveTransfer?>? ActiveTransferChanged;
     Task SendFilesAsync(PairedDeviceUiModel target, IReadOnlyList<string> filePaths);
     void CancelCurrentTransfer();
+
+    /// <summary>Hides a finished, failed or cancelled transfer from the banner. No effect while one runs.</summary>
+    void DismissFinishedTransfer();
 }
+
 
 /// <summary>Shows mirrored phone notifications as Windows toasts and routes toast input back.</summary>
 public interface INotificationToastService : IDisposable
@@ -112,6 +144,26 @@ public interface IBluetoothCallingService : IBluetoothCallLine, IDisposable
     Task DisconnectAsync();
 }
 
+public enum LoginStartupState
+{
+    Enabled,
+    Disabled,
+    /// <summary>Turned off in Task Manager or Settings; only the user can turn it back on there.</summary>
+    DisabledByUser,
+    DisabledByPolicy,
+    /// <summary>Not running as a packaged app, or the startup task is missing.</summary>
+    Unavailable
+}
+
+/// <summary>Start Veyro at sign-in through the MSIX startup task (Package.appxmanifest VeyroStartupTask).</summary>
+public interface ILoginStartupService
+{
+    Task<LoginStartupState> GetStateAsync();
+
+    /// <summary>Requests the change and returns the state Windows actually applied.</summary>
+    Task<LoginStartupState> SetEnabledAsync(bool enabled);
+}
+
 /// <summary>Renders QR codes as PNG bytes (ADR-030). The content may hold a pairing code: never log it.</summary>
 public interface IQrCodeRenderer
 {
@@ -141,10 +193,4 @@ public interface INetworkDiagnosticsService
 
     /// <summary>Adds the inbound rule for TCP 5150-5169 on private networks after a UAC prompt. True on success.</summary>
     Task<bool> RequestFirewallRuleAsync();
-}
-
-public interface IScreenMirrorService
-{
-    bool IsMirroring { get; }
-    Task StartMirroringAsync(PairedDeviceUiModel device);
 }

@@ -13,4 +13,9 @@ public sealed partial class ActiveTransferBanner : UserControl
     {
         ViewModel.CancelTransfer();
     }
+
+    private void Dismiss_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.DismissTransfer();
+    }
 }
