@@ -11,7 +11,10 @@ public sealed record AppSettings(
     bool MinimizeToTrayOnClose = true,
     // ADR-029: the Bluetooth phone chosen for call audio and the Veyro peer it belongs to.
     string? BluetoothCallTransportId = null,
-    string? BluetoothCallPeerId = null
+    string? BluetoothCallPeerId = null,
+    // ADR-030: first-run onboarding finished. Missing in older settings files, so it defaults to
+    // false; startup marks installs that already trust a peer as complete.
+    bool OnboardingCompleted = false
 );
 
 public interface ISettingsStore

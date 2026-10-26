@@ -25,6 +25,12 @@ Adapted files (Veyro path <- Sefirah path):
 - `VeyroWindows/src/Veyro/Views/CallWindow.cs` <- `src/Sefirah/Views/WindowViews/CallWindow.xaml.cs`
 - `VeyroWindows/src/Veyro/UserControls/CallView.xaml` <- `src/Sefirah/UserControls/CallView.xaml`
 - `VeyroWindows/src/Veyro/UserControls/CallView.xaml.cs` <- `src/Sefirah/UserControls/CallView.xaml.cs`
+- `VeyroWindows/src/Veyro/Views/OnboardingPage.xaml` <- `src/Sefirah/Views/Onboarding/WelcomePage.xaml`
+- `VeyroWindows/src/Veyro/Views/OnboardingPage.xaml.cs` <- `src/Sefirah/Views/Onboarding/WelcomePage.xaml.cs`
+- `VeyroWindows/src/Veyro/UserControls/PairingView.xaml` <- `src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml`
+- `VeyroWindows/src/Veyro/UserControls/PairingView.xaml.cs` <- `src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml.cs`
+- `VeyroWindows/src/Veyro/Dialogs/ConnectionRequestDialog.xaml` <- `src/Sefirah/Dialogs/ConnectionRequestDialog.xaml`
+- `VeyroWindows/src/Veyro/Dialogs/ConnectionRequestDialog.xaml.cs` <- `src/Sefirah/Dialogs/ConnectionRequestDialog.xaml.cs`, `src/Sefirah/ViewModels/Dialogs/ConnectionRequestViewModel.cs`
 
 ## Others
 

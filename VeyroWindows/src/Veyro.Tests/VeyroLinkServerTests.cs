@@ -10,6 +10,17 @@ using Xunit;
 
 namespace Veyro.Tests;
 
+/// <summary>
+/// Classes that start a real listener share one collection, so they never run in parallel: the
+/// listener picks its port by probing 5150-5169, and two parallel probes can pick the same one.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class LinkServerCollection
+{
+    public const string Name = "VeyroLinkServer";
+}
+
+[Collection(LinkServerCollection.Name)]
 public sealed class VeyroLinkServerTests
 {
     [Fact]

@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/Onboarding/WelcomePage.xaml, GPL-3.0.
+  Modified for Veyro.
+-->
+<Page
+    x:Class="Veyro.Views.OnboardingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:Veyro.Converters"
+    xmlns:userControls="using:Veyro.UserControls"
+    Background="Transparent">
+
+    <Page.Resources>
+        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Page.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <userControls:TitleBar
+            Grid.Row="0"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top" />
+
+        <!--  Step indicator  -->
+        <StackPanel
+            Grid.Row="1"
+            Margin="0,12,0,0"
+            HorizontalAlignment="Center"
+            Spacing="6">
+            <PipsPager
+                HorizontalAlignment="Center"
+                AutomationProperties.Name="Setup progress"
+                IsHitTestVisible="False"
+                NumberOfPages="4"
+                SelectedPageIndex="{x:Bind ViewModel.Step, Mode=OneWay}" />
+            <TextBlock
+                HorizontalAlignment="Center"
+                AutomationProperties.LiveSetting="Polite"
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind ViewModel.StepText, Mode=OneWay}" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <Grid Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+
+                <!--  1. Welcome  -->
+                <StackPanel
+                    MaxWidth="720"
+                    Spacing="24"
+                    Visibility="{x:Bind ViewModel.IsWelcome, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <FontIcon
+                        HorizontalAlignment="Center"
+                        FontSize="56"
+                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                        Glyph="&#xE8EA;" />
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Style="{ThemeResource TitleLargeTextBlockStyle}"
+                        Text="Welcome to Veyro" />
+                    <TextBlock
+                        Style="{ThemeResource BodyTextBlockStyle}"
+                        Text="Veyro connects your Android phone to this PC. Send files both ways, see and answer your phone's notifications, read and reply to messages, control media and handle calls from here."
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border
+                            Grid.Column="0"
+                            Padding="16"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                            <StackPanel Spacing="8">
+                                <FontIcon HorizontalAlignment="Left" Glyph="&#xE701;" />
+                                <TextBlock FontWeight="SemiBold" Text="Stays on your network" />
+                                <TextBlock
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Your devices talk directly over Wi-Fi, Ethernet or a hotspot. Nothing goes through a cloud server."
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border
+                            Grid.Column="1"
+                            Padding="16"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                            <StackPanel Spacing="8">
+                                <FontIcon HorizontalAlignment="Left" Glyph="&#xE72E;" />
+                                <TextBlock FontWeight="SemiBold" Text="Encrypted" />
+                                <TextBlock
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="You pair once with a one-time code. After that every connection is encrypted and both devices prove who they are."
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border
+                            Grid.Column="2"
+                            Padding="16"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                            <StackPanel Spacing="8">
+                                <FontIcon HorizontalAlignment="Left" Glyph="&#xE77B;" />
+                                <TextBlock FontWeight="SemiBold" Text="No account" />
+                                <TextBlock
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="No sign-up and no email. Your devices recognise each other by their own keys."
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="8">
+                        <HyperlinkButton Content="Source code" NavigateUri="https://github.com/InvictusVerse/veyro" />
+                        <Button
+                            Click="Next_Click"
+                            Content="Get started"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!--  2. Get the Android app  -->
+                <StackPanel
+                    MaxWidth="560"
+                    Spacing="20"
+                    Visibility="{x:Bind ViewModel.IsGetApp, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Style="{ThemeResource TitleTextBlockStyle}"
+                        Text="Get Veyro on your phone" />
+                    <TextBlock
+                        Style="{ThemeResource BodyTextBlockStyle}"
+                        Text="Scan this with your phone's camera to open the download page, then install the APK from the latest release. Already installed? Continue."
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <Border
+                        Width="220"
+                        Height="220"
+                        Padding="10"
+                        HorizontalAlignment="Center"
+                        Background="White"
+                        CornerRadius="8">
+                        <Image
+                            x:Name="AppQrImage"
+                            AutomationProperties.Name="QR code for the Veyro Android download page"
+                            Stretch="Uniform" />
+                    </Border>
+                    <HyperlinkButton
+                        HorizontalAlignment="Center"
+                        Content="github.com/InvictusVerse/veyro/releases"
+                        NavigateUri="https://github.com/InvictusVerse/veyro/releases" />
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="8">
+                        <Button Click="Back_Click" Content="Back" />
+                        <Button
+                            Click="Next_Click"
+                            Content="I have the app"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!--  3. Pair  -->
+                <StackPanel
+                    MaxWidth="900"
+                    Spacing="16"
+                    Visibility="{x:Bind ViewModel.IsPair, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Style="{ThemeResource TitleTextBlockStyle}"
+                        Text="Pair your phone" />
+                    <userControls:PairingView />
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="8">
+                        <Button Click="Back_Click" Content="Back" />
+                        <Button
+                            Click="PairLater_Click"
+                            Content="Pair later"
+                            ToolTipService.ToolTip="Finish setup now. You can pair from Settings at any time." />
+                    </StackPanel>
+                </StackPanel>
+
+                <!--  4. Success  -->
+                <StackPanel
+                    MaxWidth="560"
+                    Spacing="20"
+                    Visibility="{x:Bind ViewModel.IsSuccess, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <FontIcon
+                        HorizontalAlignment="Center"
+                        FontSize="56"
+                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                        Glyph="&#xE930;" />
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Style="{ThemeResource TitleTextBlockStyle}"
+                        Text="Paired" />
+                    <Border
+                        Padding="16"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                Text="{x:Bind ViewModel.PairedName, Mode=OneWay}"
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                FontFamily="Consolas"
+                                IsTextSelectionEnabled="True"
+                                Text="{x:Bind ViewModel.PairedFingerprint, Mode=OneWay}" />
+                            <TextBlock
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="This fingerprint matches the one your phone shows in Veyro settings. From now on the two devices connect on their own whenever they share a network."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="8">
+                        <Button
+                            Click="SetUpBluetooth_Click"
+                            Content="Set up Bluetooth calling (optional)"
+                            ToolTipService.ToolTip="Hear and answer phone calls on this PC" />
+                        <Button
+                            Click="Finish_Click"
+                            Content="Finish"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</Page>

@@ -96,6 +96,21 @@ public sealed class PairedDeviceUiModel : INotifyPropertyChanged
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
 }
 
+/// <summary>A phone seen by discovery while the pairing screen is open (ADR-030). Discovery is untrusted.</summary>
+public sealed record NearbyPhoneUiModel(string DeviceId, string Name, string Detail, bool IsPaired);
+
+/// <summary>One line of the pairing screen's network check.</summary>
+public sealed record NetworkCheckUiModel(
+    string Title,
+    string Detail,
+    bool IsOk,
+    string? ActionText = null,
+    NetworkCheckAction Action = NetworkCheckAction.None)
+{
+    public bool IsProblem => !IsOk;
+    public bool HasAction => ActionText is not null;
+}
+
 public sealed record DiscoveredDeviceUiModel(
     string DeviceId,
     string Name,

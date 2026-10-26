@@ -19,6 +19,9 @@ public interface IDeviceManager
     PairedDeviceUiModel? ActiveDevice { get; set; }
     event Action<PairedDeviceUiModel?>? ActiveDeviceChanged;
     Task RefreshDiscoveryAsync();
+
+    /// <summary>Re-reads the trust store, for example after a new device paired. UI thread.</summary>
+    void ReloadPairedDevices();
 }
 
 public interface IFileTransferService
@@ -107,6 +110,37 @@ public interface IBluetoothCallingService : IBluetoothCallLine, IDisposable
 
     /// <summary>Gives the line back to Windows and forgets the choice.</summary>
     Task DisconnectAsync();
+}
+
+/// <summary>Renders QR codes as PNG bytes (ADR-030). The content may hold a pairing code: never log it.</summary>
+public interface IQrCodeRenderer
+{
+    byte[] RenderPng(string content, int pixelsPerModule = 10);
+}
+
+public enum FirewallRuleState
+{
+    Unknown,
+    Present,
+    Missing
+}
+
+/// <summary>A connected network and whether Windows treats it as Public.</summary>
+public sealed record NetworkProfileInfo(string InterfaceName, bool IsPublic);
+
+public sealed record NetworkCheckResult(FirewallRuleState Firewall, IReadOnlyList<NetworkProfileInfo> Profiles);
+
+/// <summary>
+/// Windows Firewall and network-profile checks for the pairing screen, so problems are named
+/// instead of failing silently. Windows: NetSecurity / NetConnection PowerShell cmdlets.
+/// </summary>
+public interface INetworkDiagnosticsService
+{
+    /// <summary>Reads the Veyro firewall rule and the network profiles. Never throws.</summary>
+    Task<NetworkCheckResult> CheckAsync();
+
+    /// <summary>Adds the inbound rule for TCP 5150-5169 on private networks after a UAC prompt. True on success.</summary>
+    Task<bool> RequestFirewallRuleAsync();
 }
 
 public interface IScreenMirrorService

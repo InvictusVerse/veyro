@@ -25,8 +25,9 @@ public sealed record InboundPairingRequest(
     string Pin);
 
 /// <summary>
-/// Windows listener for authenticated, already-paired inbound sessions.
-/// Unknown peers are refused; pairing remains a separate explicit workflow.
+/// Windows listener for authenticated inbound sessions. An unknown peer pairs either through the
+/// open <see cref="Link.PairingWindow"/> (ADR-030) or, when none is open, only after the
+/// <see cref="PairingAuthorizer"/> prompt approves it.
 /// </summary>
 public sealed class VeyroLinkServer : IAsyncDisposable
 {
@@ -47,8 +48,16 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
         LinkCapabilities.Messaging | LinkCapabilities.Calls;
 
+    /// <summary>Legacy consent prompt, used only when no <see cref="PairingWindow"/> is open.</summary>
     public Func<InboundPairingRequest, Task<bool>> PairingAuthorizer { get; set; } = _ => Task.FromResult(false);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
+
+    /// <summary>
+    /// How long a device pairing through the open window has to send a PairHello that verifies.
+    /// The user may still be typing the code on the phone, so this is generous. Exceeding it
+    /// counts as a failed attempt (04-PROTOCOL.md 4.2).
+    /// </summary>
+    public TimeSpan WindowPairHelloTimeout { get; set; } = TimeSpan.FromMinutes(2);
 
     public VeyroLinkServer(
         string localDeviceId,
@@ -58,7 +67,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         ReadOnlySpan<byte> localPublicKey,
         Func<InboundOfferRequest, Task<bool>> authorize,
         int port = 0,
-        PeerSessionRegistry? sessions = null)
+        PeerSessionRegistry? sessions = null,
+        TimeProvider? timeProvider = null)
     {
         _sessions = sessions ?? new PeerSessionRegistry();
         _localDeviceId = localDeviceId;
@@ -68,10 +78,21 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         _localPublicKey = localPublicKey.ToArray();
         OfferAuthorizer = authorize;
         Port = port == 0 ? FindFreePort() : port;
+        PairingWindow = new PairingWindow(
+            localDeviceId,
+            () => _localName,
+            () => IsRunning ? PairingQr.LocalEndpoints(Port) : [],
+            timeProvider);
     }
 
     public int Port { get; }
     public bool IsRunning => _app is not null;
+
+    /// <summary>The QR / on-screen code pairing window (ADR-030). Closed unless the UI opens it.</summary>
+    public PairingWindow PairingWindow { get; }
+
+    /// <summary>A new device was paired (either path). Raised on a server thread.</summary>
+    public event Action<TrustedPeer>? PairingCompleted;
 
     /// <summary>Live authenticated sessions, for companion features (ADR-025).</summary>
     public IPeerSessionRegistry Sessions => _sessions;
@@ -115,6 +136,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);
+        PairingWindow.Dispose();
         _stop.Dispose();
     }
 
@@ -157,14 +179,26 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             TrustedPeer? trusted = _trustStore.GetPeer(preamble.Id);
             bool pairing = trusted is null;
             string? pairingPin = null;
+            PairingAttempt? windowAttempt = null;
             if (trusted is null)
             {
-                pairingPin = FrameCrypto.NewPin();
-                bool approved = await PairingAuthorizer(new InboundPairingRequest(preamble.Id, preamble.Name, pairingPin)).ConfigureAwait(false);
-                if (!approved)
+                windowAttempt = PairingWindow.TryBeginAttempt();
+                if (windowAttempt is not null)
                 {
-                    await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "declined")), ct).ConfigureAwait(false);
-                    return;
+                    // ADR-030: the user opened the pairing screen, so scanning or typing its code
+                    // is the consent. No prompt; the code is never logged.
+                    pairingPin = windowAttempt.Code;
+                    VeyroTrace.Info($"Unknown peer {preamble.Id} pairing through the open pairing window");
+                }
+                else
+                {
+                    pairingPin = FrameCrypto.NewPin();
+                    bool approved = await PairingAuthorizer(new InboundPairingRequest(preamble.Id, preamble.Name, pairingPin)).ConfigureAwait(false);
+                    if (!approved)
+                    {
+                        await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "declined")), ct).ConfigureAwait(false);
+                        return;
+                    }
                 }
             }
 
@@ -182,7 +216,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             await using var secure = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: !pairing, preamble.Id);
             if (pairing)
             {
-                SecureLinkMessage pairMessage = await secure.ReceiveAsync(ct).ConfigureAwait(false)
+                SecureLinkMessage pairMessage = (windowAttempt is null
+                    ? await secure.ReceiveAsync(ct).ConfigureAwait(false)
+                    : await ReceiveWindowPairHelloAsync(secure, windowAttempt, ct).ConfigureAwait(false))
                     ?? throw new InvalidDataException("Peer closed before PairHello.");
                 if (pairMessage.Envelope.Payload is not LinkMessage.PairHello pairHello ||
                     !string.Equals(pairHello.DeviceId, preamble.Id, StringComparison.OrdinalIgnoreCase))
@@ -208,6 +244,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     Convert.ToBase64String(sessionSecret),
                     Convert.ToBase64String(_localPublicKey)), ct).ConfigureAwait(false);
                 secure.Rekey(sessionSecret);
+                if (windowAttempt is not null) PairingWindow.Complete(trusted);
+                try { PairingCompleted?.Invoke(trusted); }
+                catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
             }
             TrustedPeer pairedPeer = trusted ?? throw new UnauthorizedAccessException("Pairing did not establish trust.");
             await RunSessionAsync(secure, pairedPeer, remoteAddress, ct).ConfigureAwait(false);
@@ -219,6 +258,35 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             VeyroTrace.Error("Inbound WebSocket session failed", error);
             try { await socket.CloseAsync(WebSocketCloseStatus.ProtocolError, "protocol-error", CancellationToken.None).ConfigureAwait(false); }
             catch { }
+        }
+    }
+
+    /// <summary>
+    /// Receives the PairHello of a device pairing through the open window. A frame that does not
+    /// verify under the window's code (wrong code) or no PairHello in time is a failed attempt;
+    /// after <see cref="PairingWindow.MaxFailures"/> the window issues a new code.
+    /// </summary>
+    private async Task<SecureLinkMessage?> ReceiveWindowPairHelloAsync(
+        SecureLinkSession secure, PairingAttempt attempt, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(WindowPairHelloTimeout);
+        try
+        {
+            return await secure.ReceiveAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            VeyroTrace.Warn("Pairing window: PairHello did not verify (wrong code)");
+            PairingWindow.RecordFailure(attempt);
+            throw;
+        }
+        catch (Exception error) when (error is OperationCanceledException or WebSocketException &&
+                                      timeout.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            VeyroTrace.Warn("Pairing window: no PairHello before the timeout");
+            PairingWindow.RecordFailure(attempt);
+            throw new TimeoutException("PairHello did not arrive in time.", error);
         }
     }
 

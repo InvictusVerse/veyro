@@ -206,10 +206,21 @@ public sealed class BluetoothCallingViewModel : BaseViewModel
     }
 }
 
-public sealed class DevicesViewModel(IDeviceManager deviceManager, ITrustStore trustStore) : BaseViewModel
+public sealed class DevicesViewModel : BaseViewModel
 {
+    private readonly IDeviceManager deviceManager;
+    private readonly ITrustStore trustStore;
+
+    public DevicesViewModel(IDeviceManager deviceManager, ITrustStore trustStore)
+    {
+        this.deviceManager = deviceManager;
+        this.trustStore = trustStore;
+        deviceManager.PairedDevices.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoPairedDevices));
+    }
+
     public ObservableCollection<PairedDeviceUiModel> PairedDevices => deviceManager.PairedDevices;
     public ObservableCollection<DiscoveredDeviceUiModel> DiscoveredDevices => deviceManager.DiscoveredDevices;
+    public bool HasNoPairedDevices => PairedDevices.Count == 0;
 
     public async Task RevokeDeviceAsync(string deviceId)
     {

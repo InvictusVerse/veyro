@@ -7,6 +7,8 @@
     <!-- Cryptography & Protocol (ADR-012) -->
     <PackageVersion Include="BouncyCastle.Cryptography" Version="2.5.1" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+    <!-- QR pairing code rendering, app project only (ADR-030). MIT. PngByteQRCode needs no GDI+. -->
+    <PackageVersion Include="QRCoder" Version="1.8.1" />
 
     <!-- Testing -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />

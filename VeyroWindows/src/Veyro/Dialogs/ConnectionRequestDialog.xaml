@@ -1,31 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Dialogs/ConnectionRequestDialog.xaml, GPL-3.0.
+  Modified for Veyro.
+-->
 <ContentDialog
     x:Class="Veyro.Dialogs.ConnectionRequestDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Pairing Confirmation"
+    Title="Pair with this phone?"
     CloseButtonText="Decline"
-    DefaultButton="Primary"
-    PrimaryButtonText="Confirm &amp; Pair">
+    DefaultButton="Close"
+    PrimaryButtonText="Accept"
+    Style="{ThemeResource DefaultContentDialogStyle}">
 
-    <StackPanel Spacing="12">
+    <ContentDialog.Resources>
+        <x:Double x:Key="ContentDialogMaxWidth">420</x:Double>
+    </ContentDialog.Resources>
+
+    <StackPanel Spacing="16">
+        <!--  Phone name and fingerprint  -->
+        <StackPanel HorizontalAlignment="Center" Spacing="8">
+            <Border
+                Width="64"
+                Height="64"
+                HorizontalAlignment="Center"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                CornerRadius="32">
+                <FontIcon FontSize="30" Glyph="&#xE8EA;" />
+            </Border>
+            <TextBlock
+                x:Name="PeerNameText"
+                HorizontalAlignment="Center"
+                Style="{ThemeResource SubtitleTextBlockStyle}"
+                TextAlignment="Center"
+                TextWrapping="Wrap" />
+            <TextBlock
+                x:Name="FingerprintText"
+                HorizontalAlignment="Center"
+                FontFamily="Consolas"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                IsTextSelectionEnabled="True" />
+        </StackPanel>
+
         <TextBlock
-            TextWrapping="Wrap"
-            Text="Verify that the 6-digit security code below matches the code displayed on your Android device:" />
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="Accept only if you just asked to pair from this phone. Then type this code on the phone:"
+            TextAlignment="Center"
+            TextWrapping="Wrap" />
+
         <Border
             Padding="16"
-            HorizontalAlignment="Center"
-            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
             CornerRadius="8">
             <TextBlock
                 x:Name="PinCodeText"
-                FontFamily="Consolas"
-                FontSize="28"
-                FontWeight="Bold"
-                CharacterSpacing="160"
-                Text="000000" />
+                HorizontalAlignment="Center"
+                AutomationProperties.Name="Pairing code"
+                CharacterSpacing="120"
+                FontFamily="Cascadia Mono, Consolas"
+                FontSize="40"
+                FontWeight="SemiBold" />
         </Border>
+
         <TextBlock
-            x:Name="PeerInfoText"
+            x:Name="TimeoutText"
             HorizontalAlignment="Center"
             FontSize="12"
             Foreground="{ThemeResource TextFillColorSecondaryBrush}" />

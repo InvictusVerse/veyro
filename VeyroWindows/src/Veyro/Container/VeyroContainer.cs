@@ -41,6 +41,8 @@ public sealed class VeyroContainer
     public IBluetoothCallingService BluetoothCalling { get; }
     public CallRouter CallRouter { get; }
     public CallWindowService CallWindowService { get; }
+    public INetworkDiagnosticsService NetworkDiagnostics { get; }
+    public IQrCodeRenderer QrCodeRenderer { get; }
 
     // ViewModels
     public NotificationsViewModel NotificationsViewModel { get; }
@@ -54,6 +56,8 @@ public sealed class VeyroContainer
     public GeneralViewModel GeneralViewModel { get; }
     public DevicesViewModel DevicesViewModel { get; }
     public BluetoothCallingViewModel BluetoothCallingViewModel { get; }
+    public PairingViewModel PairingViewModel { get; }
+    public OnboardingViewModel OnboardingViewModel { get; }
 
     public VeyroContainer(string? dataDirectory = null)
     {
@@ -117,6 +121,14 @@ public sealed class VeyroContainer
         AppsViewModel = new AppsViewModel(DeviceManager);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);
+
+        // ADR-030: QR pairing screen (shared by onboarding and Settings) and first-run flow.
+        NetworkDiagnostics = new WindowsNetworkDiagnostics();
+        QrCodeRenderer = new QrCodeRenderer();
+        PairingViewModel = new PairingViewModel(
+            LinkServer, DiscoveryService, TrustStore, IdentityManager, SettingsStore,
+            NetworkDiagnostics, QrCodeRenderer, startupError: () => StartupError);
+        OnboardingViewModel = new OnboardingViewModel(SettingsStore);
     }
 
     public static VeyroContainer Initialize(string? dataDirectory = null)

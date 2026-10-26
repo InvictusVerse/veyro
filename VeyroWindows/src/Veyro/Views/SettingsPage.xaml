@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:contracts="using:Veyro.Data.Contracts"
     xmlns:converters="using:Veyro.Converters"
+    xmlns:models="using:Veyro.Data.Models"
     Padding="24">
 
     <Page.Resources>
@@ -38,6 +39,71 @@
                 </StackPanel>
             </Border>
 
+            <!-- Devices Card (ADR-030): paired phones and the QR pairing screen -->
+            <Border
+                Padding="16"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Spacing="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="16"
+                            FontWeight="SemiBold"
+                            Text="Devices" />
+                        <Button
+                            Grid.Column="1"
+                            Click="PairNewDevice_Click"
+                            Style="{StaticResource AccentButtonStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon FontSize="14" Glyph="&#xED14;" />
+                                <TextBlock Text="Pair new device" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                    <ItemsRepeater ItemsSource="{x:Bind Devices.PairedDevices, Mode=OneWay}">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Orientation="Vertical" Spacing="4" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="models:PairedDeviceUiModel">
+                                <Grid
+                                    Padding="10,8"
+                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                    ColumnSpacing="12"
+                                    CornerRadius="6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock FontWeight="SemiBold" Text="{x:Bind Name, Mode=OneWay}" />
+                                        <TextBlock
+                                            FontFamily="Consolas"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{x:Bind Fingerprint}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="No phone is paired yet. Select Pair new device and scan the code with Veyro on your phone."
+                        TextWrapping="Wrap"
+                        Visibility="{x:Bind Devices.HasNoPairedDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
             <!-- Discovery & Storage Card -->
             <Border
                 Padding="16"
@@ -58,6 +124,7 @@
 
             <!-- Bluetooth calling Card (ADR-029) -->
             <Border
+                x:Name="BluetoothCard"
                 Padding="16"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"

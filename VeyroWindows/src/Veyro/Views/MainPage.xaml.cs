@@ -6,14 +6,25 @@ namespace Veyro.Views;
 
 public sealed partial class MainPage : Page
 {
+    /// <summary>Navigation parameter: open Settings scrolled to Bluetooth calling.</summary>
+    public const string BluetoothSettingsSection = SettingsPage.BluetoothSection;
+
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
     public GeneralViewModel GeneralViewModel => VeyroContainer.Instance.GeneralViewModel;
+
+    private string? _pendingSettingsSection;
 
     public MainPage()
     {
         InitializeComponent();
         // A toast asked for a conversation: switch to the Messages tab (the view model selects the thread).
         VeyroContainer.Instance.MessagesViewModel.OpenRequested += SelectMessagesTab;
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        _pendingSettingsSection = e.Parameter as string;
     }
 
     private void SelectMessagesTab()
@@ -27,6 +38,12 @@ public sealed partial class MainPage : Page
 
     private void MainNavigationView_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!string.IsNullOrEmpty(_pendingSettingsSection))
+        {
+            // SelectionChanged navigates to Settings and passes the section along.
+            MainNavigationView.SelectedItem = MainNavigationView.SettingsItem;
+            return;
+        }
         if (MainNavigationView.MenuItems.FirstOrDefault() is NavigationViewItem firstItem)
         {
             MainNavigationView.SelectedItem = firstItem;
@@ -38,7 +55,8 @@ public sealed partial class MainPage : Page
     {
         if (args.IsSettingsSelected)
         {
-            ContentFrame.Navigate(typeof(SettingsPage));
+            ContentFrame.Navigate(typeof(SettingsPage), _pendingSettingsSection);
+            _pendingSettingsSection = null;
             return;
         }
 

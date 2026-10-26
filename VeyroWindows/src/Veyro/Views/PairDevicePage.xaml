@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Veyro.Views.PairDevicePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:userControls="using:Veyro.UserControls"
+    Padding="24">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel
+            MaxWidth="900"
+            HorizontalAlignment="Left"
+            Spacing="16">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button
+                    AutomationProperties.Name="Back to Settings"
+                    Click="Back_Click"
+                    ToolTipService.ToolTip="Back to Settings">
+                    <FontIcon FontSize="14" Glyph="&#xE72B;" />
+                </Button>
+                <TextBlock
+                    VerticalAlignment="Center"
+                    FontSize="22"
+                    FontWeight="SemiBold"
+                    Text="Pair a new phone" />
+            </StackPanel>
+
+            <InfoBar
+                x:Name="PairedInfoBar"
+                IsClosable="False"
+                IsOpen="False"
+                Severity="Success"
+                Title="Paired">
+                <InfoBar.ActionButton>
+                    <Button Click="PairAnother_Click" Content="Pair another" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+
+            <userControls:PairingView x:Name="Pairing" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

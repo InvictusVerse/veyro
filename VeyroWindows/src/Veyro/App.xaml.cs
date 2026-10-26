@@ -39,48 +39,26 @@ public partial class App : Application
         VeyroContainer.Instance.SystemTrayService.Initialize(WindowHandle);
         MainWindow.Closed += Window_Closed;
 
+        var container = VeyroContainer.Instance;
+        // ADR-030: first run shows onboarding. Installs from before onboarding existed that
+        // already trust a phone count as onboarded.
+        if (!container.SettingsStore.Current.OnboardingCompleted && container.TrustStore.GetTrustedPeers().Count > 0)
+            _ = container.SettingsStore.UpdateAsync(s => s with { OnboardingCompleted = true });
+
         var rootFrame = new Frame();
         MainWindow.Content = rootFrame;
-        rootFrame.Navigate(typeof(MainPage));
+        rootFrame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
 
         MainWindow.Activate();
-        VeyroContainer.Instance.LinkServer.PairingAuthorizer = AuthorizePairingAsync;
-        VeyroContainer.Instance.LinkServer.OfferAuthorizer = AuthorizeIncomingTransferAsync;
+        container.LinkServer.PairingAuthorizer = AuthorizePairingAsync;
+        container.LinkServer.OfferAuthorizer = AuthorizeIncomingTransferAsync;
+        // A newly paired phone shows up in the device list and sidebar without a restart.
+        container.LinkServer.PairingCompleted += _ =>
+            MainWindow.DispatcherQueue.TryEnqueue(() => container.DeviceManager.ReloadPairedDevices());
         // ADR-029: on the UI thread, since reconnecting may show the Windows access prompt.
-        _ = VeyroContainer.Instance.BluetoothCalling.InitializeAsync();
-        _ = RequestFirewallRuleAsync();
+        _ = container.BluetoothCalling.InitializeAsync();
+        _ = container.NetworkDiagnostics.RequestFirewallRuleAsync();
         _ = StartNetworkServicesAsync();
-    }
-
-    private static async Task RequestFirewallRuleAsync()
-    {
-        const string ruleName = "Veyro LAN Transfer";
-        const string script = "if (-not (Get-NetFirewallRule -DisplayName 'Veyro LAN Transfer' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'Veyro LAN Transfer' -Direction Inbound -Protocol TCP -LocalPort 5150-5169 -Action Allow -Profile Private }";
-        try
-        {
-            VeyroTrace.Info("Requesting administrator permission to allow private-network TCP ports 5150-5169");
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script}\"",
-                Verb = "runas",
-                UseShellExecute = true,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            using Process? process = Process.Start(startInfo);
-            if (process is null) { VeyroTrace.Warn($"Could not start firewall permission request for '{ruleName}'"); return; }
-            await process.WaitForExitAsync().ConfigureAwait(false);
-            VeyroTrace.Info($"Firewall permission request exited with code {process.ExitCode}");
-        }
-        catch (Win32Exception error) when (error.NativeErrorCode == 1223)
-        {
-            VeyroTrace.Warn("Firewall permission request was cancelled by the user");
-        }
-        catch (Exception error)
-        {
-            VeyroTrace.Error("Firewall permission request failed", error);
-        }
     }
 
     private static async Task StartNetworkServicesAsync()
@@ -114,7 +92,10 @@ public partial class App : Application
         {
             try
             {
-                var dialog = new ConnectionRequestDialog(request.PeerName, request.PeerDeviceId, request.Pin)
+                string fingerprint = DeviceId.ParseOrNull(request.PeerDeviceId) is { } id
+                    ? DeviceId.FormatFingerprint(id)
+                    : request.PeerDeviceId;
+                var dialog = new ConnectionRequestDialog(request.PeerName, fingerprint, request.Pin)
                 {
                     XamlRoot = MainWindow.Content.XamlRoot
                 };

@@ -5,13 +5,34 @@ namespace Veyro.Views;
 
 public sealed partial class SettingsPage : Page
 {
+    /// <summary>Navigation parameter that scrolls to the Bluetooth calling card.</summary>
+    public const string BluetoothSection = "bluetooth";
+
     public GeneralViewModel ViewModel => VeyroContainer.Instance.GeneralViewModel;
     public BluetoothCallingViewModel Bluetooth => VeyroContainer.Instance.BluetoothCallingViewModel;
+    public DevicesViewModel Devices => VeyroContainer.Instance.DevicesViewModel;
 
     public SettingsPage()
     {
         InitializeComponent();
     }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter as string == BluetoothSection)
+        {
+            void BringIntoView(object sender, RoutedEventArgs args)
+            {
+                Loaded -= BringIntoView;
+                BluetoothCard.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0.0 });
+            }
+            Loaded += BringIntoView;
+        }
+    }
+
+    /// <summary>Opens the shared QR pairing screen (ADR-030).</summary>
+    private void PairNewDevice_Click(object sender, RoutedEventArgs e) => Frame.Navigate(typeof(PairDevicePage));
 
     private void ResetIdentity_Click(object sender, RoutedEventArgs e)
     {

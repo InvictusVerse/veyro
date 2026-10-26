@@ -8,6 +8,14 @@ public enum StartupOptions
     Visible = 3
 }
 
+/// <summary>What the button on a pairing-screen network check does.</summary>
+public enum NetworkCheckAction
+{
+    None = 0,
+    AddFirewallRule = 1,
+    OpenNetworkSettings = 2
+}
+
 public enum AppThemeMode
 {
     System = 0,

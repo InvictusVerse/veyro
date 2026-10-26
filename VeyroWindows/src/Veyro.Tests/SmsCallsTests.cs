@@ -551,6 +551,7 @@ public sealed class CallServiceTests
 }
 
 /// <summary>ADR-027 on a real loopback session.</summary>
+[Collection(LinkServerCollection.Name)]
 public sealed class SmsCallsSessionTests
 {
     [Fact]

@@ -59,7 +59,13 @@ public readonly record struct DeviceId(string Value)
 
     public static string FormatFingerprint(ReadOnlySpan<byte> publicKey)
     {
-        var id = FromPublicKey(publicKey).Value;
+        return FormatFingerprint(FromPublicKey(publicKey));
+    }
+
+    /// <summary>The same fingerprint, from an id already derived from (or bound to) the key.</summary>
+    public static string FormatFingerprint(DeviceId deviceId)
+    {
+        var id = deviceId.Value;
         return $"{id[..4]}-{id[4..8]}-{id[8..12]}-{id[12..16]}";
     }
 
