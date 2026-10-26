@@ -93,13 +93,41 @@ public sealed class ControlMessageVectorTests
         Assert.NotNull(decoded);
         Assert.Equal("6JE8415YZQQYQMBD34569HVYX4", decoded!.Id);
         Assert.Equal("android", decoded.Platform);
-        Assert.Equal(1, decoded.ProtocolVersion);
+        Assert.Equal(2, decoded.ProtocolVersion);
+        Assert.Equal(2, LinkProtocol.Version);
 
         // encodeDefaults: platform and protocolVersion must be emitted even at their defaults.
         string emitted = LinkJson.Encode(new LinkPreamble("X", "Y"));
         var keys = KeysOf(emitted);
         Assert.Contains("platform", keys);
         Assert.Contains("protocolVersion", keys);
+        AssertKeyPolicy(v, emitted);
+    }
+
+    [Fact]
+    public void ConfirmPairingFrames_MatchVectors()
+    {
+        using var doc = LoadVectors();
+        var vectors = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray().ToList();
+        JsonElement Named(string name) => vectors.Single(v => v.TryGetProperty("name", out var n) && n.GetString() == name);
+
+        var preambleVector = Named("LinkPreamble for confirm pairing");
+        var preamble = LinkJson.Decode<LinkPreamble>(preambleVector.GetProperty("json").GetString()!)!;
+        Assert.Equal(LinkPreamble.PairConfirm, preamble.Pair);
+        Assert.Equal("hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=", preamble.Pk);
+        AssertKeyPolicy(preambleVector, LinkJson.Encode(preamble));
+
+        var ackVector = Named("LinkPreambleAck for confirm pairing");
+        var ack = LinkJson.Decode<LinkPreambleAck>(ackVector.GetProperty("json").GetString()!)!;
+        Assert.Equal(LinkPreambleAck.ModePairingConfirm, ack.Mode);
+        Assert.Equal("SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=", ack.Commit);
+        AssertKeyPolicy(ackVector, LinkJson.Encode(ack));
+
+        var nonceVector = Named("pairNonce");
+        var nonce = LinkJson.Decode<LinkPairNonce>(nonceVector.GetProperty("json").GetString()!)!;
+        Assert.Equal(LinkPairNonce.Type, nonce.T);
+        Assert.Equal(32, Convert.FromBase64String(nonce.N).Length);
+        AssertKeyPolicy(nonceVector, LinkJson.Encode(nonce));
     }
 
     [Fact]
@@ -120,7 +148,7 @@ public sealed class ControlMessageVectorTests
     }
 
     [Fact]
-    public void ValidModes_AreExactlyTheFourDeclared()
+    public void ValidModes_AreExactlyTheFiveDeclared()
     {
         using var doc = LoadVectors();
         var modes = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray()
@@ -129,7 +157,8 @@ public sealed class ControlMessageVectorTests
 
         Assert.Equal(
             new[] { LinkPreambleAck.ModeSession, LinkPreambleAck.ModePairing,
-                    LinkPreambleAck.ModeBusy, LinkPreambleAck.ModeRefused },
+                    LinkPreambleAck.ModePairingConfirm, LinkPreambleAck.ModeBusy,
+                    LinkPreambleAck.ModeRefused },
             modes);
     }
 

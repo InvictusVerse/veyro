@@ -12,9 +12,10 @@
   "handshakeVectors": [
     {
       "name": "LinkPreamble",
-      "note": "encodeDefaults = true, so platform and protocolVersion appear even when left at their defaults.",
-      "json": "{\"id\":\"6JE8415YZQQYQMBD34569HVYX4\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":1}",
-      "requiredKeys": ["id", "name", "platform", "protocolVersion"]
+      "note": "encodeDefaults = true, so platform and protocolVersion appear even when left at their defaults. LINK_PROTOCOL_VERSION is 2 since ADR-031; pair and pk are null by default and therefore omitted.",
+      "json": "{\"id\":\"6JE8415YZQQYQMBD34569HVYX4\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":2}",
+      "requiredKeys": ["id", "name", "platform", "protocolVersion"],
+      "forbiddenKeys": ["pair", "pk"]
     },
     {
       "name": "LinkPreambleAck accepting a session",
@@ -29,7 +30,26 @@
     },
     {
       "name": "Valid modes",
-      "modes": ["session", "pairing", "busy", "refused"]
+      "modes": ["session", "pairing", "pairing-confirm", "busy", "refused"]
+    },
+    {
+      "name": "LinkPreamble for confirm pairing",
+      "note": "04-PROTOCOL.md 4.3. pk is the sender's static X25519 public key, standard base64 with padding.",
+      "json": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":2,\"pair\":\"confirm\",\"pk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\"}",
+      "requiredKeys": ["id", "name", "platform", "protocolVersion", "pair", "pk"]
+    },
+    {
+      "name": "LinkPreambleAck for confirm pairing",
+      "note": "Values from pair-confirm.json: pkB and the commitment C.",
+      "json": "{\"mode\":\"pairing-confirm\",\"pk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\",\"commit\":\"SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=\"}",
+      "requiredKeys": ["mode", "pk", "commit"],
+      "forbiddenKeys": ["reason"]
+    },
+    {
+      "name": "pairNonce",
+      "note": "Unauthenticated text frame, not inside a LinkWireFrame. n is 32 bytes, base64 (nA from pair-confirm.json).",
+      "json": "{\"t\":\"pairNonce\",\"n\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\"}",
+      "requiredKeys": ["t", "n"]
     }
   ],
   "wireFrameVectors": [
@@ -49,9 +69,9 @@
   "envelopeVectors": [
     {
       "name": "Envelope wrapping a ping",
-      "json": "{\"v\":1,\"msgId\":\"m-1\",\"from\":\"6JE8415YZQQYQMBD34569HVYX4\",\"seq\":7,\"ts\":1760000000000,\"payload\":{\"t\":\"ping\",\"nonce\":\"abc\"}}",
+      "json": "{\"v\":2,\"msgId\":\"m-1\",\"from\":\"6JE8415YZQQYQMBD34569HVYX4\",\"seq\":7,\"ts\":1760000000000,\"payload\":{\"t\":\"ping\",\"nonce\":\"abc\"}}",
       "requiredKeys": ["v", "msgId", "from", "seq", "ts", "payload"],
-      "expected": { "v": 1, "seq": 7, "payloadType": "ping" }
+      "expected": { "v": 2, "seq": 7, "payloadType": "ping" }
     }
   ],
   "messageVectors": [
@@ -80,7 +100,7 @@
     {
       "name": "pairHello without a public key",
       "discriminator": "pairHello",
-      "json": "{\"t\":\"pairHello\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"appVersion\":\"1.0.0\",\"protocolVersion\":1}",
+      "json": "{\"t\":\"pairHello\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"appVersion\":\"1.0.0\",\"protocolVersion\":2}",
       "forbiddenKeys": ["publicKeyB64"]
     },
     {

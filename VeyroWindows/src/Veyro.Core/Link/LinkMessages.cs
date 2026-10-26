@@ -3,10 +3,13 @@ using System.Text.Json.Serialization;
 
 namespace Veyro.Core.Link;
 
-/// <summary>Bumped on any change to bytes on the wire.</summary>
+/// <summary>
+/// Bumped on any change to bytes on the wire. 2 = confirm-code pairing (04-PROTOCOL.md 4.3,
+/// ADR-031); version 1 peers are refused.
+/// </summary>
 public static class LinkProtocol
 {
-    public const int Version = 1;
+    public const int Version = 2;
 }
 
 /// <summary>
@@ -20,17 +23,50 @@ public sealed record LinkPreamble(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("platform")] string Platform = "windows",
-    [property: JsonPropertyName("protocolVersion")] int ProtocolVersion = LinkProtocol.Version);
+    [property: JsonPropertyName("protocolVersion")] int ProtocolVersion = LinkProtocol.Version,
+    /// <summary>How to pair if the receiver does not know us: confirm | qr | absent (legacy PIN).</summary>
+    [property: JsonPropertyName("pair")] string? Pair = null,
+    /// <summary>Sender's static X25519 public key, base64. Sent with pair = confirm.</summary>
+    [property: JsonPropertyName("pk")] string? Pk = null)
+{
+    /// <summary>Compare a code on both screens and accept on the receiver (04-PROTOCOL.md 4.3).</summary>
+    public const string PairConfirm = "confirm";
+
+    /// <summary>The receiver's open QR window supplies the code (04-PROTOCOL.md 4.2).</summary>
+    public const string PairQr = "qr";
+}
 
 /// <summary>The receiver's answer: which mode this connection will run in.</summary>
 public sealed record LinkPreambleAck(
     [property: JsonPropertyName("mode")] string Mode,
-    [property: JsonPropertyName("reason")] string? Reason = null)
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    /// <summary>Receiver's static X25519 public key, base64. Only with pairing-confirm.</summary>
+    [property: JsonPropertyName("pk")] string? Pk = null,
+    /// <summary>SHA-256("veyro-commit-v1" || pkB || pkA || nB), base64. Only with pairing-confirm.</summary>
+    [property: JsonPropertyName("commit")] string? Commit = null)
 {
     public const string ModeSession = "session";
     public const string ModePairing = "pairing";
+    public const string ModePairingConfirm = "pairing-confirm";
     public const string ModeBusy = "busy";
     public const string ModeRefused = "refused";
+}
+
+/// <summary>
+/// One nonce of the confirm exchange: an unauthenticated text frame like the preamble
+/// (04-PROTOCOL.md 4.3). The phone sends nA first; the PC answers with the nB its commitment
+/// fixed. Never logged.
+/// </summary>
+public sealed record LinkPairNonce(
+    [property: JsonPropertyName("t")] string T,
+    /// <summary>32 random bytes, base64.</summary>
+    [property: JsonPropertyName("n")] string N)
+{
+    public const string Type = "pairNonce";
+
+    public static LinkPairNonce For(byte[] nonce) => new(Type, Convert.ToBase64String(nonce));
+
+    public override string ToString() => "LinkPairNonce";
 }
 
 /// <summary>

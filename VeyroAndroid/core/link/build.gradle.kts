@@ -19,6 +19,9 @@ dependencies {
     api(project(":core:model"))
     implementation(project(":core:common"))
     implementation(project(":core:protocol"))
+    // PairConfirm: commitment, code and bootstrap-key derivations for confirm pairing (ADR-031).
+    // The X25519 step itself stays behind IdentityManager, supplied by :app as a lambda.
+    implementation(project(":core:crypto"))
     // The transport-agnostic file logic: PartFile (.veyropart lifecycle, resume) and ChunkMath
     // (boundaries, hashing). LinkTransferRunner reuses these over a LinkSession (ADR-020).
     implementation(project(":core:network"))

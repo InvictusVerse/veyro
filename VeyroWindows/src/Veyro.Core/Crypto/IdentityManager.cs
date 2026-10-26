@@ -15,6 +15,16 @@ public interface IIdentityManager
     string Fingerprint { get; }
     ReadOnlyMemory<byte> PublicKey { get; }
     byte[] DeriveLocalKey(string purpose, int length = 32);
+
+    /// <summary>
+    /// <c>HKDF-SHA256(ikm = X25519(identityPrivate, peerPublicKey), salt, info, length)</c>. The raw
+    /// Diffie-Hellman output is wiped before returning, and the private key never leaves this
+    /// class. Confirm-code pairing derives its bootstrap key this way (04-PROTOCOL.md 4.3).
+    /// </summary>
+    /// <exception cref="ArgumentException">The peer key is not 32 bytes.</exception>
+    /// <exception cref="System.Security.Cryptography.CryptographicException">The peer key is a low-order point.</exception>
+    byte[] DeriveSharedKey(ReadOnlySpan<byte> peerPublicKey, ReadOnlySpan<byte> salt, ReadOnlySpan<byte> info, int length = 32);
+
     void ResetIdentity();
 }
 
@@ -60,6 +70,23 @@ public sealed class DefaultIdentityManager : IIdentityManager
 
     public byte[] DeriveLocalKey(string purpose, int length = 32)
         => Hkdf.DeriveKey(_seed, _publicKey, $"veyro-local-v1:{purpose}", length);
+
+    public byte[] DeriveSharedKey(ReadOnlySpan<byte> peerPublicKey, ReadOnlySpan<byte> salt, ReadOnlySpan<byte> info, int length = 32)
+    {
+        if (peerPublicKey.Length != 32)
+            throw new ArgumentException("Peer public key must be 32 bytes.", nameof(peerPublicKey));
+        if (length is < 16 or > 64)
+            throw new ArgumentOutOfRangeException(nameof(length));
+        byte[] shared = X25519Crypto.SharedSecret(_seed, peerPublicKey);
+        try
+        {
+            return Hkdf.Expand(Hkdf.Extract(salt, shared), info, length);
+        }
+        finally
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(shared);
+        }
+    }
 
     public void ResetIdentity()
     {

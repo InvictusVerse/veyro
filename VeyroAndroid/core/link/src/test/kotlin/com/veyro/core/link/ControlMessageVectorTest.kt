@@ -44,13 +44,41 @@ class ControlMessageVectorTest {
         val encoded = json.encodeToString(LinkPreamble(id = deviceId, name = "Test Phone"))
         // encodeDefaults = true, so platform and protocolVersion appear even at their defaults.
         requireKeys(encoded, "id", "name", "platform", "protocolVersion")
+        forbidKeys(encoded, "pair", "pk")
 
         val decoded = json.decodeFromString<LinkPreamble>(
-            """{"id":"$deviceId","name":"Test Phone","platform":"android","protocolVersion":1}""",
+            """{"id":"$deviceId","name":"Test Phone","platform":"android","protocolVersion":2}""",
         )
         assertEquals(deviceId, decoded.id)
         assertEquals("android", decoded.platform)
-        assertEquals(1, decoded.protocolVersion)
+        assertEquals(2, decoded.protocolVersion)
+        assertEquals(2, LINK_PROTOCOL_VERSION)
+    }
+
+    @Test
+    fun `vector - confirm pairing preamble, ack and nonce`() {
+        val pkA = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="
+        val preamble = json.decodeFromString<LinkPreamble>(
+            """{"id":"2C9VV72DFSF1A2SC0TN6QBAPEC","name":"Test Phone","platform":"android","protocolVersion":2,"pair":"confirm","pk":"$pkA"}""",
+        )
+        assertEquals(LinkPreamble.PAIR_CONFIRM, preamble.pair)
+        assertEquals(pkA, preamble.pk)
+        requireKeys(json.encodeToString(preamble), "id", "name", "platform", "protocolVersion", "pair", "pk")
+
+        val ack = json.decodeFromString<LinkPreambleAck>(
+            """{"mode":"pairing-confirm","pk":"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=","commit":"SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM="}""",
+        )
+        assertEquals(LinkPreambleAck.MODE_PAIRING_CONFIRM, ack.mode)
+        assertEquals("SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=", ack.commit)
+        val reEncoded = json.encodeToString(ack)
+        requireKeys(reEncoded, "mode", "pk", "commit")
+        forbidKeys(reEncoded, "reason")
+
+        val nonce = json.decodeFromString<LinkPairNonce>(
+            """{"t":"pairNonce","n":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}""",
+        )
+        assertEquals(LinkPairNonce.TYPE, nonce.t)
+        requireKeys(json.encodeToString(LinkPairNonce(n = nonce.n)), "t", "n")
     }
 
     @Test
@@ -66,9 +94,10 @@ class ControlMessageVectorTest {
     }
 
     @Test
-    fun `vector - the four modes`() {
+    fun `vector - the five modes`() {
         assertEquals("session", LinkPreambleAck.MODE_SESSION)
         assertEquals("pairing", LinkPreambleAck.MODE_PAIRING)
+        assertEquals("pairing-confirm", LinkPreambleAck.MODE_PAIRING_CONFIRM)
         assertEquals("busy", LinkPreambleAck.MODE_BUSY)
         assertEquals("refused", LinkPreambleAck.MODE_REFUSED)
     }
@@ -107,11 +136,11 @@ class ControlMessageVectorTest {
 
     @Test
     fun `vector - envelope wrapping a ping`() {
-        val text = """{"v":1,"msgId":"m-1","from":"$deviceId","seq":7,"ts":1760000000000,""" +
+        val text = """{"v":2,"msgId":"m-1","from":"$deviceId","seq":7,"ts":1760000000000,""" +
             """"payload":{"t":"ping","nonce":"abc"}}"""
 
         val env = json.decodeFromString<LinkEnvelope>(text)
-        assertEquals(1, env.v)
+        assertEquals(2, env.v)
         assertEquals(7L, env.seq)
         assertEquals(1760000000000L, env.ts)
 

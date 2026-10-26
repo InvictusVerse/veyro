@@ -5,8 +5,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** Bumped on any change to bytes on the wire. */
-public const val LINK_PROTOCOL_VERSION: Int = 1
+/**
+ * Bumped on any change to bytes on the wire. 2 = confirm-code pairing (04-PROTOCOL.md 4.3,
+ * ADR-031); version 1 peers are refused.
+ */
+public const val LINK_PROTOCOL_VERSION: Int = 2
 
 /**
  * The unauthenticated identification preamble.
@@ -25,20 +28,53 @@ public data class LinkPreamble(
     val name: String,
     val platform: String = "android",
     val protocolVersion: Int = LINK_PROTOCOL_VERSION,
-)
+    /** How to pair if the receiver does not know us: [PAIR_CONFIRM], [PAIR_QR], or absent (legacy PIN). */
+    val pair: String? = null,
+    /** Sender's static X25519 public key, base64. Sent with [PAIR_CONFIRM]. */
+    val pk: String? = null,
+) {
+    public companion object {
+        /** Compare a code on both screens and accept on the receiver (04-PROTOCOL.md 4.3). */
+        public const val PAIR_CONFIRM: String = "confirm"
+
+        /** The receiver's open QR window supplies the code (04-PROTOCOL.md 4.2). */
+        public const val PAIR_QR: String = "qr"
+    }
+}
 
 /** The receiver's answer: which mode this connection will run in. */
 @Serializable
 public data class LinkPreambleAck(
-    /** `session` | `pairing` | `busy` | `refused` */
+    /** `session` | `pairing` | `pairing-confirm` | `busy` | `refused` */
     val mode: String,
     val reason: String? = null,
+    /** Receiver's static X25519 public key, base64. Only with [MODE_PAIRING_CONFIRM]. */
+    val pk: String? = null,
+    /** `SHA-256("veyro-commit-v1" || pkB || pkA || nB)`, base64. Only with [MODE_PAIRING_CONFIRM]. */
+    val commit: String? = null,
 ) {
     public companion object {
         public const val MODE_SESSION: String = "session"
         public const val MODE_PAIRING: String = "pairing"
+        public const val MODE_PAIRING_CONFIRM: String = "pairing-confirm"
         public const val MODE_BUSY: String = "busy"
         public const val MODE_REFUSED: String = "refused"
+    }
+}
+
+/**
+ * One nonce of the confirm exchange, an unauthenticated text frame like the preamble
+ * (04-PROTOCOL.md 4.3). The initiator sends `nA` first; the receiver answers with `nB`, which its
+ * commitment already fixed. Never logged.
+ */
+@Serializable
+public data class LinkPairNonce(
+    val t: String = TYPE,
+    /** 32 random bytes, base64. */
+    val n: String,
+) {
+    public companion object {
+        public const val TYPE: String = "pairNonce"
     }
 }
 

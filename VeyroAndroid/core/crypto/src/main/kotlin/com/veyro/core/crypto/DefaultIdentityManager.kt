@@ -82,6 +82,21 @@ public class DefaultIdentityManager(
         }
     }
 
+    override suspend fun deriveSharedKey(
+        peerPublicKey: ByteArray,
+        salt: ByteArray,
+        info: ByteArray,
+        length: Int,
+    ): ByteArray {
+        require(length in 16..64) { "derived key length must be 16..64, was $length" }
+        val shared = agree(peerPublicKey)
+        return try {
+            Hkdf.deriveKey(ikm = shared, salt = salt, info = info, length = length)
+        } finally {
+            Bytes.wipe(shared)
+        }
+    }
+
     override suspend fun deriveLocalKey(info: String, length: Int): ByteArray {
         require(info.isNotBlank()) { "a derived key needs a non-empty domain string" }
         require(length in 16..64) { "derived key length must be 16..64, was $length" }

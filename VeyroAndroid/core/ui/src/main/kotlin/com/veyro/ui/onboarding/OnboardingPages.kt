@@ -32,8 +32,8 @@ import com.veyro.core.designsystem.components.VeyroSectionHeader
 import com.veyro.core.designsystem.theme.VeyroTextSecondary
 import com.veyro.ui.pairing.CandidateCard
 import com.veyro.ui.pairing.CodeEntryHint
+import com.veyro.ui.pairing.ConfirmPairingDialog
 import com.veyro.ui.pairing.PairingViewModel
-import com.veyro.ui.pairing.PinEntryDialog
 import com.veyro.ui.pairing.QrPairingState
 import com.veyro.ui.pairing.QrStatusCard
 import com.veyro.ui.pairing.ScanQrCard
@@ -74,7 +74,7 @@ internal fun DeviceNamePage(
 
 /**
  * Page (d): pair with the PC. Reuses the regular PairingViewModel (keyed separately from the
- * Pairing screen's), so scan, nearby list and typed code behave exactly as they do there.
+ * Pairing screen's), so scan and the nearby list (confirm code) behave exactly as they do there.
  * The onboarding ViewModel moves to Done when the trust store gains the new peer.
  */
 @Composable
@@ -89,7 +89,7 @@ internal fun PairPage(viewModelFactory: ViewModelProvider.Factory) {
         icon = Icons.Default.Lock,
         title = "Pair with your PC",
     ) {
-        ScanQrCard(busy = state.qrBusy, onScan = scan, onEnterCode = pairing::showCodeEntry)
+        ScanQrCard(busy = state.pairingBusy, onScan = scan, onEnterCode = pairing::showCodeEntry)
 
         if (state.qr != QrPairingState.Idle) {
             QrStatusCard(state = state.qr, onDismiss = pairing::dismissQrStatus, onRetry = scan)
@@ -108,20 +108,20 @@ internal fun PairPage(viewModelFactory: ViewModelProvider.Factory) {
                     CandidateCard(
                         candidate = candidate,
                         onPair = { pairing.pairWith(candidate) },
-                        enabled = !state.qrBusy,
+                        enabled = !state.pairingBusy,
                     )
                 }
             }
         }
     }
 
-    if (state.awaitingPinEntry) {
-        PinEntryDialog(
-            peerName = state.outboundPeerName,
-            onSubmit = pairing::submitPin,
-            onCancel = { pairing.submitPin(null) },
-        )
-    }
+    // ADR-031: tapping a PC shows the code both screens display; the user accepts on the PC.
+    ConfirmPairingDialog(
+        state = state.confirm,
+        onCancel = pairing::cancelConfirm,
+        onDismiss = pairing::dismissConfirm,
+        onRetry = pairing::retryConfirm,
+    )
 }
 
 /** Page (e): what was paired, with the fingerprint to compare against the PC. */

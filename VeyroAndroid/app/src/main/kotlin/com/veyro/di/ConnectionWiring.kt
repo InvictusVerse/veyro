@@ -12,8 +12,9 @@ import kotlinx.coroutines.CoroutineScope
  * Builds [ConnectionManager] and supplies it with identity, trust and naming.
  *
  * Lives in `:app` because it is the only layer allowed to know about every module at once.
- * `:core:link` declares what it needs as constructor lambdas, so it depends on neither
- * `:core:data` nor `:core:crypto`.
+ * `:core:link` declares what it needs as constructor lambdas, so it never holds the
+ * `IdentityManager` or the `TrustStore` (it uses `:core:crypto` only for the pure confirm-pairing
+ * derivations, ADR-031).
  */
 internal object ConnectionWiring {
 
@@ -40,6 +41,8 @@ internal object ConnectionWiring {
             // Do not swallow exceptions: persistence failure must abort the pairing exchange.
             trustStore.put(peer)
         },
+        // Confirm pairing (ADR-031): DH plus HKDF inside the identity; the private key stays there.
+        deriveSharedKey = { peerPk, salt, info -> identityManager.deriveSharedKey(peerPk, salt, info) },
     )
 }
 

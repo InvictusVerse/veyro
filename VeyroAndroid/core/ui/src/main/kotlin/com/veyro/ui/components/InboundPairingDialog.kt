@@ -1,14 +1,11 @@
 package com.veyro.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -25,12 +22,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -54,11 +49,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.veyro.core.designsystem.components.VeyroButton
 import com.veyro.core.designsystem.components.VeyroOutlineButton
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroCyanContainer
-import com.veyro.core.designsystem.theme.VeyroCyanGlow
 import com.veyro.core.designsystem.theme.VeyroCyanMuted
-import com.veyro.core.designsystem.theme.VeyroExtras
 import com.veyro.core.designsystem.theme.VeyroGlassBorder
 import com.veyro.core.designsystem.theme.VeyroPinStyle
 import com.veyro.core.designsystem.theme.VeyroTextSecondary
@@ -71,32 +62,26 @@ import com.veyro.core.model.fingerprint
 import kotlinx.coroutines.delay
 
 /**
- * Top-level modal dialog shown on the RECEIVING device when a peer initiates pairing.
+ * Top-level modal dialog shown on the RECEIVING device when another device pairs with this one
+ * from its nearby list (confirm code, 04-PROTOCOL.md 4.3, ADR-031).
  *
- * Two stages:
- *   1. Consent stage — user allows or rejects the pairing request.
- *   2. PIN-display stage — shows the 6-digit code for the initiator to type.
+ * Shows the other device's name, its fingerprint and the 6-digit code both screens display, with
+ * Accept / Decline. Nothing is typed. The request declines itself when the window runs out, and
+ * disappears if the other device cancels.
  *
+ * Only confirm requests are shown. The legacy PIN flow has no UI any more and times out.
  * Mounted globally in `MainActivity` so it overlays any screen.
- *
- * Redesigned: glassmorphic surface with a violet glow and animated PIN display.
  */
 @Composable
 public fun InboundPairingDialog(
     connectionManager: ConnectionManager,
 ) {
     val pending by connectionManager.pendingInbound.collectAsStateWithLifecycle()
-    val currentPending = pending ?: return
-    val isConsentStage = currentPending.pin == "..."
+    val current = pending ?: return
+    val code = current.confirmCode ?: return
 
     Dialog(
-        onDismissRequest = {
-            if (isConsentStage) {
-                connectionManager.respondToInbound(false)
-            } else {
-                connectionManager.cancelInboundPairing()
-            }
-        },
+        onDismissRequest = { connectionManager.respondToInbound(false) },
         properties = DialogProperties(
             dismissOnBackPress = true,
             dismissOnClickOutside = false,
@@ -109,15 +94,12 @@ public fun InboundPairingDialog(
                     .widthIn(min = 300.dp, max = 360.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Icon
                 PairingDialogIcon()
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Title
                 Text(
-                    text = if (isConsentStage) "Pairing request"
-                    else "Pair with ${currentPending.peerDeviceName}",
+                    text = "Pairing request",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
@@ -126,17 +108,16 @@ public fun InboundPairingDialog(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = if (isConsentStage) currentPending.peerDeviceName
-                    else "Enter this code on the other device",
+                    text = "${current.peerDeviceName} wants to pair with this device",
                     style = MaterialTheme.typography.bodyMedium,
                     color = VeyroTextSecondary,
                     textAlign = TextAlign.Center,
                 )
 
-                // The id is only what the peer claims until pairing completes; showing its
-                // fingerprint lets the user compare it with the other screen.
-                val fingerprint = remember(currentPending.peerDeviceId) {
-                    DeviceId.parseOrNull(currentPending.peerDeviceId)?.fingerprint()
+                // The id is proven by now (its key verified the exchange); the fingerprint lets
+                // the user compare it with the other screen after pairing.
+                val fingerprint = remember(current.peerDeviceId) {
+                    DeviceId.parseOrNull(current.peerDeviceId)?.fingerprint()
                 }
                 if (fingerprint != null) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -149,79 +130,61 @@ public fun InboundPairingDialog(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Text(
+                    text = "Accept only if ${current.peerDeviceName} shows the same code:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = VeyroTextSecondary,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                PinDisplayGlow(pin = code)
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                var timeLeft by remember(current.expiresAt) {
+                    mutableLongStateOf(((current.expiresAt - System.currentTimeMillis()) / 1000).coerceAtLeast(0))
+                }
+                LaunchedEffect(current.expiresAt) {
+                    while (timeLeft > 0) {
+                        delay(1000)
+                        timeLeft = ((current.expiresAt - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.DateRange,
+                        contentDescription = null,
+                        tint = if (timeLeft <= 10) VeyroCyanMuted else VeyroTextSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Declines automatically in $timeLeft s",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (timeLeft <= 10) VeyroCyanMuted else VeyroTextSecondary,
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
-                if (isConsentStage) {
-                    // Consent text
-                    Text(
-                        text = "Allow this device to pair with Veyro? You will see a one-time PIN to enter on the other device.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroTextSecondary,
-                        textAlign = TextAlign.Center,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    VeyroOutlineButton(
+                        text = "Decline",
+                        onClick = { connectionManager.respondToInbound(false) },
+                        modifier = Modifier.weight(1f),
                     )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Allow / Reject buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        VeyroOutlineButton(
-                            text = "Reject",
-                            onClick = { connectionManager.respondToInbound(false) },
-                            modifier = Modifier.weight(1f),
-                        )
-                        VeyroButton(
-                            text = "Allow",
-                            onClick = { connectionManager.respondToInbound(true) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                } else {
-                    // PIN display
-                    PinDisplayGlow(pin = currentPending.pin)
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Countdown
-                    var timeLeft by remember(currentPending.expiresAt) {
-                        mutableLongStateOf(
-                            ((currentPending.expiresAt - System.currentTimeMillis()) / 1000).coerceAtLeast(0),
-                        )
-                    }
-                    LaunchedEffect(currentPending.expiresAt) {
-                        while (true) {
-                            val now = System.currentTimeMillis()
-                            val remaining = ((currentPending.expiresAt - now) / 1000).coerceAtLeast(0)
-                            timeLeft = remaining
-                            if (remaining <= 0) break
-                            delay(1000)
-                        }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.DateRange,
-                            contentDescription = null,
-                            tint = if (timeLeft <= 10) VeyroCyanMuted else VeyroTextSecondary,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Expires in $timeLeft seconds",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (timeLeft <= 10) VeyroCyanMuted else VeyroTextSecondary,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    TextButton(
-                        onClick = { connectionManager.cancelInboundPairing() },
-                    ) {
-                        Text("Cancel", color = VeyroTextSecondary)
-                    }
+                    VeyroButton(
+                        text = "Accept",
+                        onClick = { connectionManager.respondToInbound(true) },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
@@ -249,10 +212,9 @@ private fun PairingDialogIcon() {
 
 @Composable
 private fun PinDisplayGlow(pin: String) {
-    // "123 456": two groups of three are easier to read aloud and to type than six in a row.
+    // "123 456": two groups of three are easier to compare than six in a row.
     val grouped = pin.chunked(3).joinToString(" ")
 
-    // Pulsing glow
     val infiniteTransition = rememberInfiniteTransition(label = "pinGlow")
     val glowAlpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,

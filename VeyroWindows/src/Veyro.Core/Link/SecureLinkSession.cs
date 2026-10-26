@@ -72,7 +72,9 @@ public sealed class SecureLinkSession : IAsyncDisposable
                 From = sealedFrame.FromDeviceId,
                 Nonce = Convert.ToBase64String(sealedFrame.Nonce),
                 Ciphertext = sealedFrame.Encrypted ? Convert.ToBase64String(sealedFrame.Body) : null,
-                Plaintext = sealedFrame.Encrypted ? null : Convert.ToBase64String(sealedFrame.Body),
+                // Pairing mode carries the envelope JSON itself in "p", exactly as Android frames it
+                // and as ReceiveAsync reads it; base64 here would break the MAC on the other side.
+                Plaintext = sealedFrame.Encrypted ? null : Encoding.UTF8.GetString(sealedFrame.Body),
                 Mac = Convert.ToBase64String(sealedFrame.Mac)
             });
             byte[] bytes = Encoding.UTF8.GetBytes(wire);

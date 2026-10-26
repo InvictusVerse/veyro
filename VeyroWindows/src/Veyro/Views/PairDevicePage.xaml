@@ -25,6 +25,11 @@
                     Text="Pair a new phone" />
             </StackPanel>
 
+            <TextBlock
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="Scan the QR code with Veyro on the phone. Phones can also pair from their nearby list: this PC then asks you to compare a 6-digit code and accept."
+                TextWrapping="Wrap" />
+
             <InfoBar
                 x:Name="PairedInfoBar"
                 IsClosable="False"

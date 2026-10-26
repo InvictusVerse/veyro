@@ -30,6 +30,7 @@ worst possible moment. Both platforms must pass every vector here before a phase
 | `link/framecrypto.json` | `core/link` `FrameCryptoVectorTest` | `Veyro.Tests` `FrameCryptoVectorTests` |
 | `discovery/presence-beacon.json` | `core/protocol` `PresenceBeaconVectorTest` | `Veyro.Tests` `DiscoveryVectorTests` |
 | `link/control-messages.json` | `core/link` `ControlMessageVectorTest` | `Veyro.Tests` `ControlMessageVectorTests` |
+| `pair-confirm.json` | `core/crypto` `PairConfirmVectorTest` | `Veyro.Tests` `PairConfirmVectorTests` |
 
 Run them:
 

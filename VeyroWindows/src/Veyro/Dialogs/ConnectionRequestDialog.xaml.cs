@@ -1,33 +1,51 @@
 // Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Dialogs/ConnectionRequestDialog.xaml.cs and
 // src/Sefirah/ViewModels/Dialogs/ConnectionRequestViewModel.cs, GPL-3.0.
 // Modified for Veyro.
+using Microsoft.UI.Xaml.Automation;
+
 namespace Veyro.Dialogs;
 
 /// <summary>
-/// Legacy pairing prompt, shown only when no pairing window is open (04-PROTOCOL.md 4.2). The
-/// user accepts and types the code on the phone. Declines by itself when the time runs out.
-/// The code is shown, never logged.
+/// Confirm-code pairing prompt (04-PROTOCOL.md 4.3, ADR-031): the phone's name, its fingerprint
+/// and the 6-digit code both screens show, with Accept / Decline. Declines by itself at the
+/// deadline and closes when the phone cancels. The code is shown, never logged.
 /// </summary>
 public sealed partial class ConnectionRequestDialog : ContentDialog
 {
-    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
-
     private readonly DispatcherQueueTimer _timer;
     private readonly DateTimeOffset _deadline;
+    private readonly TimeSpan _window;
+    private readonly CancellationTokenRegistration _abandonedRegistration;
 
-    public ConnectionRequestDialog(string peerName, string fingerprint, string sixDigitCode, TimeSpan? timeout = null)
+    public ConnectionRequestDialog(
+        string peerName,
+        string fingerprint,
+        string sixDigitCode,
+        DateTimeOffset deadline,
+        CancellationToken abandoned = default)
     {
         InitializeComponent();
         PeerNameText.Text = string.IsNullOrWhiteSpace(peerName) ? "Unnamed phone" : peerName;
         FingerprintText.Text = fingerprint;
-        PinCodeText.Text = sixDigitCode.Length == 6 ? $"{sixDigitCode[..3]} {sixDigitCode[3..]}" : sixDigitCode;
+        CodeText.Text = sixDigitCode.Length == 6 ? $"{sixDigitCode[..3]} {sixDigitCode[3..]}" : sixDigitCode;
+        // Read digit by digit, so a screen reader does not say "seventy-seven thousand".
+        AutomationProperties.SetName(CodeText, "Pairing code " + string.Join(' ', sixDigitCode.ToCharArray()));
 
-        _deadline = DateTimeOffset.UtcNow + (timeout ?? DefaultTimeout);
+        _deadline = deadline;
+        _window = deadline - DateTimeOffset.UtcNow;
         _timer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _timer.Interval = TimeSpan.FromSeconds(1);
         _timer.Tick += (_, _) => UpdateCountdown();
         Opened += (_, _) => _timer.Start();
-        Closed += (_, _) => _timer.Stop();
+        Closed += (_, _) =>
+        {
+            _timer.Stop();
+            _abandonedRegistration.Dispose();
+        };
+
+        // The phone cancelled or went away: the request no longer exists, so take it off screen.
+        DispatcherQueue queue = DispatcherQueue.GetForCurrentThread();
+        _abandonedRegistration = abandoned.Register(() => queue.TryEnqueue(Hide));
         UpdateCountdown();
     }
 
@@ -41,6 +59,8 @@ public sealed partial class ConnectionRequestDialog : ContentDialog
             Hide();
             return;
         }
-        TimeoutText.Text = $"Declines automatically in {(int)Math.Ceiling(left.TotalSeconds)} s";
+        int seconds = (int)Math.Ceiling(left.TotalSeconds);
+        TimeoutText.Text = $"Declines automatically in {seconds} s";
+        CountdownRing.Value = _window <= TimeSpan.Zero ? 0 : Math.Clamp(left / _window * 100, 0, 100);
     }
 }

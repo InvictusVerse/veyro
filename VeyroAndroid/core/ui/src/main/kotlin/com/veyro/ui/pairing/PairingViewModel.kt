@@ -26,17 +26,21 @@ import kotlinx.coroutines.launch
  *
  * ## How pairing works
  *
- * The two devices find each other over discovery, which gives each an address for the other. The
- * initiator dials; the target shows a 6-digit PIN; the initiator types it. The PIN is the only
- * secret, and it is protected by PBKDF2 plus a short window plus an attempt limit (ADR-020). No key
- * material crosses the network in the clear.
+ * Two paths, neither of which involves typing (ADR-030, ADR-031):
+ *
+ *  - **Scan**: the PC shows a QR code carrying its id, addresses and a one-time code. The phone
+ *    scans it and pairs without a prompt on either side.
+ *  - **Nearby list**: the phone dials a discovered device. Both screens show the same 6-digit
+ *    code, derived from both identity keys and a committed nonce exchange; the user checks they
+ *    match and accepts on the other device.
  *
  * ## What this class is and is not responsible for
  *
- * It owns the discovery window and relays the user's answers (consent on the target, PIN on the
- * initiator) to [ConnectionManager], which runs the actual exchange. It does **not** persist trust - the
- * link layer does that only after a completed exchange, which is what keeps "trust is created by a
- * finished pairing" a single enforceable path.
+ * It owns the discovery window and relays the user's answers to [ConnectionManager], which runs
+ * the actual exchange. It does **not** persist trust - the link layer does that only after a
+ * completed exchange, which is what keeps "trust is created by a finished pairing" a single
+ * enforceable path. Inbound requests (another device pairing with this one) are shown by the
+ * global `InboundPairingDialog`, not here.
  */
 public class PairingViewModel(
     private val deviceRepository: DeviceRepository,
@@ -57,25 +61,28 @@ public class PairingViewModel(
         val secondsRemaining: Int = 0,
         val candidates: List<Candidate> = emptyList(),
 
-        /** The target's PIN to read aloud, set once a peer starts pairing with this device. */
-        val inboundPin: String? = null,
-        val inboundPeerName: String? = null,
-
-        /** True when this device is the initiator and must prompt for the PIN. */
-        val awaitingPinEntry: Boolean = false,
-        val outboundPeerName: String? = null,
-
         val status: String? = null,
         val error: String? = null,
 
         /** Scan-to-pair progress (ADR-030). */
         val qr: QrPairingState = QrPairingState.Idle,
 
-        /** "Enter code instead" was chosen, or the scanner is unavailable: explain the list path. */
+        /** Nearby-list pairing progress (confirm code, ADR-031). */
+        val confirm: ConfirmPairingState = ConfirmPairingState.Idle,
+
+        /** "Pick from the list" was chosen, or the scanner is unavailable: explain the list path. */
         val showCodeEntryHint: Boolean = false,
     ) {
         val qrBusy: Boolean
             get() = qr is QrPairingState.Connecting || qr is QrPairingState.Securing
+
+        val confirmBusy: Boolean
+            get() = confirm is ConfirmPairingState.Connecting ||
+                confirm is ConfirmPairingState.Securing ||
+                confirm is ConfirmPairingState.AwaitingAcceptance
+
+        /** One pairing at a time: the list and the scanner are disabled while either runs. */
+        val pairingBusy: Boolean get() = qrBusy || confirmBusy
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -84,37 +91,18 @@ public class PairingViewModel(
     private var subscription: DiscoverySubscription? = null
     private var countdown: kotlinx.coroutines.Job? = null
     private var qrJob: Job? = null
+    private var confirmJob: Job? = null
+    private var lastConfirmCandidate: Candidate? = null
 
     init {
         deviceRepository.devices
             .onEach { peers -> _state.value = _state.value.copy(candidates = peers.toCandidates()) }
             .launchIn(viewModelScope)
 
-        // The target device: a peer asked to pair, so show the PIN and the consent is implicit in
-        // the user having opened this screen. (Explicit consent arrives with the inbound dialog.)
-        connectionManager.pendingInbound
-            .onEach { pending ->
-                _state.value = _state.value.copy(
-                    inboundPin = pending?.pin?.takeIf { it != "..." },
-                    inboundPeerName = pending?.peerDeviceName,
-                )
-            }
-            .launchIn(viewModelScope)
-
-        // The initiator device: the target answered "pairing", so prompt for the PIN.
-        connectionManager.pendingOutbound
-            .onEach { pending ->
-                _state.value = _state.value.copy(
-                    awaitingPinEntry = pending != null,
-                    outboundPeerName = pending?.peerDeviceName,
-                )
-            }
-            .launchIn(viewModelScope)
-
         connectionManager.events
             .onEach { event ->
-                // A scan-to-pair attempt reports through its own card; do not show it twice.
-                if (qrJob?.isActive == true) return@onEach
+                // Each pairing attempt reports through its own card or dialog; do not show it twice.
+                if (qrJob?.isActive == true || confirmJob?.isActive == true) return@onEach
                 when (event) {
                     is ConnectionManager.ConnectionEvent.Paired ->
                         _state.value = _state.value.copy(status = "Paired with ${event.peer.name}", error = null)
@@ -155,22 +143,70 @@ public class PairingViewModel(
         _state.value = _state.value.copy(isSearching = false, secondsRemaining = 0)
     }
 
-    /** Initiator action: dial a discovered device to begin pairing. */
+    // ── Nearby list: confirm code (ADR-031) ───────────────────────────────────────────────
+
+    /** Initiator action: pair with a discovered device by comparing a code on both screens. */
     public fun pairWith(candidate: Candidate) {
-        _state.value = _state.value.copy(status = "Contacting ${candidate.name}...", error = null)
-        viewModelScope.launch {
-            connectionManager.connect(candidate.deviceId.value, candidate.name, candidate.endpoints)
+        if (_state.value.pairingBusy) return
+        lastConfirmCandidate = candidate
+        val onPc = candidate.platform != Platform.ANDROID
+        _state.value = _state.value.copy(
+            confirm = ConfirmPairingState.Connecting(candidate.name, onPc),
+            status = null,
+            error = null,
+        )
+        confirmJob = viewModelScope.launch {
+            connectionManager.pairWithConfirm(
+                peerDeviceId = candidate.deviceId.value,
+                peerName = candidate.name,
+                endpoints = candidate.endpoints,
+            ).collect { progress ->
+                val next = when (progress) {
+                    ConnectionManager.CodePairingProgress.Connecting ->
+                        ConfirmPairingState.Connecting(candidate.name, onPc)
+                    ConnectionManager.CodePairingProgress.Securing ->
+                        ConfirmPairingState.Securing(candidate.name, onPc)
+                    is ConnectionManager.CodePairingProgress.AwaitingConfirmation ->
+                        ConfirmPairingState.AwaitingAcceptance(
+                            peerName = candidate.name,
+                            onPc = onPc,
+                            code = progress.code,
+                            expiresAtMillis = System.currentTimeMillis() + CONFIRM_WINDOW_MS,
+                        )
+                    is ConnectionManager.CodePairingProgress.Paired ->
+                        ConfirmPairingState.Paired(progress.peer.name, progress.peer.deviceId.fingerprint())
+                    is ConnectionManager.CodePairingProgress.AlreadyPaired ->
+                        ConfirmPairingState.Paired(progress.peerName, candidate.deviceId.fingerprint())
+                    is ConnectionManager.CodePairingProgress.Failed ->
+                        ConfirmPairingError.from(progress.failure)
+                            ?.let { ConfirmPairingState.Failed(candidate.name, onPc, it) }
+                            ?: ConfirmPairingState.Idle
+                }
+                _state.value = _state.value.copy(confirm = next)
+            }
+            connectionManager.clearEvent()
         }
     }
 
-    /** Initiator action: submit the PIN read from the other device. Null cancels. */
-    public fun submitPin(pin: String?) {
-        connectionManager.submitPin(pin)
+    /** Cancel while securing or waiting for Accept. The other device's prompt closes too. */
+    public fun cancelConfirm() {
+        connectionManager.cancelOutboundPairing()
+        if (_state.value.confirm !is ConfirmPairingState.AwaitingAcceptance) {
+            // Still connecting: there is no prompt on the other side yet, so just stop dialling.
+            confirmJob?.cancel()
+        }
+        _state.value = _state.value.copy(confirm = ConfirmPairingState.Idle)
     }
 
-    /** Target action: accept or decline an incoming pairing request. */
-    public fun respondToInbound(accept: Boolean) {
-        connectionManager.respondToInbound(accept)
+    public fun dismissConfirm() {
+        if (_state.value.confirmBusy) return
+        _state.value = _state.value.copy(confirm = ConfirmPairingState.Idle)
+    }
+
+    public fun retryConfirm() {
+        val candidate = lastConfirmCandidate ?: return
+        _state.value = _state.value.copy(confirm = ConfirmPairingState.Idle)
+        pairWith(candidate)
     }
 
     public fun clearStatus() {
@@ -185,7 +221,7 @@ public class PairingViewModel(
      * the result. [scan] is the Play services scanner in production.
      */
     public fun scanQr(scan: suspend () -> QrScanOutcome) {
-        if (_state.value.qrBusy) return
+        if (_state.value.pairingBusy) return
         viewModelScope.launch { onScanOutcome(scan()) }
     }
 
@@ -208,7 +244,7 @@ public class PairingViewModel(
         }
     }
 
-    /** "Enter code instead": the list-plus-typed-code path, which needs discovery running. */
+    /** "Pick from the list": the nearby-list path, which needs discovery running. */
     public fun showCodeEntry() {
         _state.value = _state.value.copy(showCodeEntryHint = true)
         startSearching()
@@ -235,7 +271,9 @@ public class PairingViewModel(
             ).collect { progress ->
                 val next = when (progress) {
                     ConnectionManager.CodePairingProgress.Connecting -> QrPairingState.Connecting(qr.name)
-                    ConnectionManager.CodePairingProgress.Securing -> QrPairingState.Securing(qr.name)
+                    ConnectionManager.CodePairingProgress.Securing,
+                    is ConnectionManager.CodePairingProgress.AwaitingConfirmation,
+                    -> QrPairingState.Securing(qr.name)
                     is ConnectionManager.CodePairingProgress.Paired ->
                         QrPairingState.Paired(progress.peer.name, progress.peer.deviceId.fingerprint())
                     is ConnectionManager.CodePairingProgress.AlreadyPaired ->
@@ -260,7 +298,13 @@ public class PairingViewModel(
     }
 
     override fun onCleared() {
+        if (_state.value.confirmBusy) connectionManager.cancelOutboundPairing()
         stopSearching()
         super.onCleared()
+    }
+
+    private companion object {
+        /** Matches the PC's prompt (04-PROTOCOL.md 4.3). Display only; the link layer enforces it. */
+        const val CONFIRM_WINDOW_MS = 120_000L
     }
 }

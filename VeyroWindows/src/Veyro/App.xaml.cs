@@ -92,14 +92,24 @@ public partial class App : Application
         {
             try
             {
+                // ADR-031: the phone is showing the same code and waiting for Accept here.
+                if (request.Abandoned.IsCancellationRequested)
+                {
+                    completion.TrySetResult(false);
+                    return;
+                }
                 string fingerprint = DeviceId.ParseOrNull(request.PeerDeviceId) is { } id
                     ? DeviceId.FormatFingerprint(id)
                     : request.PeerDeviceId;
-                var dialog = new ConnectionRequestDialog(request.PeerName, fingerprint, request.Pin)
+                // The window may be hidden in the tray; the user has to see the prompt to accept.
+                ShowMainWindow();
+                var dialog = new ConnectionRequestDialog(
+                    request.PeerName, fingerprint, request.Code, request.ExpiresAt, request.Abandoned)
                 {
                     XamlRoot = MainWindow.Content.XamlRoot
                 };
-                completion.TrySetResult(await dialog.ShowAsync() == ContentDialogResult.Primary);
+                bool accepted = await dialog.ShowAsync() == ContentDialogResult.Primary;
+                completion.TrySetResult(accepted && !request.Abandoned.IsCancellationRequested);
             }
             catch
             {

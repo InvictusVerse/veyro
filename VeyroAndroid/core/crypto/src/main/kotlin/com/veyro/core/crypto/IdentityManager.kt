@@ -25,6 +25,22 @@ public interface IdentityManager {
     public suspend fun agree(peerPublicKey: ByteArray): ByteArray
 
     /**
+     * `HKDF-SHA256(ikm = X25519(identityPrivate, peerPublicKey), salt, info, length)`.
+     *
+     * The raw Diffie-Hellman output is wiped before this returns, so callers only ever hold the
+     * derived key. Confirm-code pairing (04-PROTOCOL.md section 4.3) derives its bootstrap key
+     * this way.
+     *
+     * @throws IllegalArgumentException for a key of the wrong size or a low-order point.
+     */
+    public suspend fun deriveSharedKey(
+        peerPublicKey: ByteArray,
+        salt: ByteArray,
+        info: ByteArray,
+        length: Int = 32,
+    ): ByteArray
+
+    /**
      * Derives a local-use key from the identity seed, domain-separated by [info].
      *
      * This exists so that other local secrets (the trust-store HMAC key, future at-rest keys) can

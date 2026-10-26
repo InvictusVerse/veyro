@@ -84,7 +84,16 @@ public static class X25519Crypto
         agreement.Init(priv);
 
         byte[] shared = new byte[32];
-        agreement.CalculateAgreement(pub, shared, 0);
+        try
+        {
+            agreement.CalculateAgreement(pub, shared, 0);
+        }
+        catch (InvalidOperationException error)
+        {
+            // BouncyCastle raises this for an all-zero result (a low-order peer key) before the
+            // check below can run; surface it as the documented CryptographicException.
+            throw new CryptographicException("Rejected low-order X25519 public key.", error);
+        }
 
         bool allZero = true;
         foreach (byte b in shared)

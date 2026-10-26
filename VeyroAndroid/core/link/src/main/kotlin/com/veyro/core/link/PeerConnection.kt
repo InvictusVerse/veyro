@@ -117,6 +117,20 @@ public class PeerConnection(
     @Volatile
     private var isClosedFlag: Boolean = false
 
+    /**
+     * While true the heartbeat neither pings nor declares the peer dead.
+     *
+     * Confirm pairing sets it while the user decides on the other device (ADR-031): the PC sends
+     * nothing until Accept, and a ping in flight when both sides rekey would arrive under the wrong
+     * key. Clearing it restarts the silence clock.
+     */
+    @Volatile
+    public var heartbeatPaused: Boolean = false
+        set(value) {
+            if (!value) lastInboundAt = System.currentTimeMillis()
+            field = value
+        }
+
     public val isConnected: Boolean
         get() = !isClosedFlag && scope.isActive && ws.isActive
 
@@ -469,6 +483,7 @@ public class PeerConnection(
     private suspend fun heartbeat(onDead: (() -> Unit)?) {
         while (scope.isActive) {
             delay(HEARTBEAT_INTERVAL_MS)
+            if (heartbeatPaused) continue
             val now = System.currentTimeMillis()
             val silent = now - lastInboundAt
             if (silent > HEARTBEAT_DEAD_MS) {

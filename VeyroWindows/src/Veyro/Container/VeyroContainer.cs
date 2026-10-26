@@ -77,7 +77,9 @@ public sealed class VeyroContainer
             SettingsStore.Current.DownloadDirectory,
             IdentityManager.PublicKey.Span,
             authorize: request => Task.FromResult(request.Peer.AutoAcceptTransfers),
-            sessions: PeerSessions);
+            sessions: PeerSessions,
+            // ADR-031: confirm pairing derives its key inside the identity (private key stays there).
+            deriveSharedKey: (peerKey, salt, info) => IdentityManager.DeriveSharedKey(peerKey, salt, info));
         NotificationMirror = new NotificationMirrorService(PeerSessions);
         PhoneMedia = new PhoneMediaService(PeerSessions);
         PcMediaSource = new WindowsMediaSource();

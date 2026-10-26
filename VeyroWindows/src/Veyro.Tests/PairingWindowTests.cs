@@ -440,7 +440,7 @@ public sealed class VeyroLinkServerPairingWindowTests
             Assert.Equal("declined", ack?.Reason);
             InboundPairingRequest prompt = Assert.Single(f.Prompts);
             Assert.Equal(f.PhoneId, prompt.PeerDeviceId);
-            Assert.True(PairingQr.IsValidCode(prompt.Pin));
+            Assert.True(PairingQr.IsValidCode(prompt.Code));
         }
 
         // Opening and closing a window leaves the prompt path unchanged.

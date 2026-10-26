@@ -1,8 +1,6 @@
 package com.veyro.ui.pairing
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
@@ -29,9 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.veyro.core.designsystem.components.VeyroButton
@@ -41,16 +36,13 @@ import com.veyro.core.designsystem.components.VeyroSectionHeader
 import com.veyro.core.designsystem.theme.VeyroCyan
 import com.veyro.core.designsystem.theme.VeyroRed
 import com.veyro.core.designsystem.theme.VeyroTeal
-import com.veyro.core.designsystem.theme.VeyroTextSecondary
-import com.veyro.core.designsystem.theme.VeyroVioletContainer
-import com.veyro.core.designsystem.theme.VeyroVioletGlow
 
 /**
  * Pairing screen (Devices > Pair new device).
  *
  * Scan-to-pair is the primary path (ADR-030): one large button at the top. Below it the live
- * nearby list remains the fallback, where tapping a PC and typing its code runs the original PIN
- * pairing. Discovery starts when the screen opens so the list is live.
+ * nearby list: tapping a device shows the same 6-digit code on both screens and the user accepts
+ * on the other device (ADR-031). Discovery starts when the screen opens so the list is live.
  */
 @Composable
 public fun PairingScreen(
@@ -78,7 +70,7 @@ public fun PairingScreen(
 
         item {
             ScanQrCard(
-                busy = state.qrBusy,
+                busy = state.pairingBusy,
                 onScan = scan,
                 onEnterCode = viewModel::showCodeEntry,
             )
@@ -96,11 +88,6 @@ public fun PairingScreen(
 
         if (state.showCodeEntryHint) {
             item { CodeEntryHint() }
-        }
-
-        // Inbound PIN, shown when this device is the target of a pairing.
-        state.inboundPin?.let { pin ->
-            item { InboundPinCard(pin = pin, peerName = state.inboundPeerName) }
         }
 
         state.status?.let { msg ->
@@ -125,7 +112,7 @@ public fun PairingScreen(
                     CandidateCard(
                         candidate = candidate,
                         onPair = { viewModel.pairWith(candidate) },
-                        enabled = !state.qrBusy,
+                        enabled = !state.pairingBusy,
                     )
                 }
             } else {
@@ -136,13 +123,12 @@ public fun PairingScreen(
         item { Spacer(modifier = Modifier.height(80.dp)) }
     }
 
-    if (state.awaitingPinEntry) {
-        PinEntryDialog(
-            peerName = state.outboundPeerName,
-            onSubmit = viewModel::submitPin,
-            onCancel = { viewModel.submitPin(null) },
-        )
-    }
+    ConfirmPairingDialog(
+        state = state.confirm,
+        onCancel = viewModel::cancelConfirm,
+        onDismiss = viewModel::dismissConfirm,
+        onRetry = viewModel::retryConfirm,
+    )
 }
 
 @Composable
@@ -176,38 +162,6 @@ private fun NearbyHeader(
             VeyroOutlineButton(text = "Stop", onClick = onStop, height = 36.dp)
         } else {
             VeyroButton(text = "Find devices", onClick = onFindDevices, height = 36.dp)
-        }
-    }
-}
-
-@Composable
-private fun InboundPinCard(pin: String, peerName: String?) {
-    VeyroCard(glow = true) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(
-                text = peerName?.let { "$it is pairing with this device" } ?: "A device is pairing",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(VeyroVioletContainer),
-            ) {
-                GroupedPin(pin = pin, color = VeyroVioletGlow)
-            }
-            Text(
-                text = "Enter this code on the other device to complete pairing.",
-                style = MaterialTheme.typography.bodySmall,
-                color = VeyroTextSecondary,
-                textAlign = TextAlign.Center,
-            )
         }
     }
 }

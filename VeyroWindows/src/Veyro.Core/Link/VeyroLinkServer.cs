@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -19,10 +20,22 @@ public sealed record InboundOfferRequest(
     TrustedPeer Peer,
     LinkMessage.TransferOffer Offer);
 
+/// <summary>
+/// An unknown phone asks to pair. For confirm pairing (04-PROTOCOL.md 4.3) <see cref="Code"/> is
+/// the 6-digit code the phone shows too; the user accepts only if they match. The prompt must close
+/// itself when <see cref="Abandoned"/> fires (the phone cancelled or left) and declines at
+/// <see cref="ExpiresAt"/>. The legacy PIN flow (tests only) passes the PIN as the code.
+/// </summary>
 public sealed record InboundPairingRequest(
     string PeerDeviceId,
     string PeerName,
-    string Pin);
+    string Code,
+    DateTimeOffset ExpiresAt,
+    CancellationToken Abandoned = default)
+{
+    // The code is a secret until pairing ends; keep it out of anything that formats the record.
+    public override string ToString() => $"InboundPairingRequest {{ PeerDeviceId = {PeerDeviceId} }}";
+}
 
 /// <summary>
 /// Windows listener for authenticated inbound sessions. An unknown peer pairs either through the
@@ -38,6 +51,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     private readonly ITrustStore _trustStore;
     private readonly string _destinationRoot;
     private readonly byte[] _localPublicKey;
+    private readonly Func<byte[], byte[], byte[], byte[]>? _deriveSharedKey;
     private readonly CancellationTokenSource _stop = new();
     private readonly PeerSessionRegistry _sessions;
     private WebApplication? _app;
@@ -48,8 +62,17 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
         LinkCapabilities.Messaging | LinkCapabilities.Calls;
 
-    /// <summary>Legacy consent prompt, used only when no <see cref="PairingWindow"/> is open.</summary>
+    /// <summary>
+    /// The Accept / Decline prompt. Confirm pairing always asks (with the code both screens show);
+    /// the legacy PIN flow asks only when no <see cref="PairingWindow"/> is open.
+    /// </summary>
     public Func<InboundPairingRequest, Task<bool>> PairingAuthorizer { get; set; } = _ => Task.FromResult(false);
+
+    /// <summary>How long the user has to compare and accept a confirm code (04-PROTOCOL.md 4.3).</summary>
+    public TimeSpan ConfirmTimeout { get; set; } = TimeSpan.FromSeconds(120);
+
+    /// <summary>Bounds each step of the confirm exchange before the prompt (nonce, pairHello).</summary>
+    public TimeSpan ConfirmHandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
 
     /// <summary>
@@ -68,8 +91,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         Func<InboundOfferRequest, Task<bool>> authorize,
         int port = 0,
         PeerSessionRegistry? sessions = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Func<byte[], byte[], byte[], byte[]>? deriveSharedKey = null)
     {
+        // (peerPublicKey, salt, info) -> HKDF(X25519(identity, peer)); IIdentityManager.DeriveSharedKey
+        // in the app. Without it confirm pairing is refused.
+        _deriveSharedKey = deriveSharedKey;
         _sessions = sessions ?? new PeerSessionRegistry();
         _localDeviceId = localDeviceId;
         _localName = localName;
@@ -168,7 +195,13 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         {
             LinkPreamble? preamble = LinkJson.Decode<LinkPreamble>(await ReceiveTextAsync(socket, ct).ConfigureAwait(false));
             VeyroTrace.Info($"Received preamble: id={preamble?.Id ?? "<null>"}, platform={preamble?.Platform ?? "<null>"}, version={preamble?.ProtocolVersion.ToString() ?? "<null>"}");
-            if (preamble is null || preamble.ProtocolVersion != LinkProtocol.Version ||
+            if (preamble is not null && preamble.ProtocolVersion != LinkProtocol.Version)
+            {
+                // Version 1 predates confirm pairing (ADR-031); refuse rather than guess.
+                await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "unsupported-protocol-version")), ct).ConfigureAwait(false);
+                return;
+            }
+            if (preamble is null ||
                 DeviceId.ParseOrNull(preamble.Id) is null ||
                 string.Equals(preamble.Id, _localDeviceId, StringComparison.OrdinalIgnoreCase))
             {
@@ -177,6 +210,17 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             }
 
             TrustedPeer? trusted = _trustStore.GetPeer(preamble.Id);
+            if (trusted is null && preamble.Pair == LinkPreamble.PairConfirm)
+            {
+                // ADR-031: compare a code on both screens, accept here. Nothing is typed.
+                await RunConfirmPairingAsync(socket, preamble, remoteAddress, ct).ConfigureAwait(false);
+                return;
+            }
+            if (trusted is null && preamble.Pair is not null and not LinkPreamble.PairQr)
+            {
+                await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "unsupported-pairing")), ct).ConfigureAwait(false);
+                return;
+            }
             bool pairing = trusted is null;
             string? pairingPin = null;
             PairingAttempt? windowAttempt = null;
@@ -190,10 +234,19 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     pairingPin = windowAttempt.Code;
                     VeyroTrace.Info($"Unknown peer {preamble.Id} pairing through the open pairing window");
                 }
+                else if (preamble.Pair == LinkPreamble.PairQr)
+                {
+                    // A scanned code is only valid while its window is open (04-PROTOCOL.md 4.2).
+                    VeyroTrace.Info($"QR pairing from {preamble.Id} refused: no pairing window is open");
+                    await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "no-pairing-window")), ct).ConfigureAwait(false);
+                    return;
+                }
                 else
                 {
+                    // Legacy PIN flow (pair absent), kept for tests: the prompt shows the PIN.
                     pairingPin = FrameCrypto.NewPin();
-                    bool approved = await PairingAuthorizer(new InboundPairingRequest(preamble.Id, preamble.Name, pairingPin)).ConfigureAwait(false);
+                    bool approved = await PairingAuthorizer(new InboundPairingRequest(
+                        preamble.Id, preamble.Name, pairingPin, DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60), ct)).ConfigureAwait(false);
                     if (!approved)
                     {
                         await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "declined")), ct).ConfigureAwait(false);
@@ -261,6 +314,162 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         }
     }
 
+    private enum ConfirmOutcome { Accepted, Declined, TimedOut, Abandoned }
+
+    /// <summary>
+    /// Receiver side of confirm pairing (04-PROTOCOL.md 4.3, ADR-031). The phone is A, this PC B:
+    /// commit to nB, learn nA, reveal nB, check the phone's pairHello under the bootstrap key K,
+    /// then ask the user to compare the code. <c>pairOk</c> is sent only after Accept. Nonces, the
+    /// code and K are never logged.
+    /// </summary>
+    private async Task RunConfirmPairingAsync(WebSocket socket, LinkPreamble preamble, IPAddress? remoteAddress, CancellationToken ct)
+    {
+        byte[]? pkA = TryDecodeKey(preamble.Pk);
+        DeviceId? claimed = DeviceId.ParseOrNull(preamble.Id);
+        if (_deriveSharedKey is null || pkA is null || claimed is null || !DeviceId.Matches(claimed.Value, pkA))
+        {
+            string reason = _deriveSharedKey is null ? "pairing-unavailable" : "identity-mismatch";
+            VeyroTrace.Warn($"Confirm pairing from {preamble.Id} refused: {reason}");
+            await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, reason)), ct).ConfigureAwait(false);
+            return;
+        }
+        string idA = claimed.Value.Value;
+
+        byte[] nB = PairConfirm.NewNonce();
+        await SendTextAsync(socket, LinkJson.Encode(new LinkPreambleAck(
+            LinkPreambleAck.ModePairingConfirm,
+            Pk: Convert.ToBase64String(_localPublicKey),
+            Commit: Convert.ToBase64String(PairConfirm.Commitment(_localPublicKey, pkA, nB)))), ct).ConfigureAwait(false);
+
+        byte[] nA = await ReceivePairNonceAsync(socket, ct).ConfigureAwait(false);
+        await SendTextAsync(socket, LinkJson.Encode(LinkPairNonce.For(nB)), ct).ConfigureAwait(false);
+
+        string code = PairConfirm.Code(pkA, _localPublicKey, nA, nB);
+        byte[] key = _deriveSharedKey(pkA, PairConfirm.BootstrapSalt(nA, nB), PairConfirm.BootstrapInfo(idA, _localDeviceId));
+        await using var secure = new SecureLinkSession(socket, _localDeviceId, key, encrypt: false, preamble.Id);
+        CryptographicOperations.ZeroMemory(key);
+
+        // A pairHello that verifies under K proves the phone holds the private key behind pkA.
+        LinkMessage.PairHello hello = await ReceiveConfirmPairHelloAsync(secure, ct).ConfigureAwait(false);
+        byte[] helloKey = DecodeBase64(hello.PublicKeyB64, "PairHello public key");
+        if (!string.Equals(hello.DeviceId, idA, StringComparison.OrdinalIgnoreCase) ||
+            !CryptographicOperations.FixedTimeEquals(helloKey, pkA))
+            throw new UnauthorizedAccessException("PairHello does not match the confirmed identity.");
+
+        VeyroTrace.Info($"Confirm pairing with {idA}: waiting for the user");
+        using var abandon = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var request = new InboundPairingRequest(idA, hello.DeviceName, code, DateTimeOffset.UtcNow + ConfirmTimeout, abandon.Token);
+        Task<bool> decision = AuthorizeSafelyAsync(request);
+        Task timeout = Task.Delay(ConfirmTimeout, timer.Token);
+        Task<SecureLinkMessage?> pending = secure.ReceiveAsync(ct);
+        ConfirmOutcome outcome;
+        while (true)
+        {
+            Task winner = await Task.WhenAny(decision, pending, timeout).ConfigureAwait(false);
+            if (winner == decision) { outcome = decision.Result ? ConfirmOutcome.Accepted : ConfirmOutcome.Declined; break; }
+            if (winner == timeout) { outcome = ConfirmOutcome.TimedOut; break; }
+            if (pending.IsCompletedSuccessfully && pending.Result?.Envelope.Payload is LinkMessage.Ping ping)
+            {
+                await secure.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);
+                pending = secure.ReceiveAsync(ct);
+                continue;
+            }
+            // pairFail("cancelled"), a closed socket, or anything else: the phone gave up.
+            outcome = ConfirmOutcome.Abandoned;
+            break;
+        }
+        timer.Cancel();
+
+        if (outcome != ConfirmOutcome.Accepted)
+        {
+            abandon.Cancel(); // closes the prompt if it is still open
+            _ = pending.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            string? reply = outcome switch
+            {
+                ConfirmOutcome.Declined => "declined",
+                ConfirmOutcome.TimedOut => "timeout",
+                _ => null
+            };
+            VeyroTrace.Info($"Confirm pairing with {idA} ended: {outcome}");
+            if (reply is not null)
+            {
+                try { await secure.SendAsync(new LinkMessage.PairFail(reply), ct).ConfigureAwait(false); }
+                catch (Exception error) when (error is WebSocketException or IOException or InvalidOperationException) { }
+                // Let the phone read it and close first, so the close does not race the reply.
+                await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(2), ct)).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        byte[] sessionSecret = FrameCrypto.NewSessionSecret();
+        var trusted = new TrustedPeer(
+            idA,
+            hello.DeviceName,
+            PlatformType.Android,
+            Convert.ToBase64String(pkA),
+            Convert.ToBase64String(sessionSecret),
+            false,
+            DateTimeOffset.UtcNow);
+        await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
+        await secure.SendSealedAsync(new LinkMessage.PairOk(
+            _localDeviceId,
+            _localName,
+            "windows",
+            Convert.ToBase64String(sessionSecret),
+            Convert.ToBase64String(_localPublicKey)), ct).ConfigureAwait(false);
+        secure.Rekey(sessionSecret);
+        CryptographicOperations.ZeroMemory(sessionSecret);
+        VeyroTrace.Info($"Confirm pairing with {idA} completed");
+        try { PairingCompleted?.Invoke(trusted); }
+        catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
+        await RunSessionAsync(secure, trusted, remoteAddress, ct, pending).ConfigureAwait(false);
+    }
+
+    private async Task<bool> AuthorizeSafelyAsync(InboundPairingRequest request)
+    {
+        try { return await PairingAuthorizer(request).ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Pairing prompt failed; treating it as Decline", error);
+            return false;
+        }
+    }
+
+    private async Task<byte[]> ReceivePairNonceAsync(WebSocket socket, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(ConfirmHandshakeTimeout);
+        LinkPairNonce? message = LinkJson.Decode<LinkPairNonce>(await ReceiveTextAsync(socket, timeout.Token).ConfigureAwait(false));
+        if (message is null || message.T != LinkPairNonce.Type)
+            throw new InvalidDataException("Expected pairNonce.");
+        byte[] nonce = DecodeBase64(message.N, "pairNonce");
+        if (nonce.Length != PairConfirm.NonceSize)
+            throw new InvalidDataException("pairNonce has the wrong length.");
+        return nonce;
+    }
+
+    private async Task<LinkMessage.PairHello> ReceiveConfirmPairHelloAsync(SecureLinkSession secure, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(ConfirmHandshakeTimeout);
+        SecureLinkMessage message = await secure.ReceiveAsync(timeout.Token).ConfigureAwait(false)
+            ?? throw new InvalidDataException("Peer closed before PairHello.");
+        return message.Envelope.Payload as LinkMessage.PairHello
+            ?? throw new InvalidDataException("Expected PairHello.");
+    }
+
+    private static byte[]? TryDecodeKey(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        try
+        {
+            byte[] key = Convert.FromBase64String(value);
+            return key.Length == 32 ? key : null;
+        }
+        catch (FormatException) { return null; }
+    }
+
     /// <summary>
     /// Receives the PairHello of a device pairing through the open window. A frame that does not
     /// verify under the window's code (wrong code) or no PairHello in time is a failed attempt;
@@ -311,7 +520,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         SecureLinkSession secure,
         TrustedPeer peer,
         IPAddress? remoteAddress,
-        CancellationToken ct)
+        CancellationToken ct,
+        Task<SecureLinkMessage?>? pendingReceive = null)
     {
         using PeerSessionRegistry.Registration registration = _sessions.Open(peer.DeviceId, secure.SendAsync);
         VeyroTrace.Info($"Session opened for peer {peer.DeviceId}");
@@ -325,7 +535,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 SecureLinkMessage? message;
                 try
                 {
-                    message = await secure.ReceiveAsync(ct).ConfigureAwait(false);
+                    // Confirm pairing hands over the receive it already had outstanding while the
+                    // user decided; it reads with whatever key is current, so after Rekey that is
+                    // the session secret.
+                    Task<SecureLinkMessage?> receive = pendingReceive ?? secure.ReceiveAsync(ct);
+                    pendingReceive = null;
+                    message = await receive.ConfigureAwait(false);
                 }
                 catch (Exception error) when (error is WebSocketException or IOException && !ct.IsCancellationRequested)
                 {

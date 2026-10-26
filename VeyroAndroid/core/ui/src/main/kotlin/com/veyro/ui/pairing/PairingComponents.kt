@@ -14,24 +14,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +32,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -108,20 +99,20 @@ internal fun ScanQrCard(
         }
         Spacer(modifier = Modifier.height(8.dp))
         VeyroTextButton(
-            text = "Enter code instead",
+            text = "No camera? Pick it from the nearby list",
             onClick = onEnterCode,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
     }
 }
 
-/** Explains the list-and-type path; shown after "Enter code instead" or a scanner failure. */
+/** Explains the nearby-list path; shown after "Pick it from the nearby list" or a scanner failure. */
 @Composable
 internal fun CodeEntryHint(modifier: Modifier = Modifier) {
     VeyroCard(modifier = modifier) {
         Text(
-            text = "Tap your PC in the list below, then type the 6-digit code shown on its " +
-                "pairing screen.",
+            text = "Tap your PC in the list below. Both screens then show the same 6-digit code: " +
+                "check that they match and click Accept on the PC. Nothing to type.",
             style = MaterialTheme.typography.bodyMedium,
         )
     }
@@ -304,64 +295,6 @@ internal fun SearchingCard(modifier: Modifier = Modifier) {
             }
         }
     }
-}
-
-/** Initiator PIN entry, for the list-and-type path. */
-@Composable
-internal fun PinEntryDialog(
-    peerName: String?,
-    onSubmit: (String) -> Unit,
-    onCancel: () -> Unit,
-) {
-    // Saveable so a rotation does not wipe half-typed digits. Never logged.
-    var pin by rememberSaveable { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onCancel,
-        containerColor = MaterialTheme.colorScheme.surface,
-        title = {
-            Text(
-                text = "Enter the code",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    text = peerName?.let { "$it is showing a 6-digit code. Type it here." }
-                        ?: "Type the 6-digit code shown on the other device.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = VeyroTextSecondary,
-                )
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { if (it.length <= 6 && it.all { c -> c in '0'..'9' }) pin = it },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    textStyle = VeyroPinStyle.copy(fontSize = 32.sp, textAlign = TextAlign.Center),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = "6-digit pairing code" },
-                    shape = RoundedCornerShape(14.dp),
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSubmit(pin) },
-                enabled = pin.length == 6,
-                colors = ButtonDefaults.buttonColors(containerColor = VeyroViolet),
-            ) {
-                Text("Pair")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onCancel) {
-                Text("Cancel", color = VeyroTextSecondary)
-            }
-        },
-    )
 }
 
 /** Six digits, large and grouped `123 456`, for reading across a room. */

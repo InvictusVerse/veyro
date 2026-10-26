@@ -23,7 +23,7 @@ public enum class QrPairingError(public val title: String, public val hint: Stri
     SCANNER_UNAVAILABLE(
         "QR scanning is not available",
         "This phone has no working Google Play services scanner right now. Pick your PC from " +
-            "the list below and type the 6-digit code it shows instead.",
+            "the list below instead; both screens then show the same code.",
     ),
     NOT_A_VEYRO_CODE(
         "That is not a Veyro pairing code",
@@ -31,7 +31,7 @@ public enum class QrPairingError(public val title: String, public val hint: Stri
     ),
     UNSUPPORTED_VERSION(
         "This code is from a newer Veyro",
-        "Update Veyro on this phone, or pick the PC from the list and type its code.",
+        "Update Veyro on this phone, or pick the PC from the nearby list instead.",
     ),
     EXPIRED(
         "This code has expired",
@@ -57,7 +57,7 @@ public enum class QrPairingError(public val title: String, public val hint: Stri
     ),
     OTHER(
         "Pairing did not finish",
-        "Try scanning again. If it keeps failing, pick the PC from the list and type its code.",
+        "Try scanning again. If it keeps failing, pick the PC from the nearby list instead.",
     ),
     ;
 
@@ -73,7 +73,9 @@ public enum class QrPairingError(public val title: String, public val hint: Stri
             CodePairingFailure.NOT_ACCEPTING -> NOT_ACCEPTING
             CodePairingFailure.CODE_REJECTED -> CODE_REJECTED
             CodePairingFailure.IDENTITY_MISMATCH -> IDENTITY_MISMATCH
-            CodePairingFailure.OTHER -> OTHER
+            // Confirm-pairing outcomes; a QR pairing does not produce them.
+            CodePairingFailure.DECLINED, CodePairingFailure.TIMEOUT -> NOT_ACCEPTING
+            CodePairingFailure.CANCELLED, CodePairingFailure.OTHER -> OTHER
         }
     }
 }

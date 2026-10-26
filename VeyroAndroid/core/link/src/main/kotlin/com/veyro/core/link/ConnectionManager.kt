@@ -2,6 +2,7 @@ package com.veyro.core.link
 
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.crypto.PairConfirm
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
@@ -16,7 +17,10 @@ import io.ktor.websocket.send
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -26,8 +30,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Base64
@@ -60,11 +66,19 @@ import java.util.UUID
  * it cannot know that from an encrypted frame it has no key for. It is explicitly **unauthenticated
  * and non-authoritative** - it only selects which gate to run.
  *
+ * ## Confirm pairing (ADR-031)
+ *
+ * Pairing from the nearby list sends `pair = "confirm"`. The receiver answers `pairing-confirm`
+ * with its key and a commitment, both sides exchange nonces, and each derives the same 6-digit
+ * code and a bootstrap key from X25519 between the static identity keys (04-PROTOCOL.md 4.3).
+ * The user compares the code and accepts on the receiver; nothing is typed. The legacy
+ * `pairing` branch above (PIN) remains for tests and for `pair` absent.
+ *
  * ## Who mints the secret
  *
- * The **target** mints the 32-byte session secret and sends it sealed under the PIN-derived key.
- * Not the initiator: the target is the device whose user read the PIN aloud, so it is the side that
- * has already demonstrated physical presence.
+ * The **target** mints the 32-byte session secret and sends it sealed under the bootstrap key.
+ * Not the initiator: the target is the device whose user accepted (or read the PIN aloud), so it
+ * is the side that has already demonstrated physical presence.
  */
 public class ConnectionManager(
     private val dispatchers: AppDispatchers,
@@ -75,6 +89,13 @@ public class ConnectionManager(
     private val saveTrustedPeer: suspend (TrustedPeer) -> Unit,
     private val client: ConnectionClient = ConnectionClient(),
     private val localPublicKey: suspend () -> ByteArray = { ByteArray(32) },
+    /**
+     * `HKDF-SHA256(X25519(identityPrivate, peerPublicKey), salt, info, 32)`; in production
+     * `IdentityManager.deriveSharedKey`, so the private key and the raw DH output stay inside the
+     * identity. Needed only for confirm pairing.
+     */
+    private val deriveSharedKey: suspend (peerPublicKey: ByteArray, salt: ByteArray, info: ByteArray) -> ByteArray =
+        { _, _, _ -> throw IllegalStateException("confirm pairing is not configured") },
 ) {
 
     /**
@@ -94,21 +115,41 @@ public class ConnectionManager(
         const val ACK_TIMEOUT_MS = 35_000L
         const val PAIR_EXCHANGE_TIMEOUT_MS = 60_000L
         const val MAX_PREAMBLE_BYTES = 64 * 1024
+
+        /** The user's time to compare and accept, on both sides (04-PROTOCOL.md 4.3). */
+        const val CONFIRM_TIMEOUT_MS = 120_000L
+
+        /** The initiator waits a little longer, so the receiver's own timeout is what it reports. */
+        const val CONFIRM_GRACE_MS = 5_000L
+
+        /** `pairHello` follows the nonces immediately; this only bounds a stalled peer. */
+        const val CONFIRM_HELLO_TIMEOUT_MS = 30_000L
     }
+
+    /** Overridable by tests; production uses [CONFIRM_TIMEOUT_MS]. */
+    internal var confirmTimeoutMs: Long = CONFIRM_TIMEOUT_MS
 
     /** What the pairing UI needs to render. */
     public data class PendingInbound(
         val peerDeviceId: String,
         val peerDeviceName: String,
-        /** `"..."` until the user consents and a PIN is minted. */
+        /** Legacy flow: `"..."` until the user consents and a PIN is minted. Confirm flow: the code. */
         val pin: String,
         val expiresAt: Long,
-    )
+        /** Six digits when this is a confirm pairing (ADR-031): show it with Accept / Decline. */
+        val confirmCode: String? = null,
+    ) {
+        override fun toString(): String = "PendingInbound(peerDeviceId=$peerDeviceId)"
+    }
 
     public data class PendingOutbound(
         val peerDeviceId: String,
         val peerDeviceName: String,
-    )
+        /** Six digits once the confirm exchange computed them; the user compares with the PC. */
+        val confirmCode: String? = null,
+    ) {
+        override fun toString(): String = "PendingOutbound(peerDeviceId=$peerDeviceId)"
+    }
 
     public sealed interface ConnectionEvent {
         public data class Connected(val peerDeviceId: String, val peerName: String) : ConnectionEvent
@@ -129,6 +170,15 @@ public class ConnectionManager(
     public sealed interface CodePairingProgress {
         public data object Connecting : CodePairingProgress
         public data object Securing : CodePairingProgress
+
+        /**
+         * Confirm pairing only ([pairWithConfirm]): both screens now show [code]; the user accepts
+         * on the other device. Ends in a terminal value, or [Failed] with `CANCELLED`.
+         */
+        public data class AwaitingConfirmation(val code: String) : CodePairingProgress {
+            override fun toString(): String = "AwaitingConfirmation"
+        }
+
         public data class Paired(val peer: TrustedPeer) : CodePairingProgress
 
         /** The PC already trusts this phone and a normal session opened instead. */
@@ -146,8 +196,20 @@ public class ConnectionManager(
         /** The PIN bootstrap failed: wrong or stale code, or the PC rejected it. */
         CODE_REJECTED,
 
-        /** `DeviceId(publicKeyB64)` from `pairOk` is not the scanned id. Nothing was stored. */
+        /**
+         * The answering key does not hash to the id that was scanned or dialled, or (confirm
+         * pairing) the PC's nonce does not match its commitment. Nothing was stored.
+         */
         IDENTITY_MISMATCH,
+
+        /** Confirm pairing: the user tapped Decline on the other device. */
+        DECLINED,
+
+        /** Confirm pairing: nobody accepted within the 120 s window. */
+        TIMEOUT,
+
+        /** Confirm pairing: cancelled on this device. */
+        CANCELLED,
 
         /** Anything else (local persistence failure, lost pairing, protocol error). */
         OTHER,
@@ -193,8 +255,11 @@ public class ConnectionManager(
     /** Resolved when the local user answers an inbound pairing prompt. */
     private var inboundConsent: CompletableDeferred<Boolean>? = null
 
-    /** Resolved when the local user types the PIN for an outbound pairing. */
+    /** Resolved when the local user types the PIN for an outbound pairing (legacy, tests only). */
     private var outboundPin: CompletableDeferred<String?>? = null
+
+    /** Completed by [cancelOutboundPairing] to abort a confirm pairing this device started. */
+    @Volatile private var outboundConfirmCancel: CompletableDeferred<Unit>? = null
 
     /** Holds active inbound WebSocket session to enable clean cancellation and replacement. */
     @Volatile private var pendingInboundWs: DefaultWebSocketSession? = null
@@ -278,6 +343,7 @@ public class ConnectionManager(
             } else {
                 VeyroLog.i(TAG) { "[$connId] Simultaneous dial detected with ${preamble.id}. Local ID ($selfId) <= peer ID (${preamble.id}): yielding outbound to accept inbound." }
                 outboundPin?.complete(null)
+                outboundConfirmCancel?.complete(Unit)
                 _pendingOutbound.value = null
             }
         }
@@ -306,6 +372,20 @@ public class ConnectionManager(
             sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_SESSION), connId)
             runConnection(ws, known, encrypt = true, inbound = true, connId = connId, remoteHost = remoteHost, localHost = localHost)
             return
+        }
+
+        when (preamble.pair) {
+            LinkPreamble.PAIR_CONFIRM -> {
+                runInboundConfirm(ws, preamble, connId, remoteHost, localHost)
+                return
+            }
+            LinkPreamble.PAIR_QR -> {
+                // A phone shows no QR code, so there is never a window to pair through.
+                VeyroLog.i(TAG) { "[$connId] QR pairing requested but this device has no pairing window" }
+                sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_REFUSED, "no-pairing-window"), connId)
+                ws.close(CloseReason(CloseReason.Codes.NORMAL, "refused"))
+                return
+            }
         }
 
         // Unknown peer. Ask the local user before minting anything: a PIN prompt that appears
@@ -503,10 +583,53 @@ public class ConnectionManager(
         peerName = peerName,
         endpoints = endpoints,
         forceReconnect = forceReconnect,
+        pairMode = LinkPreamble.PAIR_CONFIRM,
         presetCode = null,
         expectedPeerId = null,
-        onSecuring = {},
+        onProgress = {},
     ).isSuccess
+
+    /**
+     * Pairs with a device picked from the nearby list by comparing a code (04-PROTOCOL.md 4.3,
+     * ADR-031). Nothing is typed.
+     *
+     * Emits [CodePairingProgress.Connecting], [CodePairingProgress.Securing], then
+     * [CodePairingProgress.AwaitingConfirmation] with the 6 digits to show while the user accepts on
+     * the other device, then one terminal value. [cancelOutboundPairing] aborts and ends the flow
+     * with `CANCELLED`. If the peer already trusts this device a session opens instead
+     * ([CodePairingProgress.AlreadyPaired]).
+     */
+    public fun pairWithConfirm(
+        peerDeviceId: String,
+        peerName: String,
+        endpoints: List<Endpoint>,
+    ): Flow<CodePairingProgress> = channelFlow {
+        send(CodePairingProgress.Connecting)
+        val outcome = dial(
+            peerDeviceId = peerDeviceId,
+            peerName = peerName,
+            endpoints = endpoints,
+            forceReconnect = false,
+            pairMode = LinkPreamble.PAIR_CONFIRM,
+            presetCode = null,
+            expectedPeerId = null,
+            onProgress = { send(it) },
+        )
+        send(terminalProgress(outcome, peerDeviceId, peerName))
+    }
+
+    private suspend fun terminalProgress(
+        outcome: DialOutcome,
+        peerDeviceId: String,
+        peerName: String,
+    ): CodePairingProgress = when (outcome) {
+        is DialOutcome.Paired -> CodePairingProgress.Paired(outcome.peer)
+        DialOutcome.Session -> CodePairingProgress.AlreadyPaired(trustedPeer(peerDeviceId)?.name ?: peerName)
+        is DialOutcome.Failed -> CodePairingProgress.Failed(
+            outcome.failure,
+            (_events.value as? ConnectionEvent.Failed)?.reason ?: "Pairing failed",
+        )
+    }
 
     /**
      * Pairs with a PC whose QR code was scanned (04-PROTOCOL.md section 4.2, ADR-030).
@@ -532,22 +655,12 @@ public class ConnectionManager(
             peerName = peerName,
             endpoints = endpoints,
             forceReconnect = false,
+            pairMode = LinkPreamble.PAIR_QR,
             presetCode = code,
             expectedPeerId = peerDeviceId,
-            onSecuring = { send(CodePairingProgress.Securing) },
+            onProgress = { send(it) },
         )
-        send(
-            when (outcome) {
-                is DialOutcome.Paired -> CodePairingProgress.Paired(outcome.peer)
-                DialOutcome.Session -> CodePairingProgress.AlreadyPaired(
-                    trustedPeer(peerDeviceId)?.name ?: peerName,
-                )
-                is DialOutcome.Failed -> CodePairingProgress.Failed(
-                    outcome.failure,
-                    (_events.value as? ConnectionEvent.Failed)?.reason ?: "Pairing failed",
-                )
-            },
-        )
+        send(terminalProgress(outcome, peerDeviceId, peerName))
     }
 
     private suspend fun dial(
@@ -555,9 +668,10 @@ public class ConnectionManager(
         peerName: String,
         endpoints: List<Endpoint>,
         forceReconnect: Boolean,
+        pairMode: String?,
         presetCode: String?,
         expectedPeerId: String?,
-        onSecuring: suspend () -> Unit,
+        onProgress: suspend (CodePairingProgress) -> Unit,
     ): DialOutcome = mutex.withLock {
         val connId = "out-" + UUID.randomUUID().toString().take(8)
         if (endpoints.isEmpty()) {
@@ -604,12 +718,14 @@ public class ConnectionManager(
 
         val selfId = localDeviceId()
         val selfName = localDeviceName()
-        VeyroLog.i(TAG) { "[$connId] Client preamble sent (id=$selfId, name=$selfName)" }
+        // The key goes in the preamble only for confirm pairing; the receiver needs it to commit.
+        val selfPk = if (pairMode == LinkPreamble.PAIR_CONFIRM) b64(localPublicKey()) else null
+        VeyroLog.i(TAG) { "[$connId] Client preamble sent (id=$selfId, name=$selfName, pair=$pairMode)" }
         ws.send(
             Frame.Text(
                 LinkJson.codec.encodeToString(
                     LinkPreamble.serializer(),
-                    LinkPreamble(selfId, selfName),
+                    LinkPreamble(selfId, selfName, pair = pairMode, pk = selfPk),
                 ),
             ),
         )
@@ -638,9 +754,20 @@ public class ConnectionManager(
                 }
             }
 
+            LinkPreambleAck.MODE_PAIRING_CONFIRM -> {
+                if (pairMode != LinkPreamble.PAIR_CONFIRM) {
+                    VeyroLog.w(TAG) { "[$connId] Peer answered pairing-confirm to a ${pairMode ?: "legacy"} preamble; aborting" }
+                    ws.close(CloseReason(CloseReason.Codes.PROTOCOL_ERROR, "unexpected-mode"))
+                    _events.value = ConnectionEvent.Failed("$peerName answered in an unexpected way")
+                    return DialOutcome.Failed(CodePairingFailure.OTHER)
+                }
+                VeyroLog.i(TAG) { "[$connId] Proceeding with confirm pairing with $peerName" }
+                runOutboundConfirm(ws, peerDeviceId, peerName, ack, connId, remoteHost, onProgress)
+            }
+
             LinkPreambleAck.MODE_PAIRING -> {
                 VeyroLog.i(TAG) { "[$connId] Proceeding with outbound pairing exchange with $peerName" }
-                if (presetCode != null) onSecuring()
+                if (presetCode != null) onProgress(CodePairingProgress.Securing)
                 runOutboundPairing(ws, peerDeviceId, peerName, connId, remoteHost, presetCode, expectedPeerId)
             }
 
@@ -804,9 +931,492 @@ public class ConnectionManager(
         }
     }
 
+    // ── Confirm pairing (04-PROTOCOL.md 4.3, ADR-031) ──────────────────────────────────────
+    //
+    // A = initiator, B = receiver. Nonces, codes and keys are never logged.
+
+    private enum class InboundDecision { ACCEPT, DECLINE, ABANDONED, TIMEOUT }
+
+    private sealed interface OutboundAnswer {
+        data class Reply(val payload: LinkMessage) : OutboundAnswer
+        data object Cancelled : OutboundAnswer
+        data object Lost : OutboundAnswer
+        data object TimedOut : OutboundAnswer
+    }
+
+    /**
+     * Initiator side. The receiver's key must hash to the id we dialled; its nonce must match the
+     * commitment it sent before seeing ours. Only then is the code shown and `pairHello` sent.
+     */
+    private suspend fun runOutboundConfirm(
+        ws: DefaultWebSocketSession,
+        peerDeviceId: String,
+        peerName: String,
+        ack: LinkPreambleAck,
+        connId: String,
+        remoteHost: String?,
+        onProgress: suspend (CodePairingProgress) -> Unit,
+    ): DialOutcome {
+        val selfId = localDeviceId()
+        val pkA = localPublicKey()
+        val pkB = decodeKey(ack.pk)
+        val commit = decodeB64OrNull(ack.commit)?.takeIf { it.size == PairConfirm.COMMIT_SIZE }
+        val dialled = DeviceId.parseOrNull(peerDeviceId)
+        if (pkB == null || commit == null || dialled == null || !DeviceId.matches(dialled, pkB)) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing aborted: the answering key does not match the dialled device id; nothing stored" }
+            ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "identity-mismatch"))
+            _events.value = ConnectionEvent.Failed("The device that answered is not $peerName. Nothing was saved.")
+            return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
+        }
+        val idB = dialled.value
+
+        val cancel = CompletableDeferred<Unit>()
+        outboundConfirmCancel = cancel
+        _pendingOutbound.value = PendingOutbound(idB, peerName)
+        var session: PeerConnection? = null
+        try {
+            onProgress(CodePairingProgress.Securing)
+            val nA = PairConfirm.newNonce()
+            sendPairNonce(ws, nA)
+            val nB = readPairNonce(ws, connId) ?: run {
+                ws.close(CloseReason(CloseReason.Codes.PROTOCOL_ERROR, "no-nonce"))
+                _events.value = ConnectionEvent.Failed("$peerName stopped answering")
+                return DialOutcome.Failed(CodePairingFailure.OTHER)
+            }
+            if (!PairConfirm.verifyCommitment(commit, pkB, pkA, nB)) {
+                VeyroLog.w(TAG) { "[$connId] Confirm pairing aborted: the peer's nonce does not match its commitment; nothing stored" }
+                ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "commitment-mismatch"))
+                _events.value = ConnectionEvent.Failed("$peerName could not be verified. Nothing was saved.")
+                return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
+            }
+
+            val code = PairConfirm.code(pkA, pkB, nA, nB)
+            val key = try {
+                deriveSharedKey(pkB, PairConfirm.bootstrapSalt(nA, nB), PairConfirm.bootstrapInfo(selfId, idB))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                VeyroLog.w(TAG) { "[$connId] Confirm pairing aborted: key agreement rejected (${t.javaClass.simpleName})" }
+                ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "bad-key"))
+                _events.value = ConnectionEvent.Failed("$peerName sent an unusable key. Nothing was saved.")
+                return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
+            }
+            val pairing = PeerConnection(
+                ws = ws,
+                initialKey = FrameCrypto.sessionKeyFromBytes(key),
+                initialEncrypt = false,
+                localDeviceId = selfId,
+                tag = "Connection(confirm-out-$connId)",
+                dispatcher = dispatchers.io,
+                peerDeviceId = idB,
+                remoteHost = remoteHost,
+            )
+            key.fill(0)
+            session = pairing
+            // The receiver sends nothing until its user decides; see PeerConnection.heartbeatPaused.
+            pairing.heartbeatPaused = true
+            val readJob = pairing.start()
+            pairing.send(
+                LinkMessage.PairHello(
+                    deviceId = selfId,
+                    deviceName = localDeviceName(),
+                    platform = Platform.ANDROID.toWire(),
+                    appVersion = "0.1.0",
+                    publicKeyB64 = b64(pkA),
+                ),
+            )
+            _pendingOutbound.value = PendingOutbound(idB, peerName, confirmCode = code)
+            VeyroLog.i(TAG) { "[$connId] Confirm code ready; waiting for $peerName to accept" }
+            onProgress(CodePairingProgress.AwaitingConfirmation(code))
+
+            val answer = awaitOutboundConfirm(pairing, cancel)
+            _pendingOutbound.value = null
+            return when (answer) {
+                is OutboundAnswer.Reply -> when (val payload = answer.payload) {
+                    is LinkMessage.PairOk -> completeOutboundConfirm(pairing, readJob, payload, dialled, pkB, connId)
+                    is LinkMessage.PairFail -> {
+                        val failure = when (payload.reason) {
+                            "declined" -> CodePairingFailure.DECLINED
+                            "timeout" -> CodePairingFailure.TIMEOUT
+                            else -> CodePairingFailure.NOT_ACCEPTING
+                        }
+                        VeyroLog.i(TAG) { "[$connId] Confirm pairing ended by $peerName: ${payload.reason}" }
+                        pairing.close("pair-fail")
+                        _events.value = ConnectionEvent.Failed(
+                            when (failure) {
+                                CodePairingFailure.DECLINED -> "Pairing was declined on $peerName"
+                                CodePairingFailure.TIMEOUT -> "Nobody accepted on $peerName in time"
+                                else -> "$peerName did not pair"
+                            },
+                        )
+                        DialOutcome.Failed(failure)
+                    }
+                    else -> {
+                        pairing.close("unexpected")
+                        _events.value = ConnectionEvent.Failed("$peerName answered in an unexpected way")
+                        DialOutcome.Failed(CodePairingFailure.OTHER)
+                    }
+                }
+                OutboundAnswer.Cancelled -> {
+                    VeyroLog.i(TAG) { "[$connId] Confirm pairing cancelled on this device" }
+                    runCatching { pairing.send(LinkMessage.PairFail("cancelled")) }
+                    pairing.close("cancelled")
+                    _events.value = ConnectionEvent.Failed("Pairing cancelled")
+                    DialOutcome.Failed(CodePairingFailure.CANCELLED)
+                }
+                OutboundAnswer.TimedOut -> {
+                    VeyroLog.i(TAG) { "[$connId] Confirm pairing timed out" }
+                    pairing.close("timeout")
+                    _events.value = ConnectionEvent.Failed("Nobody accepted on $peerName in time")
+                    DialOutcome.Failed(CodePairingFailure.TIMEOUT)
+                }
+                OutboundAnswer.Lost -> {
+                    VeyroLog.i(TAG) { "[$connId] Confirm pairing lost the connection" }
+                    pairing.close("lost")
+                    _events.value = ConnectionEvent.Failed("The connection to $peerName was lost")
+                    DialOutcome.Failed(CodePairingFailure.OTHER)
+                }
+            }
+        } catch (e: CancellationException) {
+            // The caller went away (screen closed). Do not leave the receiver's prompt hanging.
+            withContext(NonCancellable) {
+                val open = session
+                if (open != null) {
+                    runCatching { open.send(LinkMessage.PairFail("cancelled")) }
+                    open.close("cancelled")
+                } else {
+                    runCatching { ws.close(CloseReason(CloseReason.Codes.NORMAL, "cancelled")) }
+                }
+            }
+            throw e
+        } finally {
+            if (outboundConfirmCancel === cancel) outboundConfirmCancel = null
+            if (_pendingOutbound.value?.peerDeviceId == idB) _pendingOutbound.value = null
+        }
+    }
+
+    private suspend fun awaitOutboundConfirm(
+        session: PeerConnection,
+        cancel: CompletableDeferred<Unit>,
+    ): OutboundAnswer = coroutineScope {
+        val reply = async {
+            var result: LinkMessage? = null
+            while (result == null) {
+                val envelope = session.handshakeOrNull(Long.MAX_VALUE) ?: break
+                val payload = envelope.payload
+                if (payload is LinkMessage.PairOk || payload is LinkMessage.PairFail) result = payload
+            }
+            result
+        }
+        try {
+            withTimeoutOrNull(confirmTimeoutMs + CONFIRM_GRACE_MS) {
+                select<OutboundAnswer> {
+                    reply.onAwait { payload -> payload?.let { OutboundAnswer.Reply(it) } ?: OutboundAnswer.Lost }
+                    cancel.onAwait { OutboundAnswer.Cancelled }
+                }
+            } ?: OutboundAnswer.TimedOut
+        } finally {
+            reply.cancel()
+        }
+    }
+
+    private suspend fun completeOutboundConfirm(
+        session: PeerConnection,
+        readJob: Job,
+        payload: LinkMessage.PairOk,
+        dialled: DeviceId,
+        pkB: ByteArray,
+        connId: String,
+    ): DialOutcome {
+        val secret = decodeB64OrNull(payload.sessionSecretB64)?.takeIf { it.size == 32 }
+        val answeredId = DeviceId.parseOrNull(payload.deviceId)
+        val answeredPk = decodeKey(payload.publicKeyB64)
+        if (secret == null || answeredId != dialled || answeredPk == null || !answeredPk.contentEquals(pkB)) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing aborted: pairOk does not match the confirmed identity; nothing stored" }
+            session.close("identity-mismatch")
+            _events.value = ConnectionEvent.Failed("Peer identity does not match public key")
+            return DialOutcome.Failed(CodePairingFailure.IDENTITY_MISMATCH)
+        }
+        val peer = TrustedPeer(
+            deviceId = dialled,
+            staticPublicKey = pkB,
+            pairingSecret = secret.copyOf(),
+            name = payload.deviceName,
+            platform = Platform.fromWire(payload.platform),
+            pairedAtEpochMillis = System.currentTimeMillis(),
+        )
+        try {
+            saveTrustedPeer(peer)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            VeyroLog.e(TAG, t) { "[$connId] Trust persistence failed: could not save trusted peer (${t.message})" }
+            session.close("persistence-failed")
+            _events.value = ConnectionEvent.Failed("Could not save pairing on this device")
+            return DialOutcome.Failed(CodePairingFailure.OTHER)
+        }
+        session.rekey(FrameCrypto.sessionKeyFromBytes(secret))
+        secret.fill(0)
+        session.heartbeatPaused = false
+        VeyroLog.i(TAG) { "[$connId] Confirm pairing completed; session established with ${payload.deviceName}" }
+        _events.value = ConnectionEvent.Paired(peer)
+        _activeConnection.value = session
+        val driverJob = sessionDriver?.let { driver ->
+            scope.launch { runCatching { driver(session, false) } }
+        }
+        scope.launch {
+            readJob.join()
+            driverJob?.cancel()
+            if (_activeConnection.value === session) _activeConnection.value = null
+            _events.value = ConnectionEvent.Disconnected
+            VeyroLog.i(TAG) { "[$connId] Session closed with ${payload.deviceName} (outbound, isConnected=${session.isConnected})" }
+        }
+        return DialOutcome.Paired(peer)
+    }
+
+    /**
+     * Receiver side. Commit to nB, learn nA, reveal nB, check the initiator's `pairHello` under K,
+     * then show the code with Accept / Decline. `pairOk` is sent only after Accept.
+     */
+    private suspend fun runInboundConfirm(
+        ws: DefaultWebSocketSession,
+        preamble: LinkPreamble,
+        connId: String,
+        remoteHost: String?,
+        localHost: String?,
+    ) {
+        val pkA = decodeKey(preamble.pk)
+        val claimed = DeviceId.parseOrNull(preamble.id)
+        if (pkA == null || claimed == null || !DeviceId.matches(claimed, pkA)) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing refused: the preamble key does not match its device id" }
+            sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_REFUSED, "identity-mismatch"), connId)
+            ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "identity-mismatch"))
+            _events.value = ConnectionEvent.Failed("${preamble.name} sent an identity that does not match its key")
+            return
+        }
+        val idA = claimed.value
+        val selfId = localDeviceId()
+        val pkB = localPublicKey()
+        val nB = PairConfirm.newNonce()
+        sendAck(
+            ws,
+            LinkPreambleAck(
+                LinkPreambleAck.MODE_PAIRING_CONFIRM,
+                pk = b64(pkB),
+                commit = b64(PairConfirm.commitment(pkB, pkA, nB)),
+            ),
+            connId,
+        )
+        val nA = readPairNonce(ws, connId) ?: run {
+            ws.close(CloseReason(CloseReason.Codes.PROTOCOL_ERROR, "no-nonce"))
+            return
+        }
+        sendPairNonce(ws, nB)
+
+        val code = PairConfirm.code(pkA, pkB, nA, nB)
+        val key = try {
+            deriveSharedKey(pkA, PairConfirm.bootstrapSalt(nA, nB), PairConfirm.bootstrapInfo(idA, selfId))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing refused: key agreement rejected (${t.javaClass.simpleName})" }
+            ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "bad-key"))
+            return
+        }
+        val session = PeerConnection(
+            ws = ws,
+            initialKey = FrameCrypto.sessionKeyFromBytes(key),
+            initialEncrypt = false,
+            localDeviceId = selfId,
+            tag = "Connection(confirm-in-$connId)",
+            dispatcher = dispatchers.io,
+            peerDeviceId = idA,
+            remoteHost = remoteHost,
+            localHost = localHost,
+        )
+        key.fill(0)
+        val readJob = session.start()
+
+        // A pairHello that verifies under K proves the initiator holds the private key behind pkA.
+        val hello = session.handshakeOrNull(CONFIRM_HELLO_TIMEOUT_MS)?.payload as? LinkMessage.PairHello
+        val helloPk = decodeKey(hello?.publicKeyB64)
+        if (hello == null || DeviceId.parseOrNull(hello.deviceId) != claimed || helloPk == null || !helloPk.contentEquals(pkA)) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing failed: no matching pairHello under the confirm key" }
+            session.close("bad-hello")
+            _events.value = ConnectionEvent.Failed("${preamble.name} could not be verified")
+            return
+        }
+
+        val consent = CompletableDeferred<Boolean>()
+        inboundConsent = consent
+        pendingInboundWs = ws
+        _pendingInbound.value = PendingInbound(
+            peerDeviceId = idA,
+            peerDeviceName = hello.deviceName,
+            pin = code,
+            expiresAt = System.currentTimeMillis() + confirmTimeoutMs,
+            confirmCode = code,
+        )
+        VeyroLog.i(TAG) { "[$connId] Confirm code ready; waiting for the user to accept ${hello.deviceName}" }
+        val decision = try {
+            awaitInboundConfirm(consent, session, readJob)
+        } finally {
+            if (inboundConsent === consent) inboundConsent = null
+            if (pendingInboundWs === ws) {
+                _pendingInbound.value = null
+                pendingInboundWs = null
+            }
+        }
+
+        when (decision) {
+            InboundDecision.ACCEPT -> finishInboundPairing(session, readJob, hello, claimed, pkA, connId)
+            InboundDecision.DECLINE -> {
+                VeyroLog.i(TAG) { "[$connId] Confirm pairing declined by the user" }
+                runCatching { session.send(LinkMessage.PairFail("declined")) }
+                session.close("declined")
+                _events.value = ConnectionEvent.Failed("Pairing declined")
+            }
+            InboundDecision.TIMEOUT -> {
+                VeyroLog.i(TAG) { "[$connId] Confirm pairing timed out" }
+                runCatching { session.send(LinkMessage.PairFail("timeout")) }
+                session.close("timeout")
+                _events.value = ConnectionEvent.Failed("Pairing timed out")
+            }
+            InboundDecision.ABANDONED -> {
+                VeyroLog.i(TAG) { "[$connId] Confirm pairing abandoned by ${hello.deviceName}" }
+                session.close("abandoned")
+                _events.value = ConnectionEvent.Failed("${hello.deviceName} cancelled pairing")
+            }
+        }
+    }
+
+    private suspend fun awaitInboundConfirm(
+        consent: CompletableDeferred<Boolean>,
+        session: PeerConnection,
+        readJob: Job,
+    ): InboundDecision = coroutineScope {
+        // The initiator cancelling sends pairFail; it dropping the socket ends the read loop.
+        val peerGaveUp = async {
+            while (true) {
+                val envelope = session.handshakeOrNull(Long.MAX_VALUE) ?: break
+                if (envelope.payload is LinkMessage.PairFail) break
+            }
+        }
+        try {
+            withTimeoutOrNull(confirmTimeoutMs) {
+                select<InboundDecision> {
+                    consent.onAwait { if (it) InboundDecision.ACCEPT else InboundDecision.DECLINE }
+                    readJob.onJoin { InboundDecision.ABANDONED }
+                    peerGaveUp.onAwait { InboundDecision.ABANDONED }
+                }
+            } ?: InboundDecision.TIMEOUT
+        } finally {
+            peerGaveUp.cancel()
+        }
+    }
+
+    /** Mints the secret, persists trust, answers `pairOk` sealed under the bootstrap key, runs the session. */
+    private suspend fun finishInboundPairing(
+        session: PeerConnection,
+        readJob: Job,
+        hello: LinkMessage.PairHello,
+        peerDeviceId: DeviceId,
+        peerPk: ByteArray,
+        connId: String,
+    ) {
+        val secret = FrameCrypto.newSessionSecret()
+        val peer = TrustedPeer(
+            deviceId = peerDeviceId,
+            staticPublicKey = peerPk,
+            pairingSecret = secret.copyOf(),
+            name = hello.deviceName,
+            platform = Platform.fromWire(hello.platform),
+            pairedAtEpochMillis = System.currentTimeMillis(),
+        )
+        try {
+            saveTrustedPeer(peer)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            VeyroLog.e(TAG, t) { "[$connId] Trust persistence failed: could not save trusted peer (${t.message})" }
+            runCatching { session.send(LinkMessage.PairFail("error")) }
+            session.close("persistence-failed")
+            _events.value = ConnectionEvent.Failed("Could not save pairing on this device")
+            return
+        }
+        session.sendSealed(
+            LinkMessage.PairOk(
+                deviceId = localDeviceId(),
+                deviceName = localDeviceName(),
+                platform = Platform.ANDROID.toWire(),
+                sessionSecretB64 = b64(secret),
+                publicKeyB64 = b64(localPublicKey()),
+            ),
+        )
+        session.rekey(FrameCrypto.sessionKeyFromBytes(secret))
+        secret.fill(0)
+        VeyroLog.i(TAG) { "[$connId] Confirm pairing completed; session established with ${hello.deviceName}" }
+        _events.value = ConnectionEvent.Paired(peer)
+        _activeConnection.value = session
+        val driverJob = sessionDriver?.let { driver ->
+            scope.launch { runCatching { driver(session, true) } }
+        }
+        readJob.join()
+        driverJob?.cancel()
+        if (_activeConnection.value === session) _activeConnection.value = null
+        _events.value = ConnectionEvent.Disconnected
+        VeyroLog.i(TAG) { "[$connId] Session closed with ${hello.deviceName} (inbound, isConnected=${session.isConnected})" }
+    }
+
+    /** Null on timeout, a closed socket, or anything that is not a well-formed 32-byte nonce. */
+    private suspend fun readPairNonce(ws: DefaultWebSocketSession, connId: String): ByteArray? {
+        val frame = try {
+            withTimeout(PREAMBLE_TIMEOUT_MS) { ws.incoming.receive() }
+        } catch (e: TimeoutCancellationException) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing: no pairNonce within ${PREAMBLE_TIMEOUT_MS}ms" }
+            return null
+        } catch (e: ClosedReceiveChannelException) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing: peer closed before pairNonce" }
+            return null
+        }
+        if (frame !is Frame.Text || frame.data.size > MAX_PREAMBLE_BYTES) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing: unexpected frame instead of pairNonce" }
+            return null
+        }
+        val message = runCatching {
+            LinkJson.codec.decodeFromString(LinkPairNonce.serializer(), frame.readText())
+        }.getOrNull()
+        if (message == null || message.t != LinkPairNonce.TYPE) {
+            VeyroLog.w(TAG) { "[$connId] Confirm pairing: malformed pairNonce" }
+            return null
+        }
+        return decodeB64OrNull(message.n)?.takeIf { it.size == PairConfirm.NONCE_SIZE }
+            ?: run {
+                VeyroLog.w(TAG) { "[$connId] Confirm pairing: pairNonce has the wrong length" }
+                null
+            }
+    }
+
+    private suspend fun sendPairNonce(ws: DefaultWebSocketSession, nonce: ByteArray) {
+        ws.send(Frame.Text(LinkJson.codec.encodeToString(LinkPairNonce.serializer(), LinkPairNonce(n = b64(nonce)))))
+    }
+
+    private suspend fun PeerConnection.handshakeOrNull(timeoutMs: Long): LinkEnvelope? = try {
+        receiveHandshake(timeoutMs)
+    } catch (e: ClosedReceiveChannelException) {
+        null
+    }
+
+    private fun b64(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
+
+    private fun decodeB64OrNull(value: String?): ByteArray? =
+        value?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
+
+    private fun decodeKey(value: String?): ByteArray? = decodeB64OrNull(value)?.takeIf { it.size == 32 }
+
     // ── User answers ───────────────────────────────────────────────────────────────────────
 
-    /** Answers the inbound consent prompt. */
+    /** Answers the inbound prompt: consent (legacy) or Accept / Decline of a confirm code. */
     public fun respondToInbound(accept: Boolean) {
         VeyroLog.i(TAG) { "User responded to inbound pairing consent: accept=$accept" }
         inboundConsent?.complete(accept)
@@ -837,6 +1447,7 @@ public class ConnectionManager(
     public fun cancelOutboundPairing() {
         VeyroLog.i(TAG) { "User cancelled outbound pairing" }
         outboundPin?.complete(null)
+        outboundConfirmCancel?.complete(Unit)
         _pendingOutbound.value = null
     }
 

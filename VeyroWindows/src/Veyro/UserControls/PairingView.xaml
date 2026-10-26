@@ -86,7 +86,7 @@
                         <TextBlock
                             MaxWidth="220"
                             HorizontalAlignment="Center"
-                            Text="No QR code without a network address. See Network check, or type the code below."
+                            Text="No QR code without a network address. See Network check, or pair from the phone's nearby list."
                             TextAlignment="Center"
                             TextWrapping="Wrap" />
                     </StackPanel>
@@ -122,20 +122,20 @@
 
                 <MenuFlyoutSeparator />
 
-                <TextBlock
-                    FontSize="12"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="No camera? Pick this PC in the app and type this code:"
-                    TextWrapping="Wrap" />
-                <TextBlock
-                    HorizontalAlignment="Center"
-                    AutomationProperties.Name="Pairing code"
-                    CharacterSpacing="120"
-                    FontFamily="Cascadia Mono, Consolas"
-                    FontSize="40"
-                    FontWeight="SemiBold"
-                    IsTextSelectionEnabled="True"
-                    Text="{x:Bind ViewModel.CodeText, Mode=OneWay}" />
+                <!--  ADR-031: the nearby-list path compares a code instead of typing one  -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon
+                        VerticalAlignment="Top"
+                        FontSize="14"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Glyph="&#xE8EA;" />
+                    <TextBlock
+                        MaxWidth="270"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="No camera? In Veyro on the phone, tap this PC in the nearby list. Both screens then show the same code: check it and click Accept here. Nothing to type."
+                        TextWrapping="Wrap" />
+                </StackPanel>
 
                 <StackPanel Spacing="2">
                     <TextBlock
