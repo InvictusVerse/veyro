@@ -8,7 +8,9 @@
   xmlns:desktop2="http://schemas.microsoft.com/appx/manifest/desktop/windows10/2"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
-  IgnorableNamespaces="uap uap5 desktop desktop2 rescap mp com">
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  IgnorableNamespaces="uap uap5 desktop desktop2 desktop4 desktop5 rescap mp com">
 
   <Identity
     Name="Veyro.Windows"
@@ -54,7 +56,7 @@
           </uap:Protocol>
         </uap:Extension>
 
-        <!-- Windows Share Sheet target -->
+        <!-- Windows Share Sheet target (ADR-039: handled in Program / ShareTargetActivation) -->
         <uap:Extension Category="windows.shareTarget">
           <uap:ShareTarget>
             <uap:SupportedFileTypes>
@@ -76,6 +78,25 @@
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
+
+        <!-- Optional "Send with Veyro" in the Explorer right-click menu (ADR-039). Out of process:
+             Veyro.exe serves the IExplorerCommand (the running Veyro, or a windowless instance
+             started with the argument below). Hidden unless the setting is on. The CLSID must
+             match ExplorerCommandServer.CommandClsid in both elements. -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Veyro.exe" DisplayName="Veyro Explorer menu" Arguments="-VeyroExplorerCommand">
+              <com:Class Id="03FEE873-1C45-4C21-9509-78F1A3E62C1C" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="SendWithVeyro" Clsid="03FEE873-1C45-4C21-9509-78F1A3E62C1C" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
 
         <!-- Run on Windows Login -->
         <uap5:Extension Category="windows.startupTask">

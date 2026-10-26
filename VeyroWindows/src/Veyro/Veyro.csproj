@@ -40,5 +40,7 @@
   <ItemGroup>
     <!-- MSIX tile, splash, and store assets referenced by Package.appxmanifest -->
     <Content Include="Assets\**\*.png" />
+    <!-- Icon of the optional Explorer "Send with Veyro" menu (ADR-039); built from the logo PNGs -->
+    <Content Include="Assets\Veyro.ico" />
   </ItemGroup>
 </Project>
