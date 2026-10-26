@@ -29,6 +29,15 @@ $targets = @(
     @('SplashScreen.png',       620, 300, 240)
 )
 
+# Taskbar, Start list and Alt+Tab use Square44x44Logo.targetsize-N. Without the
+# "unplated" variants Windows draws the icon small on a coloured (accent/blue) plate.
+foreach ($n in 16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 256) {
+    foreach ($q in 'altform-unplated', 'altform-lightunplated') {
+        $targets += ,@("Square44x44Logo.targetsize-${n}_$q.png", $n, $n, $n)
+    }
+    $targets += ,@("Square44x44Logo.targetsize-$n.png", $n, $n, $n)
+}
+
 $svgText = (Get-Content $svg -Raw) -replace 'viewBox="0 0 1024 1024"', "viewBox=""$markViewBox"""
 Set-Content (Join-Path $scratch 'mark.svg') $svgText -Encoding UTF8
 
