@@ -302,6 +302,89 @@ public sealed interface LinkMessage {
     @SerialName("notifDismiss")
     public data class NotificationDismissRequest(val key: String) : LinkMessage
 
+    // ── Companion: media control (ADR-026), gated by MEDIA_CONTROL (0x0200) ──────────────────
+    //
+    // Symmetric: each side publishes its own media sessions with `mediaState` and the other side
+    // drives them with `mediaCmd`. Position is not streamed: the receiver extrapolates from
+    // `position` + `ts` while `playing`. Track metadata is user data: never log it.
+
+    /** Full snapshot of the sender's media sessions. Sent on connect, then on every change. */
+    @Serializable
+    @SerialName("mediaState")
+    public data class MediaState(
+        val sessions: List<MediaSessionInfo>,
+        /** Sender's master volume 0..100, if the sender can report it. */
+        val volume: Int? = null,
+        val muted: Boolean? = null,
+    ) : LinkMessage
+
+    /**
+     * Drive a session on the receiver. [action]: `play` | `pause` | `toggle` | `next` | `prev` |
+     * `seek` (value = position ms) | `volume` (value = 0..100, master, [id] ignored) |
+     * `mute` (value = 1 or 0, master). Unknown actions and unknown [id]s are ignored.
+     */
+    @Serializable
+    @SerialName("mediaCmd")
+    public data class MediaCommand(
+        val action: String,
+        val id: String? = null,
+        val value: Long? = null,
+    ) : LinkMessage {
+        public companion object {
+            public const val PLAY: String = "play"
+            public const val PAUSE: String = "pause"
+            public const val TOGGLE: String = "toggle"
+            public const val NEXT: String = "next"
+            public const val PREV: String = "prev"
+            public const val SEEK: String = "seek"
+            public const val VOLUME: String = "volume"
+            public const val MUTE: String = "mute"
+        }
+    }
+
+    @Serializable
+    public data class MediaSessionInfo(
+        /** Sender-chosen opaque id, stable for the session's lifetime. */
+        val id: String,
+        val app: String? = null,
+        val title: String? = null,
+        val artist: String? = null,
+        val album: String? = null,
+        val playing: Boolean = false,
+        val positionMs: Long? = null,
+        val durationMs: Long? = null,
+        /** Sender clock (epoch ms) at which [positionMs] was sampled. */
+        val ts: Long? = null,
+        val canPrev: Boolean = false,
+        val canNext: Boolean = false,
+        val canSeek: Boolean = false,
+        /** Artwork PNG or JPEG, at most 160x160 and 24 KiB, base64. */
+        val art: String? = null,
+    )
+
+    // ── Companion: device status (ADR-026), gated by DEVICE_STATUS (0x0400) ──────────────────
+
+    /** Sender's own status. Every field optional; absent means "unknown/unchanged-unsupported". */
+    @Serializable
+    @SerialName("devStatus")
+    public data class DeviceStatus(
+        val battery: Int? = null,
+        val charging: Boolean? = null,
+        /** `normal` | `vibrate` | `silent` (phones only). */
+        val ringer: String? = null,
+        val dnd: Boolean? = null,
+    ) : LinkMessage
+
+    /** PC to phone. Each set field is a request; the phone applies what it is permitted to. */
+    @Serializable
+    @SerialName("devControl")
+    public data class DeviceControl(
+        /** True: ring at full volume until stopped or 30 s; false: stop. */
+        val ring: Boolean? = null,
+        val ringer: String? = null,
+        val dnd: Boolean? = null,
+    ) : LinkMessage
+
     @Serializable
     public data class NotificationLine(val sender: String? = null, val text: String)
 

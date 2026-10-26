@@ -1,0 +1,29 @@
+{
+  "description": "Companion media and device-status messages (ADR-026). Each 'json' is the LinkMessage payload as LinkJson encodes it (discriminator 't', nulls omitted, defaults encoded). Both clients must decode each entry to the listed type and re-encode to semantically identical JSON.",
+  "vectors": [
+    {
+      "type": "mediaState",
+      "json": "{\"t\":\"mediaState\",\"sessions\":[{\"id\":\"s1\",\"app\":\"Music\",\"title\":\"Song\",\"artist\":\"Band\",\"album\":\"Record\",\"playing\":true,\"positionMs\":61000,\"durationMs\":215000,\"ts\":1793011200000,\"canPrev\":true,\"canNext\":true,\"canSeek\":true}],\"volume\":40,\"muted\":false}"
+    },
+    {
+      "type": "mediaState",
+      "json": "{\"t\":\"mediaState\",\"sessions\":[]}"
+    },
+    {
+      "type": "mediaCmd",
+      "json": "{\"t\":\"mediaCmd\",\"action\":\"seek\",\"id\":\"s1\",\"value\":90000}"
+    },
+    {
+      "type": "mediaCmd",
+      "json": "{\"t\":\"mediaCmd\",\"action\":\"volume\",\"value\":25}"
+    },
+    {
+      "type": "devStatus",
+      "json": "{\"t\":\"devStatus\",\"battery\":82,\"charging\":true,\"ringer\":\"vibrate\",\"dnd\":false}"
+    },
+    {
+      "type": "devControl",
+      "json": "{\"t\":\"devControl\",\"ring\":true}"
+    }
+  ]
+}

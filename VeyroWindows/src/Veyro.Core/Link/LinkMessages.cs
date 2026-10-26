@@ -76,7 +76,26 @@ public static class LinkCapabilities
     public const int FolderTransfer = 0x0002;
     public const int Resume = 0x0004;
     public const int NotificationMirror = 0x0100;
+    public const int MediaControl = 0x0200;
+    public const int DeviceStatus = 0x0400;
 }
+
+public sealed record MediaSessionInfo(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("app")] string? App = null,
+    [property: JsonPropertyName("title")] string? Title = null,
+    [property: JsonPropertyName("artist")] string? Artist = null,
+    [property: JsonPropertyName("album")] string? Album = null,
+    [property: JsonPropertyName("playing")] bool Playing = false,
+    [property: JsonPropertyName("positionMs")] long? PositionMs = null,
+    [property: JsonPropertyName("durationMs")] long? DurationMs = null,
+    /// <summary>Sender clock (epoch ms) at which PositionMs was sampled.</summary>
+    [property: JsonPropertyName("ts")] long? Ts = null,
+    [property: JsonPropertyName("canPrev")] bool CanPrev = false,
+    [property: JsonPropertyName("canNext")] bool CanNext = false,
+    [property: JsonPropertyName("canSeek")] bool CanSeek = false,
+    /// <summary>Artwork PNG or JPEG, at most 160x160 and 24 KiB, base64.</summary>
+    [property: JsonPropertyName("art")] string? Art = null);
 
 public sealed record NotificationLine(
     [property: JsonPropertyName("sender")] string? Sender,
@@ -124,6 +143,10 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(NotificationActionRequest), "notifAction")]
 [JsonDerivedType(typeof(NotificationReplyRequest), "notifReply")]
 [JsonDerivedType(typeof(NotificationDismissRequest), "notifDismiss")]
+[JsonDerivedType(typeof(MediaState), "mediaState")]
+[JsonDerivedType(typeof(MediaCommand), "mediaCmd")]
+[JsonDerivedType(typeof(DeviceStatus), "devStatus")]
+[JsonDerivedType(typeof(DeviceControl), "devControl")]
 public abstract record LinkMessage
 {
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
@@ -166,6 +189,51 @@ public abstract record LinkMessage
     /// <summary>PC to phone: dismiss the notification on the phone.</summary>
     public sealed record NotificationDismissRequest(
         [property: JsonPropertyName("key")] string Key) : LinkMessage;
+
+    // ── Companion: media control (ADR-026), gated by LinkCapabilities.MediaControl ─────────
+    // Symmetric. Position is not streamed; extrapolate from PositionMs + Ts while Playing.
+
+    /// <summary>Full snapshot of the sender's media sessions. Sent on connect and on change.</summary>
+    public sealed record MediaState(
+        [property: JsonPropertyName("sessions")] IReadOnlyList<MediaSessionInfo> Sessions,
+        [property: JsonPropertyName("volume")] int? Volume = null,
+        [property: JsonPropertyName("muted")] bool? Muted = null) : LinkMessage;
+
+    /// <summary>
+    /// Drive a session on the receiver. Action: play | pause | toggle | next | prev |
+    /// seek (Value = ms) | volume (Value = 0..100, master) | mute (Value = 1/0, master).
+    /// </summary>
+    public sealed record MediaCommand(
+        [property: JsonPropertyName("action")] string Action,
+        [property: JsonPropertyName("id")] string? Id = null,
+        [property: JsonPropertyName("value")] long? Value = null) : LinkMessage
+    {
+        public const string Play = "play";
+        public const string Pause = "pause";
+        public const string Toggle = "toggle";
+        public const string Next = "next";
+        public const string Prev = "prev";
+        public const string Seek = "seek";
+        public const string Volume = "volume";
+        public const string Mute = "mute";
+    }
+
+    // ── Companion: device status (ADR-026), gated by LinkCapabilities.DeviceStatus ─────────
+
+    /// <summary>Sender's own status. Absent fields are unknown or unsupported.</summary>
+    public sealed record DeviceStatus(
+        [property: JsonPropertyName("battery")] int? Battery = null,
+        [property: JsonPropertyName("charging")] bool? Charging = null,
+        /// <summary>normal | vibrate | silent (phones only).</summary>
+        [property: JsonPropertyName("ringer")] string? Ringer = null,
+        [property: JsonPropertyName("dnd")] bool? Dnd = null) : LinkMessage;
+
+    /// <summary>PC to phone. Each set field is a request the phone applies if permitted.</summary>
+    public sealed record DeviceControl(
+        /// <summary>True: ring at full volume until stopped or 30 s. False: stop.</summary>
+        [property: JsonPropertyName("ring")] bool? Ring = null,
+        [property: JsonPropertyName("ringer")] string? Ringer = null,
+        [property: JsonPropertyName("dnd")] bool? Dnd = null) : LinkMessage;
 
     /// <summary>Sent by the pairing initiator, under the PIN-derived bootstrap key.</summary>
     public sealed record PairHello(

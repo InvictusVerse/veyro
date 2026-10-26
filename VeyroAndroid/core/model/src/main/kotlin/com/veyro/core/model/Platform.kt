@@ -71,4 +71,10 @@ public enum class Capability(public val bit: Int) {
 
     /** Phone notifications mirrored to the peer, with actions and inline reply (ADR-025). */
     NOTIFICATION_MIRROR(0x0100),
+
+    /** Media sessions shared and remote-controlled, in both directions (ADR-026). */
+    MEDIA_CONTROL(0x0200),
+
+    /** Battery / ringer / DND status, plus ring-my-phone and ringer/DND control (ADR-026). */
+    DEVICE_STATUS(0x0400),
 }
