@@ -79,4 +79,10 @@ public enum class Capability(public val bit: Int) {
 
     /** Battery / ringer / DND status, plus ring-my-phone and ringer/DND control (ADR-026). */
     DEVICE_STATUS(0x0400),
+
+    /** SMS threads, history and sending from the PC (ADR-027). */
+    MESSAGING(0x0800),
+
+    /** Call state, call log and call actions from the PC (ADR-027). */
+    CALLS(0x1000),
 }

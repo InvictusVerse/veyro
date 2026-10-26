@@ -385,6 +385,143 @@ public sealed interface LinkMessage {
         val dnd: Boolean? = null,
     ) : LinkMessage
 
+    // ── Companion: SMS (ADR-027), gated by MESSAGING (0x0800) ───────────────────────────────
+    //
+    // Pull model: the PC asks for threads and pages of history; the phone pushes only new
+    // messages and send results. Bodies, numbers and names are user data: never log them.
+
+    /** PC to phone: list recent threads, newest first. */
+    @Serializable
+    @SerialName("smsThreadsReq")
+    public data class SmsThreadsRequest(val limit: Int = 50) : LinkMessage
+
+    @Serializable
+    @SerialName("smsThreads")
+    public data class SmsThreads(val threads: List<SmsThread>) : LinkMessage
+
+    /** PC to phone: one page of a thread, newest first, strictly older than [beforeTs] if set. */
+    @Serializable
+    @SerialName("smsMessagesReq")
+    public data class SmsMessagesRequest(
+        val threadId: Long,
+        val beforeTs: Long? = null,
+        val limit: Int = 50,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("smsMessages")
+    public data class SmsMessages(
+        val threadId: Long,
+        val messages: List<SmsMessage>,
+        /** True if older messages exist before the last one in [messages]. */
+        val more: Boolean = false,
+    ) : LinkMessage
+
+    /** Phone to PC: a message arrived or was sent (by any app) since the session started. */
+    @Serializable
+    @SerialName("smsNew")
+    public data class SmsNew(val message: SmsMessage, val thread: SmsThread? = null) : LinkMessage
+
+    /** PC to phone: send a text. [clientId] is echoed in [SmsSendResult]. */
+    @Serializable
+    @SerialName("smsSend")
+    public data class SmsSend(
+        val clientId: String,
+        val addresses: List<String>,
+        val body: String,
+        /** Subscription id from [SimList]; absent means the phone's default SMS SIM. */
+        val sim: Int? = null,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("smsSendResult")
+    public data class SmsSendResult(
+        val clientId: String,
+        val ok: Boolean,
+        /** `permission` | `disabled` | `invalid` | `radio` | `no-service` | `failed` */
+        val error: String? = null,
+    ) : LinkMessage
+
+    /** Phone to PC, on connect: SIMs that can send SMS. */
+    @Serializable
+    @SerialName("simList")
+    public data class SimList(val sims: List<SimInfo>) : LinkMessage
+
+    @Serializable
+    public data class SmsThread(
+        val threadId: Long,
+        val addresses: List<String>,
+        /** Contact display names aligned with [addresses]; null entries where unknown. */
+        val names: List<String?>? = null,
+        val snippet: String? = null,
+        val ts: Long,
+        val unread: Int = 0,
+    )
+
+    @Serializable
+    public data class SmsMessage(
+        val id: Long,
+        val threadId: Long,
+        val address: String,
+        val body: String,
+        val ts: Long,
+        /** True if sent from this phone. */
+        val out: Boolean,
+        val read: Boolean = true,
+        /** `sent` | `pending` | `failed`, outgoing only. */
+        val status: String? = null,
+        val sim: Int? = null,
+    )
+
+    @Serializable
+    public data class SimInfo(val id: Int, val label: String, val slot: Int? = null)
+
+    // ── Companion: calls (ADR-027), gated by CALLS (0x1000) ─────────────────────────────────
+
+    /** Phone to PC: call state changed. [callId] is stable for one call. */
+    @Serializable
+    @SerialName("callState")
+    public data class CallState(
+        val callId: String,
+        /** `ringing` | `active` | `ended` */
+        val state: String,
+        /** `in` | `out` */
+        val direction: String? = null,
+        val number: String? = null,
+        val name: String? = null,
+    ) : LinkMessage
+
+    /**
+     * PC to phone. [action]: `decline` | `silence` | `answer` | `end` | `dial` (needs [number]).
+     * Applied only if the phone holds the needed permission; audio stays on the phone.
+     */
+    @Serializable
+    @SerialName("callAction")
+    public data class CallAction(
+        val action: String,
+        val callId: String? = null,
+        val number: String? = null,
+    ) : LinkMessage
+
+    @Serializable
+    @SerialName("callLogReq")
+    public data class CallLogRequest(val limit: Int = 100) : LinkMessage
+
+    @Serializable
+    @SerialName("callLog")
+    public data class CallLog(val entries: List<CallLogEntry>) : LinkMessage
+
+    @Serializable
+    public data class CallLogEntry(
+        val id: Long,
+        val number: String,
+        val name: String? = null,
+        val ts: Long,
+        val durationSec: Long = 0,
+        /** `in` | `out` | `missed` | `rejected` | `blocked` */
+        val type: String,
+    )
+
     @Serializable
     public data class NotificationLine(val sender: String? = null, val text: String)
 

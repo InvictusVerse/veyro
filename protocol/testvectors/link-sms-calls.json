@@ -1,0 +1,30 @@
+{
+  "description": "Companion SMS and call messages (ADR-027). Each 'json' is the LinkMessage payload as LinkJson encodes it (discriminator 't', nulls omitted, defaults encoded). Both clients must decode each entry to the listed type and re-encode to semantically identical JSON. All numbers are fictional.",
+  "vectors": [
+    { "type": "smsThreadsReq", "json": "{\"t\":\"smsThreadsReq\",\"limit\":50}" },
+    {
+      "type": "smsThreads",
+      "json": "{\"t\":\"smsThreads\",\"threads\":[{\"threadId\":12,\"addresses\":[\"+15550100\"],\"names\":[\"Sam\"],\"snippet\":\"Lunch?\",\"ts\":1793011200000,\"unread\":1}]}"
+    },
+    { "type": "smsMessagesReq", "json": "{\"t\":\"smsMessagesReq\",\"threadId\":12,\"beforeTs\":1793011200000,\"limit\":50}" },
+    {
+      "type": "smsMessages",
+      "json": "{\"t\":\"smsMessages\",\"threadId\":12,\"messages\":[{\"id\":901,\"threadId\":12,\"address\":\"+15550100\",\"body\":\"Lunch?\",\"ts\":1793011200000,\"out\":false,\"read\":false,\"sim\":1}],\"more\":true}"
+    },
+    {
+      "type": "smsNew",
+      "json": "{\"t\":\"smsNew\",\"message\":{\"id\":902,\"threadId\":12,\"address\":\"+15550100\",\"body\":\"Sure, 1pm\",\"ts\":1793011260000,\"out\":true,\"read\":true,\"status\":\"sent\"}}"
+    },
+    { "type": "smsSend", "json": "{\"t\":\"smsSend\",\"clientId\":\"c-1\",\"addresses\":[\"+15550100\"],\"body\":\"Sure, 1pm\",\"sim\":1}" },
+    { "type": "smsSendResult", "json": "{\"t\":\"smsSendResult\",\"clientId\":\"c-1\",\"ok\":false,\"error\":\"no-service\"}" },
+    { "type": "simList", "json": "{\"t\":\"simList\",\"sims\":[{\"id\":1,\"label\":\"Carrier A\",\"slot\":0}]}" },
+    { "type": "callState", "json": "{\"t\":\"callState\",\"callId\":\"k-77\",\"state\":\"ringing\",\"direction\":\"in\",\"number\":\"+15550100\",\"name\":\"Sam\"}" },
+    { "type": "callAction", "json": "{\"t\":\"callAction\",\"action\":\"decline\",\"callId\":\"k-77\"}" },
+    { "type": "callAction", "json": "{\"t\":\"callAction\",\"action\":\"dial\",\"number\":\"+15550100\"}" },
+    { "type": "callLogReq", "json": "{\"t\":\"callLogReq\",\"limit\":100}" },
+    {
+      "type": "callLog",
+      "json": "{\"t\":\"callLog\",\"entries\":[{\"id\":5,\"number\":\"+15550100\",\"name\":\"Sam\",\"ts\":1793011000000,\"durationSec\":42,\"type\":\"missed\"}]}"
+    }
+  ]
+}

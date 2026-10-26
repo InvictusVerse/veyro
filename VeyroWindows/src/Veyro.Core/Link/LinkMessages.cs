@@ -78,7 +78,45 @@ public static class LinkCapabilities
     public const int NotificationMirror = 0x0100;
     public const int MediaControl = 0x0200;
     public const int DeviceStatus = 0x0400;
+    public const int Messaging = 0x0800;
+    public const int Calls = 0x1000;
 }
+
+public sealed record SmsThread(
+    [property: JsonPropertyName("threadId")] long ThreadId,
+    [property: JsonPropertyName("addresses")] IReadOnlyList<string> Addresses,
+    /// <summary>Contact names aligned with Addresses; null entries where unknown.</summary>
+    [property: JsonPropertyName("names")] IReadOnlyList<string?>? Names = null,
+    [property: JsonPropertyName("snippet")] string? Snippet = null,
+    [property: JsonPropertyName("ts")] long Ts = 0,
+    [property: JsonPropertyName("unread")] int Unread = 0);
+
+public sealed record SmsMessage(
+    [property: JsonPropertyName("id")] long Id,
+    [property: JsonPropertyName("threadId")] long ThreadId,
+    [property: JsonPropertyName("address")] string Address,
+    [property: JsonPropertyName("body")] string Body,
+    [property: JsonPropertyName("ts")] long Ts,
+    /// <summary>True if sent from the phone.</summary>
+    [property: JsonPropertyName("out")] bool Out,
+    [property: JsonPropertyName("read")] bool Read = true,
+    /// <summary>sent | pending | failed, outgoing only.</summary>
+    [property: JsonPropertyName("status")] string? Status = null,
+    [property: JsonPropertyName("sim")] int? Sim = null);
+
+public sealed record SimInfo(
+    [property: JsonPropertyName("id")] int Id,
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("slot")] int? Slot = null);
+
+public sealed record CallLogEntry(
+    [property: JsonPropertyName("id")] long Id,
+    [property: JsonPropertyName("number")] string Number,
+    [property: JsonPropertyName("name")] string? Name = null,
+    [property: JsonPropertyName("ts")] long Ts = 0,
+    [property: JsonPropertyName("durationSec")] long DurationSec = 0,
+    /// <summary>in | out | missed | rejected | blocked</summary>
+    [property: JsonPropertyName("type")] string Type = "in");
 
 public sealed record MediaSessionInfo(
     [property: JsonPropertyName("id")] string Id,
@@ -147,6 +185,18 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(MediaCommand), "mediaCmd")]
 [JsonDerivedType(typeof(DeviceStatus), "devStatus")]
 [JsonDerivedType(typeof(DeviceControl), "devControl")]
+[JsonDerivedType(typeof(SmsThreadsRequest), "smsThreadsReq")]
+[JsonDerivedType(typeof(SmsThreads), "smsThreads")]
+[JsonDerivedType(typeof(SmsMessagesRequest), "smsMessagesReq")]
+[JsonDerivedType(typeof(SmsMessages), "smsMessages")]
+[JsonDerivedType(typeof(SmsNew), "smsNew")]
+[JsonDerivedType(typeof(SmsSend), "smsSend")]
+[JsonDerivedType(typeof(SmsSendResult), "smsSendResult")]
+[JsonDerivedType(typeof(SimList), "simList")]
+[JsonDerivedType(typeof(CallState), "callState")]
+[JsonDerivedType(typeof(CallAction), "callAction")]
+[JsonDerivedType(typeof(CallLogRequest), "callLogReq")]
+[JsonDerivedType(typeof(CallLog), "callLog")]
 public abstract record LinkMessage
 {
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
@@ -227,6 +277,78 @@ public abstract record LinkMessage
         /// <summary>normal | vibrate | silent (phones only).</summary>
         [property: JsonPropertyName("ringer")] string? Ringer = null,
         [property: JsonPropertyName("dnd")] bool? Dnd = null) : LinkMessage;
+
+    // ── Companion: SMS (ADR-027), gated by LinkCapabilities.Messaging ─────────────────────
+    // Pull model. Bodies, numbers and names are user data: never log them.
+
+    /// <summary>PC to phone: list recent threads, newest first.</summary>
+    public sealed record SmsThreadsRequest(
+        [property: JsonPropertyName("limit")] int Limit = 50) : LinkMessage;
+
+    public sealed record SmsThreads(
+        [property: JsonPropertyName("threads")] IReadOnlyList<SmsThread> Threads) : LinkMessage;
+
+    /// <summary>PC to phone: one page of a thread, newest first, strictly older than BeforeTs.</summary>
+    public sealed record SmsMessagesRequest(
+        [property: JsonPropertyName("threadId")] long ThreadId,
+        [property: JsonPropertyName("beforeTs")] long? BeforeTs = null,
+        [property: JsonPropertyName("limit")] int Limit = 50) : LinkMessage;
+
+    public sealed record SmsMessages(
+        [property: JsonPropertyName("threadId")] long ThreadId,
+        [property: JsonPropertyName("messages")] IReadOnlyList<SmsMessage> Messages,
+        /// <summary>True if older messages exist.</summary>
+        [property: JsonPropertyName("more")] bool More = false) : LinkMessage;
+
+    /// <summary>Phone to PC: a message arrived or was sent since the session started.</summary>
+    public sealed record SmsNew(
+        [property: JsonPropertyName("message")] SmsMessage Message,
+        [property: JsonPropertyName("thread")] SmsThread? Thread = null) : LinkMessage;
+
+    /// <summary>PC to phone: send a text. ClientId is echoed in SmsSendResult.</summary>
+    public sealed record SmsSend(
+        [property: JsonPropertyName("clientId")] string ClientId,
+        [property: JsonPropertyName("addresses")] IReadOnlyList<string> Addresses,
+        [property: JsonPropertyName("body")] string Body,
+        /// <summary>Subscription id from SimList; null = phone default SMS SIM.</summary>
+        [property: JsonPropertyName("sim")] int? Sim = null) : LinkMessage;
+
+    public sealed record SmsSendResult(
+        [property: JsonPropertyName("clientId")] string ClientId,
+        [property: JsonPropertyName("ok")] bool Ok,
+        /// <summary>permission | disabled | invalid | radio | no-service | failed</summary>
+        [property: JsonPropertyName("error")] string? Error = null) : LinkMessage;
+
+    /// <summary>Phone to PC, on connect: SIMs that can send SMS.</summary>
+    public sealed record SimList(
+        [property: JsonPropertyName("sims")] IReadOnlyList<SimInfo> Sims) : LinkMessage;
+
+    // ── Companion: calls (ADR-027), gated by LinkCapabilities.Calls ───────────────────────
+
+    /// <summary>Phone to PC: call state changed. CallId is stable for one call.</summary>
+    public sealed record CallState(
+        [property: JsonPropertyName("callId")] string CallId,
+        /// <summary>ringing | active | ended</summary>
+        [property: JsonPropertyName("state")] string State,
+        /// <summary>in | out</summary>
+        [property: JsonPropertyName("direction")] string? Direction = null,
+        [property: JsonPropertyName("number")] string? Number = null,
+        [property: JsonPropertyName("name")] string? Name = null) : LinkMessage;
+
+    /// <summary>
+    /// PC to phone. Action: decline | silence | answer | end | dial (needs Number).
+    /// Applied only if the phone holds the permission; audio stays on the phone.
+    /// </summary>
+    public sealed record CallAction(
+        [property: JsonPropertyName("action")] string Action,
+        [property: JsonPropertyName("callId")] string? CallId = null,
+        [property: JsonPropertyName("number")] string? Number = null) : LinkMessage;
+
+    public sealed record CallLogRequest(
+        [property: JsonPropertyName("limit")] int Limit = 100) : LinkMessage;
+
+    public sealed record CallLog(
+        [property: JsonPropertyName("entries")] IReadOnlyList<CallLogEntry> Entries) : LinkMessage;
 
     /// <summary>PC to phone. Each set field is a request the phone applies if permitted.</summary>
     public sealed record DeviceControl(
