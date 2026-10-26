@@ -70,3 +70,9 @@ Toolchain and pinned versions: [`ProjectInfo/09-ENVIRONMENT.md`](ProjectInfo/09-
 | [Decisions](ProjectInfo/08-DECISIONS.md) | ADR log |
 | [Environment](ProjectInfo/09-ENVIRONMENT.md) | Toolchain, versions, build commands |
 | [Changelog](ProjectInfo/10-CHANGELOG.md) | Session-by-session history |
+
+## License
+
+GPL-3.0, see [`LICENSE`](LICENSE). Parts are adapted from
+[Sefirah](https://github.com/shrimqy/Sefirah) by shrimqy (GPL-3.0); see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
