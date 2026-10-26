@@ -38,7 +38,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     private readonly string _destinationRoot;
     private readonly byte[] _localPublicKey;
     private readonly CancellationTokenSource _stop = new();
+    private readonly PeerSessionRegistry _sessions;
     private WebApplication? _app;
+
+    /// <summary>What this listener's sessions support, sent in HelloAck.</summary>
+    public const int LocalCapabilities =
+        LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror;
 
     public Func<InboundPairingRequest, Task<bool>> PairingAuthorizer { get; set; } = _ => Task.FromResult(false);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
@@ -50,8 +55,10 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         string destinationRoot,
         ReadOnlySpan<byte> localPublicKey,
         Func<InboundOfferRequest, Task<bool>> authorize,
-        int port = 0)
+        int port = 0,
+        PeerSessionRegistry? sessions = null)
     {
+        _sessions = sessions ?? new PeerSessionRegistry();
         _localDeviceId = localDeviceId;
         _localName = localName;
         _trustStore = trustStore;
@@ -63,6 +70,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable
 
     public int Port { get; }
     public bool IsRunning => _app is not null;
+
+    /// <summary>Live authenticated sessions, for companion features (ADR-025).</summary>
+    public IPeerSessionRegistry Sessions => _sessions;
 
     public async Task StartAsync()
     {
@@ -79,7 +89,13 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         // never receives an endpoint that is only reachable through an IPv6 listener.
         builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Any, Port));
         var app = builder.Build();
-        app.UseWebSockets();
+        // Sessions are persistent (ADR-025). Transport-level WebSocket pings detect a phone that
+        // left the network without closing, so its session (and mirrored state) is torn down.
+        app.UseWebSockets(new WebSocketOptions
+        {
+            KeepAliveInterval = TimeSpan.FromSeconds(20),
+            KeepAliveTimeout = TimeSpan.FromSeconds(30)
+        });
         app.Map("/veyro", async context => await AcceptWebSocketAsync(context).ConfigureAwait(false));
         _app = app;
         await app.StartAsync().ConfigureAwait(false);
@@ -191,47 +207,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     Convert.ToBase64String(_localPublicKey)), ct).ConfigureAwait(false);
                 secure.Rekey(sessionSecret);
             }
-            // Android's session heartbeat can arrive before the user selects files. Handle Ping
-            // frames while waiting; pairing and already-paired sessions may also differ by Hello.
-            LinkMessage.TransferOffer offer = await ReceiveOfferAsync(secure, ct).ConfigureAwait(false);
-
             TrustedPeer pairedPeer = trusted ?? throw new UnauthorizedAccessException("Pairing did not establish trust.");
-            bool allowed = pairedPeer.AutoAcceptTransfers || await OfferAuthorizer(new InboundOfferRequest(pairedPeer, offer)).ConfigureAwait(false);
-            if (!allowed)
-            {
-                await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "declined"), ct).ConfigureAwait(false);
-                return;
-            }
-
-            var inboundItems = offer.Items
-                .Where(item => !item.IsDir)
-                .Select(item => new InboundTransferItem(item.Index, item.RelPath, item.Size))
-                .ToList();
-            Directory.CreateDirectory(_destinationRoot);
-            var resume = Vtc1BulkTransfer.BuildResume(_destinationRoot, inboundItems);
-
-            using var tcp = new TcpListener(IPAddress.Any, FindFreePort(Port));
-            tcp.Start();
-            string host = FindAdvertisableAddress(remoteAddress);
-            string token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            await secure.SendAsync(new LinkMessage.TransferDecision(
-                offer.TransferId,
-                true,
-                Route: "LAN_TCP",
-                TcpHost: host,
-                TcpPort: ((IPEndPoint)tcp.LocalEndpoint).Port,
-                FallbackHost: host,
-                AuthToken: token,
-                Resume: resume), ct).ConfigureAwait(false);
-            Vtc1TransferResult result = await Vtc1BulkTransfer.ReceiveAsync(
-                tcp,
-                offer.TransferId,
-                token,
-                preamble.Id,
-                _destinationRoot,
-                inboundItems,
-                ct: ct).ConfigureAwait(false);
-            await secure.SendAsync(new LinkMessage.TransferEnd(offer.TransferId, true), ct).ConfigureAwait(false);
+            await RunSessionAsync(secure, pairedPeer, remoteAddress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception error)
@@ -255,34 +232,168 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         return Encoding.UTF8.GetString(buffer, 0, result.Count);
     }
 
-    private static async Task<LinkMessage.TransferOffer> ReceiveOfferAsync(
+    /// <summary>
+    /// The persistent authenticated session (ADR-025). Runs until the peer closes the socket or
+    /// the server stops. Transfers run one at a time in the background so heartbeats and
+    /// companion messages keep flowing while a VTC1 transfer is in progress.
+    /// </summary>
+    private async Task RunSessionAsync(
         SecureLinkSession secure,
+        TrustedPeer peer,
+        IPAddress? remoteAddress,
         CancellationToken ct)
     {
-        bool helloReceived = false;
-        while (true)
+        using PeerSessionRegistry.Registration registration = _sessions.Open(peer.DeviceId, secure.SendAsync);
+        VeyroTrace.Info($"Session opened for peer {peer.DeviceId}");
+        Task? activeTransfer = null;
+        string? activeTransferId = null;
+        CancellationTokenSource? transferCancellation = null;
+        try
         {
-            SecureLinkMessage message = await secure.ReceiveAsync(ct).ConfigureAwait(false)
-                ?? throw new InvalidDataException("Peer closed before TransferOffer.");
-            switch (message.Envelope.Payload)
+            while (true)
             {
-                case LinkMessage.Ping ping:
-                    await secure.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);
-                    continue;
-                case LinkMessage.Pong:
-                    continue;
-                case LinkMessage.Hello:
-                    helloReceived = true;
-                    continue;
-                case LinkMessage.TransferOffer offer:
-                    return offer;
-                case LinkMessage.Cancel cancel:
-                    throw new OperationCanceledException($"Peer cancelled before transfer: {cancel.Reason}", ct);
-                default:
-                    throw new InvalidDataException(helloReceived
-                        ? "Expected TransferOffer after Hello."
-                        : "Expected Hello, heartbeat, or TransferOffer.");
+                SecureLinkMessage? message;
+                try
+                {
+                    message = await secure.ReceiveAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is WebSocketException or IOException && !ct.IsCancellationRequested)
+                {
+                    VeyroTrace.Info($"Session closed by peer {peer.DeviceId}");
+                    break;
+                }
+                if (message is null) break;
+
+                switch (message.Envelope.Payload)
+                {
+                    case LinkMessage.Hello hello:
+                        registration.Capabilities = hello.Capabilities;
+                        await secure.SendAsync(new LinkMessage.HelloAck(
+                            _localDeviceId, _localName, "windows", LocalCapabilities), ct).ConfigureAwait(false);
+                        break;
+                    case LinkMessage.HelloAck helloAck:
+                        registration.Capabilities = helloAck.Capabilities;
+                        break;
+                    case LinkMessage.Ping ping:
+                        await secure.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);
+                        break;
+                    case LinkMessage.Pong:
+                        break;
+                    case LinkMessage.TransferOffer offer:
+                        if (activeTransfer is { IsCompleted: false })
+                        {
+                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "busy"), ct).ConfigureAwait(false);
+                            break;
+                        }
+                        transferCancellation?.Dispose();
+                        transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        activeTransferId = offer.TransferId;
+                        activeTransfer = HandleOfferAsync(secure, peer, offer, remoteAddress, transferCancellation.Token);
+                        break;
+                    case LinkMessage.Cancel cancel:
+                        if (activeTransfer is { IsCompleted: false } && cancel.TransferId == activeTransferId)
+                            transferCancellation!.Cancel();
+                        break;
+                    case LinkMessage.Notification notification:
+                        // A peer that sends notif speaks the notification family even if this
+                        // session carried no Hello (e.g. straight after pairing). Contents are
+                        // user data: never logged (04-PROTOCOL.md 6.1).
+                        registration.Capabilities |= LinkCapabilities.NotificationMirror;
+                        _sessions.PublishNotification(peer.DeviceId, notification);
+                        break;
+                    default:
+                        VeyroTrace.Info($"Ignoring {message.Envelope.Payload.GetType().Name} in session");
+                        break;
+                }
             }
+        }
+        finally
+        {
+            if (activeTransfer is not null)
+            {
+                transferCancellation!.Cancel();
+                try { await activeTransfer.ConfigureAwait(false); } catch { }
+            }
+            transferCancellation?.Dispose();
+            VeyroTrace.Info($"Session ended for peer {peer.DeviceId}");
+        }
+    }
+
+    private async Task HandleOfferAsync(
+        SecureLinkSession secure,
+        TrustedPeer sessionPeer,
+        LinkMessage.TransferOffer offer,
+        IPAddress? remoteAddress,
+        CancellationToken ct)
+    {
+        bool decided = false;
+        try
+        {
+            // Re-read trust per offer: the user may have revoked the peer or changed auto-accept
+            // since the session was opened.
+            TrustedPeer? peer = _trustStore.GetPeer(sessionPeer.DeviceId);
+            bool allowed = peer is not null &&
+                (peer.AutoAcceptTransfers || await OfferAuthorizer(new InboundOfferRequest(peer, offer)).ConfigureAwait(false));
+            if (!allowed)
+            {
+                decided = true;
+                await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "declined"), ct).ConfigureAwait(false);
+                return;
+            }
+
+            var inboundItems = offer.Items
+                .Where(item => !item.IsDir)
+                .Select(item => new InboundTransferItem(item.Index, item.RelPath, item.Size))
+                .ToList();
+            Directory.CreateDirectory(_destinationRoot);
+            var resume = Vtc1BulkTransfer.BuildResume(_destinationRoot, inboundItems);
+
+            using var tcp = new TcpListener(IPAddress.Any, FindFreePort(Port));
+            tcp.Start();
+            try
+            {
+                string host = FindAdvertisableAddress(remoteAddress);
+                string token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+                decided = true;
+                await secure.SendAsync(new LinkMessage.TransferDecision(
+                    offer.TransferId,
+                    true,
+                    Route: "LAN_TCP",
+                    TcpHost: host,
+                    TcpPort: ((IPEndPoint)tcp.LocalEndpoint).Port,
+                    FallbackHost: host,
+                    AuthToken: token,
+                    Resume: resume), ct).ConfigureAwait(false);
+                await Vtc1BulkTransfer.ReceiveAsync(
+                    tcp,
+                    offer.TransferId,
+                    token,
+                    sessionPeer.DeviceId,
+                    _destinationRoot,
+                    inboundItems,
+                    ct: ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                tcp.Stop();
+            }
+            await secure.SendAsync(new LinkMessage.TransferEnd(offer.TransferId, true), ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            VeyroTrace.Info("Inbound transfer cancelled");
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Inbound transfer failed", error);
+            try
+            {
+                LinkMessage failure = decided
+                    ? new LinkMessage.TransferEnd(offer.TransferId, false)
+                    : new LinkMessage.TransferDecision(offer.TransferId, false, "error");
+                await secure.SendAsync(failure, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch { }
         }
     }
 
@@ -318,6 +429,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable
 
     private static string FindAdvertisableAddress(IPAddress? remote)
     {
+        // A loopback peer (local tooling and tests) can only reach us on loopback.
+        if (remote is not null && IPAddress.IsLoopback(remote)) return IPAddress.Loopback.ToString();
+
         var addresses = NetworkInterface.GetAllNetworkInterfaces()
             .Where(network => network.OperationalStatus == OperationalStatus.Up)
             .SelectMany(network => network.GetIPProperties().UnicastAddresses)

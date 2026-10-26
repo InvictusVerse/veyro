@@ -19,6 +19,8 @@ public partial class App : Application
     {
         InitializeComponent();
         VeyroContainer.Initialize();
+        // Toast activation must be registered before any mirrored notification can arrive.
+        VeyroContainer.Instance.NotificationToastService.Initialize();
     }
 
     protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
@@ -175,6 +177,7 @@ public partial class App : Application
     {
         HandleClosedEvents = false;
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
+        VeyroContainer.Instance.NotificationToastService.Dispose();
         VeyroContainer.Instance.SystemTrayService.Dispose();
         MainWindow?.Close();
         Current.Exit();

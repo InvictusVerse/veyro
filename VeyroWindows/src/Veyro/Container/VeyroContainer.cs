@@ -20,6 +20,8 @@ public sealed class VeyroContainer
     public ITransferHistoryStore HistoryStore { get; }
     public IDiscoveryService DiscoveryService { get; }
     public VeyroLinkServer LinkServer { get; }
+    public PeerSessionRegistry PeerSessions { get; }
+    public NotificationMirrorService NotificationMirror { get; }
     public string? StartupError { get; set; }
 
     public ISystemTrayService SystemTrayService { get; }
@@ -27,8 +29,10 @@ public sealed class VeyroContainer
     public IDeviceManager DeviceManager { get; }
     public IFileTransferService FileTransferService { get; }
     public IScreenMirrorService ScreenMirrorService { get; }
+    public INotificationToastService NotificationToastService { get; }
 
     // ViewModels
+    public NotificationsViewModel NotificationsViewModel { get; }
     public MainPageViewModel MainPageViewModel { get; }
     public TransfersPageViewModel TransfersPageViewModel { get; }
     public MessagesViewModel MessagesViewModel { get; }
@@ -47,13 +51,16 @@ public sealed class VeyroContainer
         SettingsStore = new FileSettingsStore(DataDirectory);
         TrustStore = new FileTrustStore(DataDirectory, IdentityManager.DeriveLocalKey("trust-store-hmac"));
         HistoryStore = new FileTransferHistoryStore(DataDirectory);
+        PeerSessions = new PeerSessionRegistry();
         LinkServer = new VeyroLinkServer(
             IdentityManager.DeviceId.Value,
             SettingsStore.Current.DeviceName,
             TrustStore,
             SettingsStore.Current.DownloadDirectory,
             IdentityManager.PublicKey.Span,
-            authorize: request => Task.FromResult(request.Peer.AutoAcceptTransfers));
+            authorize: request => Task.FromResult(request.Peer.AutoAcceptTransfers),
+            sessions: PeerSessions);
+        NotificationMirror = new NotificationMirrorService(PeerSessions);
         DiscoveryService = new UdpDiscoveryService(
             IdentityManager.DeviceId.Value,
             SettingsStore.Current.DeviceName,
@@ -66,6 +73,9 @@ public sealed class VeyroContainer
         DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService);
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager);
         ScreenMirrorService = new ScreenMirrorService();
+        NotificationToastService = new NotificationToastService(NotificationMirror, DataDirectory);
+
+        NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager);
 
         MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService, ScreenMirrorService);
         TransfersPageViewModel = new TransfersPageViewModel(DeviceManager, FileTransferService, SettingsStore);

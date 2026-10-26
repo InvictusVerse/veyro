@@ -30,6 +30,13 @@ public interface IFileTransferService
     void CancelCurrentTransfer();
 }
 
+/// <summary>Shows mirrored phone notifications as Windows toasts and routes toast input back.</summary>
+public interface INotificationToastService : IDisposable
+{
+    /// <summary>Registers for toast activation. Call once at startup, before any toast is shown.</summary>
+    void Initialize();
+}
+
 public interface IScreenMirrorService
 {
     bool IsMirroring { get; }

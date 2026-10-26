@@ -51,7 +51,11 @@ public sealed class VeyroLinkClient
             throw new UnauthorizedAccessException($"Peer refused an authenticated session: {ack.Reason ?? ack.Mode}");
 
         await using var session = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, peer.DeviceId);
-        await session.SendAsync(new LinkMessage.Hello(_localDeviceId, _localName, "windows"), ct).ConfigureAwait(false);
+        // This outbound connection only carries one transfer, so it does not advertise
+        // NotificationMirror: companion traffic belongs to the phone's persistent session.
+        await session.SendAsync(new LinkMessage.Hello(
+            _localDeviceId, _localName, "windows",
+            Capabilities: LinkCapabilities.FileTransfer | LinkCapabilities.Resume), ct).ConfigureAwait(false);
 
         var items = filePaths
             .Where(File.Exists)
@@ -73,10 +77,7 @@ public sealed class VeyroLinkClient
             _localName,
             [TransferRoute.LanTcp.ToString().ToUpperInvariant()]), ct).ConfigureAwait(false);
 
-        SecureLinkMessage decisionMessage = await session.ReceiveAsync(ct).ConfigureAwait(false)
-            ?? throw new InvalidDataException("Peer closed before returning TransferDecision.");
-        if (decisionMessage.Envelope.Payload is not LinkMessage.TransferDecision decision || decision.TransferId != transferId)
-            throw new InvalidDataException("Expected a matching TransferDecision.");
+        LinkMessage.TransferDecision decision = await ReceiveDecisionAsync(session, transferId, ct).ConfigureAwait(false);
         if (!decision.Accept) throw new UnauthorizedAccessException($"Peer declined transfer: {decision.Reason ?? "no reason"}");
         if (!string.Equals(decision.Route, "LAN_TCP", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(decision.Route, TransferRoute.LanTcp.ToString(), StringComparison.OrdinalIgnoreCase))
@@ -96,6 +97,32 @@ public sealed class VeyroLinkClient
             resume: decision.Resume,
             progress: progress,
             ct: ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The peer may answer Hello with HelloAck and heartbeat before deciding.</summary>
+    private static async Task<LinkMessage.TransferDecision> ReceiveDecisionAsync(
+        SecureLinkSession session,
+        string transferId,
+        CancellationToken ct)
+    {
+        while (true)
+        {
+            SecureLinkMessage message = await session.ReceiveAsync(ct).ConfigureAwait(false)
+                ?? throw new InvalidDataException("Peer closed before returning TransferDecision.");
+            switch (message.Envelope.Payload)
+            {
+                case LinkMessage.HelloAck:
+                case LinkMessage.Pong:
+                    continue;
+                case LinkMessage.Ping ping:
+                    await session.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);
+                    continue;
+                case LinkMessage.TransferDecision decision when decision.TransferId == transferId:
+                    return decision;
+                default:
+                    throw new InvalidDataException("Expected a matching TransferDecision.");
+            }
+        }
     }
 
     private static async Task SendTextAsync(ClientWebSocket socket, string text, CancellationToken ct)

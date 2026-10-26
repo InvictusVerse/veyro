@@ -22,6 +22,7 @@ global using Veyro.Core.Data;
 global using Veyro.Core.Discovery;
 global using Veyro.Core.Link;
 global using Veyro.Core.Models;
+global using Veyro.Core.Notifications;
 global using Veyro.Core.Protocol;
 global using Veyro.Core.Transfer;
 global using Veyro.Container;

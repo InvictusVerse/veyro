@@ -69,6 +69,23 @@ public sealed record LinkEnvelope
     [JsonPropertyName("payload")] public required LinkMessage Payload { get; init; }
 }
 
+/// <summary>Bits for Hello/HelloAck <c>capabilities</c>. Mirrors Kotlin <c>Capability</c>.</summary>
+public static class LinkCapabilities
+{
+    public const int FileTransfer = 0x0001;
+    public const int FolderTransfer = 0x0002;
+    public const int Resume = 0x0004;
+    public const int NotificationMirror = 0x0100;
+}
+
+public sealed record NotificationLine(
+    [property: JsonPropertyName("sender")] string? Sender,
+    [property: JsonPropertyName("text")] string Text);
+
+public sealed record NotificationActionInfo(
+    [property: JsonPropertyName("index")] int Index,
+    [property: JsonPropertyName("label")] string Label);
+
 public sealed record LinkItem(
     [property: JsonPropertyName("index")] int Index,
     [property: JsonPropertyName("relPath")] string RelPath,
@@ -103,8 +120,53 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(Cancel), "cancel")]
 [JsonDerivedType(typeof(Ping), "ping")]
 [JsonDerivedType(typeof(Pong), "pong")]
+[JsonDerivedType(typeof(Notification), "notif")]
+[JsonDerivedType(typeof(NotificationActionRequest), "notifAction")]
+[JsonDerivedType(typeof(NotificationReplyRequest), "notifReply")]
+[JsonDerivedType(typeof(NotificationDismissRequest), "notifDismiss")]
 public abstract record LinkMessage
 {
+    // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
+    // Only exchanged with a peer whose Hello/HelloAck capabilities include
+    // LinkCapabilities.NotificationMirror. Contents are user data: never log title, text or
+    // messages.
+
+    /// <summary>Phone to PC: a notification was posted, is already active, or was removed.</summary>
+    public sealed record Notification(
+        [property: JsonPropertyName("key")] string Key,
+        /// <summary><c>posted</c> | <c>active</c> | <c>removed</c>. A removed frame carries only the key.</summary>
+        [property: JsonPropertyName("kind")] string Kind,
+        [property: JsonPropertyName("pkg")] string? Pkg = null,
+        [property: JsonPropertyName("app")] string? App = null,
+        [property: JsonPropertyName("title")] string? Title = null,
+        [property: JsonPropertyName("text")] string? Text = null,
+        [property: JsonPropertyName("messages")] IReadOnlyList<NotificationLine>? Messages = null,
+        [property: JsonPropertyName("ts")] long? Ts = null,
+        [property: JsonPropertyName("group")] string? Group = null,
+        [property: JsonPropertyName("actions")] IReadOnlyList<NotificationActionInfo>? Actions = null,
+        [property: JsonPropertyName("canReply")] bool? CanReply = null,
+        /// <summary>App icon PNG, at most 96x96 and 16 KiB, base64.</summary>
+        [property: JsonPropertyName("iconPng")] string? IconPng = null) : LinkMessage
+    {
+        public const string KindPosted = "posted";
+        public const string KindActive = "active";
+        public const string KindRemoved = "removed";
+    }
+
+    /// <summary>PC to phone: invoke action <c>index</c> of the phone's notification.</summary>
+    public sealed record NotificationActionRequest(
+        [property: JsonPropertyName("key")] string Key,
+        [property: JsonPropertyName("index")] int Index) : LinkMessage;
+
+    /// <summary>PC to phone: send text through the notification's reply action.</summary>
+    public sealed record NotificationReplyRequest(
+        [property: JsonPropertyName("key")] string Key,
+        [property: JsonPropertyName("text")] string Text) : LinkMessage;
+
+    /// <summary>PC to phone: dismiss the notification on the phone.</summary>
+    public sealed record NotificationDismissRequest(
+        [property: JsonPropertyName("key")] string Key) : LinkMessage;
+
     /// <summary>Sent by the pairing initiator, under the PIN-derived bootstrap key.</summary>
     public sealed record PairHello(
         [property: JsonPropertyName("deviceId")] string DeviceId,
