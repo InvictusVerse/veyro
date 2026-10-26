@@ -32,6 +32,12 @@ public data class SettingsUiState(
     /** Whether Do Not Disturb access is granted. Ringer/DND changes from the PC need it. */
     val policyAccessGranted: Boolean = false,
 
+    /** Serve SMS and calls to a connected PC (ADR-027). */
+    val messagesAndCallsEnabled: Boolean = false,
+
+    /** Labels of the runtime permissions that feature still lacks; empty when all are granted. */
+    val missingMessagingPermissions: List<String> = emptyList(),
+
     /**
      * Set when the identity could not be loaded at all. This is the "your identity was lost"
      * state from `05-SECURITY.md` section 7, and it must be shown rather than hidden behind a

@@ -43,7 +43,13 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.withTimeoutOrNull
 import com.veyro.core.companion.AndroidDeviceController
 import com.veyro.core.companion.AndroidDeviceStatusSource
+import com.veyro.core.companion.AndroidCallController
+import com.veyro.core.companion.AndroidCallSource
 import com.veyro.core.companion.AndroidMediaSource
+import com.veyro.core.companion.AndroidSmsSource
+import com.veyro.core.companion.CallBridge
+import com.veyro.core.companion.MessagingPermissions
+import com.veyro.core.companion.SmsBridge
 import com.veyro.core.companion.AndroidNotificationSource
 import com.veyro.core.companion.CompanionLink
 import com.veyro.core.companion.DeviceStatusPublisher
@@ -394,6 +400,38 @@ public class VeyroContainer(context: Context) {
     /** Whether Do Not Disturb access is granted, for the Settings row. */
     public fun isPolicyAccessGranted(): Boolean =
         AndroidDeviceController.isPolicyAccessGranted(appContext)
+
+    // ── Companion: SMS and calls (ADR-027) ────────────────────────────────────────────────
+
+    /**
+     * SMS threads, history, new-message push and sending for the PC, behind "Messages and calls
+     * on PC" (off by default). Follows the session only once something else opened it.
+     */
+    public val smsBridge: SmsBridge by lazy {
+        val source = AndroidSmsSource(appContext, dispatchers)
+        SmsBridge(
+            links = companionLinks,
+            enabled = flow { emitAll(settingsStore.messagesAndCallsEnabled) },
+            source = source,
+            sender = source,
+            scope = appScope,
+        )
+    }
+
+    /** Call state, call actions and the call log for the PC, behind the same switch. */
+    public val callBridge: CallBridge by lazy {
+        CallBridge(
+            links = companionLinks,
+            enabled = flow { emitAll(settingsStore.messagesAndCallsEnabled) },
+            source = AndroidCallSource(appContext, dispatchers),
+            controller = AndroidCallController(appContext, dispatchers),
+            scope = appScope,
+        )
+    }
+
+    /** User-facing labels of the messaging permissions not granted yet, for the Settings row. */
+    public fun missingMessagingPermissions(): List<String> =
+        MessagingPermissions.missing(appContext).mapNotNull { MessagingPermissions.ALL[it] }
 
     /**
      * Where received files land.

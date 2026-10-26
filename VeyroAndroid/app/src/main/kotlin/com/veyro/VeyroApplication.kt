@@ -29,5 +29,9 @@ public class VeyroApplication : Application() {
         // connection layer itself, and phone media is shared only after an explicit opt-in.
         container.mediaMirror.start()
         container.deviceStatusPublisher.start()
+        // ADR-027. Same rule: they follow a session something else opened, and serve nothing
+        // until "Messages and calls on PC" is switched on.
+        container.smsBridge.start()
+        container.callBridge.start()
     }
 }

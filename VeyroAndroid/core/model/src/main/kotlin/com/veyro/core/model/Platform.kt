@@ -57,6 +57,8 @@ public value class Capabilities(public val bits: Int) {
             Capability.NOTIFICATION_MIRROR,
             Capability.MEDIA_CONTROL,
             Capability.DEVICE_STATUS,
+            Capability.MESSAGING,
+            Capability.CALLS,
         )
     }
 }

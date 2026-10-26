@@ -45,6 +45,8 @@ public class FileSettingsStore(
         // ADR-026, same rule: defaulted so older files decode, and off until the user opts in.
         val mediaShareEnabled: Boolean = false,
         val deviceControlAllowed: Boolean = false,
+        // ADR-027, same rule.
+        val messagesAndCallsEnabled: Boolean = false,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -101,6 +103,13 @@ public class FileSettingsStore(
 
     override suspend fun setDeviceControlAllowed(enabled: Boolean) {
         update { it.copy(deviceControlAllowed = enabled) }
+    }
+
+    override val messagesAndCallsEnabled: Flow<Boolean> =
+        state.asStateFlow().map { it.messagesAndCallsEnabled }
+
+    override suspend fun setMessagesAndCallsEnabled(enabled: Boolean) {
+        update { it.copy(messagesAndCallsEnabled = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

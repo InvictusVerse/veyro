@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.designsystem.theme.VeyroTheme
 import com.veyro.core.protocol.RelativePath
 import com.veyro.core.link.OutgoingFile
@@ -71,6 +72,7 @@ public class MainActivity : ComponentActivity() {
                     // `*/*` rather than a type list: Veyro transfers arbitrary files, and
                     // restricting the picker would only stop the user sending what they wanted.
                     onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
+                    onRequestMessagingPermissions = ::requestMessagingPermissions,
                 )
                 InboundPairingDialog(connectionManager = container.connectionManager)
                 InboundTransferDialog(transferCoordinator = container.transferCoordinator)
@@ -98,6 +100,17 @@ public class MainActivity : ComponentActivity() {
         } else {
             VeyroLog.i(TAG) { "[p2p-perm] All required runtime permissions already granted" }
         }
+    }
+
+    /**
+     * Requested only when the user turns on "Messages and calls on PC" (ADR-027 point 4), never at
+     * launch. The Settings row re-reads what is still missing when the screen resumes.
+     */
+    private fun requestMessagingPermissions() {
+        val needed = MessagingPermissions.missing(this)
+        if (needed.isEmpty()) return
+        VeyroLog.i(TAG) { "Requesting ${needed.size} messaging permission(s)" }
+        requestPermissions.launch(needed.toTypedArray())
     }
 
     /**

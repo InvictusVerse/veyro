@@ -71,6 +71,7 @@ public class VeyroViewModelFactory(
             diagnosticsProvider = { container.diagnostics() },
             notificationAccessGranted = container::isNotificationAccessGranted,
             policyAccessGranted = container::isPolicyAccessGranted,
+            missingMessagingPermissions = container::missingMessagingPermissions,
         ) as T
 
         else -> error("Unknown ViewModel ${modelClass.name}; add it to VeyroViewModelFactory")

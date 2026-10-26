@@ -131,6 +131,19 @@ class FileSettingsStoreTest {
     }
 
     @Test
+    fun `messages and calls default off, also in an older file, and persist`() = runBlocking {
+        // A settings file written before ADR-027 has no such key.
+        File(dir, "settings.json").writeText("""{"version":1,"mediaShareEnabled":true}""")
+        assertFalse(store().messagesAndCallsEnabled.first())
+        assertTrue(store().mediaShareEnabled.first())
+
+        store().setMessagesAndCallsEnabled(true)
+        assertTrue(store().messagesAndCallsEnabled.first())
+        store().setMessagesAndCallsEnabled(false)
+        assertFalse(store().messagesAndCallsEnabled.first())
+    }
+
+    @Test
     fun `no temporary file is left behind`() = runBlocking {
         store().setDeviceName("X")
         assertFalse(File(dir, "settings.json.tmp").exists())

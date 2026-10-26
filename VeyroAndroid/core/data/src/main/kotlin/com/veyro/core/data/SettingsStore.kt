@@ -25,4 +25,9 @@ public interface SettingsStore {
 
     public suspend fun setMediaShareEnabled(enabled: Boolean)
     public suspend fun setDeviceControlAllowed(enabled: Boolean)
+
+    /** Serve SMS and calls to a connected PC (ADR-027). Off by default. */
+    public val messagesAndCallsEnabled: Flow<Boolean>
+
+    public suspend fun setMessagesAndCallsEnabled(enabled: Boolean)
 }

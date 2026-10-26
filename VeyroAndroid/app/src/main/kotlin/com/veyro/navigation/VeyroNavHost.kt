@@ -90,6 +90,8 @@ public fun VeyroNavHost(
     onPickFiles: () -> Unit,
     transferCoordinator: TransferCoordinator? = null,
     modifier: Modifier = Modifier,
+    /** Runtime permissions need the Activity, like the picker (ADR-027). */
+    onRequestMessagingPermissions: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -167,7 +169,10 @@ public fun VeyroNavHost(
                 }
 
                 composable<VeyroDestination.Settings> {
-                    SettingsScreen(viewModel = viewModel<SettingsViewModel>(factory = viewModelFactory))
+                    SettingsScreen(
+                        viewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
+                        onRequestMessagingPermissions = onRequestMessagingPermissions,
+                    )
                 }
 
                 composable<VeyroDestination.Pairing> {

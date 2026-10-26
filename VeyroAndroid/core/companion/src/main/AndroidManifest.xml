@@ -21,5 +21,11 @@
         <receiver
             android:name="com.veyro.core.companion.RingStopReceiver"
             android:exported="false" />
+
+        <!-- Per-part "sent" results of texts sent for the PC (ADR-027). Not exported: only this
+             app's own PendingIntents reach it. -->
+        <receiver
+            android:name="com.veyro.core.companion.SmsSentReceiver"
+            android:exported="false" />
     </application>
 </manifest>

@@ -2,6 +2,7 @@ package com.veyro.ui.settings
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -87,6 +88,7 @@ import com.veyro.core.designsystem.theme.VeyroVioletContainer
  *   [Discovery]         ← always-discoverable toggle
  *   [Notifications]     ← mirror-to-PC toggle and notification access row
  *   [Media and control] ← share-media toggle, PC ring/sound-mode toggle, DND access row
+ *   [Messages, calls]   ← messages-and-calls toggle, missing-permissions row
  *   [Danger zone]       ← identity reset
  *   [Debug panel]       ← diagnostics + log tail
  */
@@ -94,6 +96,8 @@ import com.veyro.core.designsystem.theme.VeyroVioletContainer
 public fun SettingsScreen(
     viewModel: SettingsViewModel,
     modifier: Modifier = Modifier,
+    /** Asks the Activity to request the messaging runtime permissions (ADR-027). */
+    onRequestMessagingPermissions: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showResetConfirm by remember { mutableStateOf(false) }
@@ -184,6 +188,30 @@ public fun SettingsScreen(
                 onOpenPolicyAccessSettings = {
                     try {
                         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                    } catch (_: ActivityNotFoundException) {
+                        // Some builds hide the screen; the row's subtitle still says what is missing.
+                    }
+                },
+            )
+        }
+
+        // Messages and calls (ADR-027)
+        item {
+            MessagesAndCallsSection(
+                enabled = state.messagesAndCallsEnabled,
+                missingPermissions = state.missingMessagingPermissions,
+                onToggle = { on ->
+                    viewModel.setMessagesAndCallsEnabled(on)
+                    if (on) onRequestMessagingPermissions()
+                },
+                onOpenAppSettings = {
+                    try {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", context.packageName, null),
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
                     } catch (_: ActivityNotFoundException) {
                         // Some builds hide the screen; the row's subtitle still says what is missing.
                     }
@@ -590,6 +618,72 @@ private fun PhoneControlSection(
                         } else {
                             "Ringing works without it. Changing the ringer mode or Do Not Disturb " +
                                 "from the PC needs it; tap to allow Veyro in system settings."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = VeyroTextSecondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessagesAndCallsSection(
+    enabled: Boolean,
+    missingPermissions: List<String>,
+    onToggle: (Boolean) -> Unit,
+    onOpenAppSettings: () -> Unit,
+) {
+    val allGranted = missingPermissions.isEmpty()
+    VeyroGlassCard {
+        Column {
+            SwitchRow(
+                title = "Messages and calls on PC",
+                subtitle = "Off by default. Lets a connected PC read and send this phone's SMS, " +
+                    "see incoming calls, answer, decline or place them, and read the call log. " +
+                    "Call audio stays on the phone.",
+                checked = enabled,
+                onCheckedChange = onToggle,
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = VeyroGlassBorder)
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(
+                        onClickLabel = "Open app permission settings",
+                        role = Role.Button,
+                        onClick = onOpenAppSettings,
+                    )
+                    .padding(vertical = 12.dp),
+            ) {
+                Icon(
+                    imageVector = if (allGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (allGranted) VeyroTeal else VeyroRed.copy(alpha = 0.8f),
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (allGranted) "All permissions granted" else "Permissions missing",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (allGranted) {
+                            "Tap to review them in system settings."
+                        } else {
+                            "Missing: ${missingPermissions.joinToString(", ")}. Tap to grant them in " +
+                                "system settings. On Android 13 and later, an app installed outside " +
+                                "an app store may first need \"Allow restricted settings\" from its " +
+                                "App info menu."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = VeyroTextSecondary,

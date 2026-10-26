@@ -33,6 +33,8 @@ public class SettingsViewModel(
     private val notificationAccessGranted: () -> Boolean = { false },
     /** Whether Do Not Disturb access is granted. Re-read on every screen resume. */
     private val policyAccessGranted: () -> Boolean = { false },
+    /** Labels of the messaging permissions not granted yet. Re-read on every screen resume. */
+    private val missingMessagingPermissions: () -> List<String> = { emptyList() },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -91,6 +93,15 @@ public class SettingsViewModel(
         settingsStore.deviceControlAllowed
             .onEach { _state.value = _state.value.copy(deviceControlAllowed = it) }
             .launchIn(viewModelScope)
+
+        settingsStore.messagesAndCallsEnabled
+            .onEach { _state.value = _state.value.copy(messagesAndCallsEnabled = it) }
+            .launchIn(viewModelScope)
+    }
+
+    /** Runtime permissions are requested by the Activity; this only stores the choice. */
+    public fun setMessagesAndCallsEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setMessagesAndCallsEnabled(enabled) }
     }
 
     public fun setNotificationMirrorEnabled(enabled: Boolean) {
@@ -110,6 +121,7 @@ public class SettingsViewModel(
         _state.value = _state.value.copy(
             notificationAccessGranted = notificationAccessGranted(),
             policyAccessGranted = policyAccessGranted(),
+            missingMessagingPermissions = missingMessagingPermissions(),
         )
     }
 
