@@ -29,6 +29,7 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly INotificationMirrorService _mirror;
     private readonly IMessagingService _messaging;
     private readonly ICallService _calls;
+    private readonly CallRouter _router;
     private readonly Action<string, long> _openThread;
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
@@ -40,12 +41,14 @@ public sealed class NotificationToastService : INotificationToastService
         INotificationMirrorService mirror,
         IMessagingService messaging,
         ICallService calls,
+        CallRouter router,
         Action<string, long> openThread,
         string fallbackDataDirectory)
     {
         _mirror = mirror;
         _messaging = messaging;
         _calls = calls;
+        _router = router;
         _openThread = openThread;
         _fallbackDataDirectory = fallbackDataDirectory;
     }
@@ -222,6 +225,8 @@ public sealed class NotificationToastService : INotificationToastService
         try
         {
             string title = call.Name ?? call.Number ?? "Unknown caller";
+            // ADR-029: with Bluetooth hands-free up to this phone, Answer takes the call on the PC.
+            bool bluetooth = _router.PreferredAnswerRoute(call.PeerId) == CallAnswerRoute.Bluetooth;
             var builder = new AppNotificationBuilder()
                 .SetScenario(AppNotificationScenario.IncomingCall)
                 .AddArgument("action", "call-open")
@@ -230,8 +235,8 @@ public sealed class NotificationToastService : INotificationToastService
                 .SetGroup(CallGroupFor(call.PeerId))
                 .AddText(Clip(title, MaxTitleLength))
                 .AddText(call.Name is not null && call.Number is not null ? Clip(call.Number, MaxTitleLength) : "Incoming call")
-                .AddText("Audio stays on the phone")
-                .AddButton(CallButton("Answer (on phone)", "call-answer", call, AppNotificationButtonStyle.Success))
+                .AddText(bluetooth ? "Answer to talk on this PC over Bluetooth" : "Audio stays on the phone")
+                .AddButton(CallButton(bluetooth ? "Answer on PC" : "Answer (on phone)", "call-answer", call, AppNotificationButtonStyle.Success))
                 .AddButton(CallButton("Decline", "call-decline", call, AppNotificationButtonStyle.Critical))
                 .AddButton(CallButton("Silence", "call-silence", call, null));
             AppNotification notification = builder.BuildNotification();
@@ -259,7 +264,11 @@ public sealed class NotificationToastService : INotificationToastService
     {
         if (encodedCallId is null || DecodeArgument(encodedCallId) is not { } callId) return;
         if (_calls.GetCurrentCall(peerId)?.CallId != callId) return;
-        _ = RunAsync(() => _calls.SendActionAsync(peerId, action), "call " + action);
+        // Answer goes over Bluetooth when connected to this phone (audio on the PC), else Wi-Fi.
+        Func<Task> request = action == CallService.ActionAnswer
+            ? () => _router.AnswerAsync(peerId)
+            : () => _calls.SendActionAsync(peerId, action);
+        _ = RunAsync(request, "call " + action);
     }
 
     private void ReplyToThread(string peerId, string? rawThread, string text)

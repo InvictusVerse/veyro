@@ -16,6 +16,16 @@ encrypted link protocol.
 Copyright (C) shrimqy and Sefirah contributors.
 Modifications copyright (C) Veyro authors.
 
+Adapted files (Veyro path <- Sefirah path):
+
+- `VeyroWindows/src/Veyro/Platforms/Windows/Calling/BluetoothCallingService.cs` <- `src/Sefirah/Platforms/Windows/Calling/PhoneLineService.cs`, `src/Sefirah/Platforms/Windows/Utilities/CallingFeatureUtils.cs` (Limited Access Feature token not copied)
+- `VeyroWindows/src/Veyro/Platforms/Windows/Calling/BluetoothCall.cs` <- `src/Sefirah/Platforms/Windows/Calling/PhoneCall.cs`
+- `VeyroWindows/src/Veyro/ViewModels/InCallViewModel.cs` <- `src/Sefirah/ViewModels/CallSessionViewModel.cs`, `src/Sefirah/ViewModels/CallWindowViewModel.cs`
+- `VeyroWindows/src/Veyro/Services/CallWindowService.cs` <- `src/Sefirah/Features/CallFeature.cs`
+- `VeyroWindows/src/Veyro/Views/CallWindow.cs` <- `src/Sefirah/Views/WindowViews/CallWindow.xaml.cs`
+- `VeyroWindows/src/Veyro/UserControls/CallView.xaml` <- `src/Sefirah/UserControls/CallView.xaml`
+- `VeyroWindows/src/Veyro/UserControls/CallView.xaml.cs` <- `src/Sefirah/UserControls/CallView.xaml.cs`
+
 ## Others
 
 Dependency licences are listed by each package (Gradle / NuGet). Bundled skills under

@@ -46,6 +46,8 @@ public partial class App : Application
         MainWindow.Activate();
         VeyroContainer.Instance.LinkServer.PairingAuthorizer = AuthorizePairingAsync;
         VeyroContainer.Instance.LinkServer.OfferAuthorizer = AuthorizeIncomingTransferAsync;
+        // ADR-029: on the UI thread, since reconnecting may show the Windows access prompt.
+        _ = VeyroContainer.Instance.BluetoothCalling.InitializeAsync();
         _ = RequestFirewallRuleAsync();
         _ = StartNetworkServicesAsync();
     }
@@ -188,6 +190,8 @@ public partial class App : Application
         HandleClosedEvents = false;
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
         VeyroContainer.Instance.NotificationToastService.Dispose();
+        VeyroContainer.Instance.CallWindowService.Dispose();
+        VeyroContainer.Instance.BluetoothCalling.Dispose();
         VeyroContainer.Instance.PcMediaSource.Dispose();
         VeyroContainer.Instance.PcBatterySource.Dispose();
         VeyroContainer.Instance.SystemTrayService.Dispose();

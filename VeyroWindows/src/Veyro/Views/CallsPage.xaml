@@ -50,7 +50,7 @@
                     <TextBlock
                         FontSize="13"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="Calls are placed and answered on the phone; audio stays on the phone." />
+                        Text="{x:Bind ViewModel.HeaderText, Mode=OneWay}" />
                 </StackPanel>
                 <Button
                     Grid.Column="1"
@@ -88,7 +88,7 @@
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
                         <Button
                             Click="Answer_Click"
-                            Content="Answer on phone"
+                            Content="{x:Bind ViewModel.AnswerText, Mode=OneWay}"
                             Style="{StaticResource AccentButtonStyle}"
                             Visibility="{x:Bind ViewModel.IsRinging, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         <Button

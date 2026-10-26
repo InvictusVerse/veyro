@@ -8,7 +8,10 @@ public sealed record AppSettings(
     bool IsDiscoverable,
     string DownloadDirectory,
     bool AutoStartOnLogin = false,
-    bool MinimizeToTrayOnClose = true
+    bool MinimizeToTrayOnClose = true,
+    // ADR-029: the Bluetooth phone chosen for call audio and the Veyro peer it belongs to.
+    string? BluetoothCallTransportId = null,
+    string? BluetoothCallPeerId = null
 );
 
 public interface ISettingsStore

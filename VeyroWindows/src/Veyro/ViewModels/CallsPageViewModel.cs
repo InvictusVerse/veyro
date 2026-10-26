@@ -5,11 +5,13 @@ namespace Veyro.ViewModels;
 
 /// <summary>
 /// Call log, current call and dialing for the active phone (ADR-027). Talks only to
-/// <see cref="ICallService"/>. Audio always stays on the phone. Numbers and names are never logged.
+/// <see cref="ICallService"/> and <see cref="CallRouter"/>. Audio stays on the phone unless the
+/// Bluetooth hands-free link to the same phone is connected (ADR-029). Numbers and names are never logged.
 /// </summary>
 public sealed class CallsPageViewModel : BaseViewModel
 {
     private readonly ICallService _calls;
+    private readonly CallRouter _router;
     private readonly IDeviceManager _deviceManager;
     private readonly DispatcherQueue? _dispatcher;
     private string? _peerId;
@@ -20,15 +22,21 @@ public sealed class CallsPageViewModel : BaseViewModel
     private bool _isLoading;
     private bool _requested;
 
-    public CallsPageViewModel(ICallService calls, IDeviceManager deviceManager)
+    public CallsPageViewModel(ICallService calls, CallRouter router, IDeviceManager deviceManager)
     {
         _calls = calls;
+        _router = router;
         _deviceManager = deviceManager;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _peerId = deviceManager.ActiveDevice?.DeviceId;
 
         Entries.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoEntries));
         _calls.Changed += change => Post(() => OnChanged(change));
+        _router.RouteChanged += () => Post(() =>
+        {
+            foreach (string name in new[] { nameof(IsBluetoothReady), nameof(HeaderText), nameof(AnswerText), nameof(CurrentCallText) })
+                OnPropertyChanged(name);
+        });
         _deviceManager.ActiveDeviceChanged += device => Post(() =>
         {
             _peerId = device?.DeviceId;
@@ -56,11 +64,21 @@ public sealed class CallsPageViewModel : BaseViewModel
     public bool IsRinging => _call?.IsRinging == true;
     public bool IsInCall => _call is not null && !_call.IsRinging;
     public string CurrentCallTitle => _call is null ? string.Empty : _call.Name ?? _call.Number ?? "Unknown caller";
+    /// <summary>ADR-029: Bluetooth hands-free is connected to this phone, so answering plays audio here.</summary>
+    public bool IsBluetoothReady => _router.IsBluetoothReadyFor(_peerId);
+
+    public string HeaderText => IsBluetoothReady
+        ? "Connected over Bluetooth: calls answered here play on this PC."
+        : "Calls are placed and answered on the phone; audio stays on the phone.";
+
+    public string AnswerText => IsBluetoothReady ? "Answer on PC" : "Answer on phone";
+
     public string CurrentCallText => _call switch
     {
         null => string.Empty,
         { IsRinging: true, Direction: CallService.DirectionOut } => "Calling... (audio on the phone)",
         { IsRinging: true } => "Incoming call",
+        _ when IsBluetoothReady => "On a call (see the call window for audio on this PC)",
         _ => "On a call (audio on the phone)"
     };
 
@@ -117,7 +135,22 @@ public sealed class CallsPageViewModel : BaseViewModel
     }
 
     public Task CallBackAsync(CallLogItemViewModel entry) => RunAsync(CallService.ActionDial, entry.Number);
-    public Task AnswerAsync() => RunAsync(CallService.ActionAnswer);
+    public async Task AnswerAsync()
+    {
+        if (_peerId is not { } peer) return;
+        StatusText = string.Empty;
+        try
+        {
+            if (await _router.AnswerAsync(peer) == CallAnswerRoute.Bluetooth)
+                StatusText = "Answered on this PC. Call audio plays here over Bluetooth.";
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Answering call failed", error);
+            StatusText = "Could not reach the phone.";
+        }
+    }
+
     public Task DeclineAsync() => RunAsync(CallService.ActionDecline);
     public Task SilenceAsync() => RunAsync(CallService.ActionSilence);
     public Task EndAsync() => RunAsync(CallService.ActionEnd);
@@ -165,7 +198,8 @@ public sealed class CallsPageViewModel : BaseViewModel
         foreach (string name in new[]
                  {
                      nameof(IsAvailable), nameof(IsUnavailable), nameof(UnavailableText), nameof(HasNoEntries), nameof(HasCurrentCall),
-                     nameof(IsRinging), nameof(IsInCall), nameof(CurrentCallTitle), nameof(CurrentCallText), nameof(CanDial)
+                     nameof(IsRinging), nameof(IsInCall), nameof(CurrentCallTitle), nameof(CurrentCallText), nameof(CanDial),
+                     nameof(IsBluetoothReady), nameof(HeaderText), nameof(AnswerText)
                  })
         {
             OnPropertyChanged(name);

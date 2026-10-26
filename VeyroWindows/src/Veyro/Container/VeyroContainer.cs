@@ -1,3 +1,4 @@
+using Veyro.Platforms.Windows.Calling;
 using Veyro.Platforms.Windows.Services;
 using Veyro.Services;
 using Veyro.ViewModels.Settings;
@@ -37,6 +38,9 @@ public sealed class VeyroContainer
     public IFileTransferService FileTransferService { get; }
     public IScreenMirrorService ScreenMirrorService { get; }
     public INotificationToastService NotificationToastService { get; }
+    public IBluetoothCallingService BluetoothCalling { get; }
+    public CallRouter CallRouter { get; }
+    public CallWindowService CallWindowService { get; }
 
     // ViewModels
     public NotificationsViewModel NotificationsViewModel { get; }
@@ -49,6 +53,7 @@ public sealed class VeyroContainer
     public AppsViewModel AppsViewModel { get; }
     public GeneralViewModel GeneralViewModel { get; }
     public DevicesViewModel DevicesViewModel { get; }
+    public BluetoothCallingViewModel BluetoothCallingViewModel { get; }
 
     public VeyroContainer(string? dataDirectory = null)
     {
@@ -90,8 +95,12 @@ public sealed class VeyroContainer
         DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService);
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager);
         ScreenMirrorService = new ScreenMirrorService();
+        // ADR-029: Bluetooth hands-free call audio (Windows 11); answers route through CallRouter.
+        BluetoothCalling = new BluetoothCallingService(SettingsStore);
+        CallRouter = new CallRouter(Calls, BluetoothCalling);
+        CallWindowService = new CallWindowService(BluetoothCalling, Calls, ThemeModeService);
         NotificationToastService = new NotificationToastService(
-            NotificationMirror, Messaging, Calls,
+            NotificationMirror, Messaging, Calls, CallRouter,
             // Invoked on toast activation, long after construction has assigned the view model.
             openThread: (peerId, threadId) => MessagesViewModel!.RequestOpenThread(peerId, threadId),
             DataDirectory);
@@ -103,7 +112,8 @@ public sealed class VeyroContainer
         MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService, ScreenMirrorService);
         TransfersPageViewModel = new TransfersPageViewModel(DeviceManager, FileTransferService, SettingsStore);
         MessagesViewModel = new MessagesViewModel(Messaging, DeviceManager);
-        CallsPageViewModel = new CallsPageViewModel(Calls, DeviceManager);
+        CallsPageViewModel = new CallsPageViewModel(Calls, CallRouter, DeviceManager);
+        BluetoothCallingViewModel = new BluetoothCallingViewModel(BluetoothCalling, DeviceManager);
         AppsViewModel = new AppsViewModel(DeviceManager);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);

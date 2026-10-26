@@ -92,6 +92,11 @@
     <Capability Name="internetClient" />
     <Capability Name="internetClientServer" />
     <Capability Name="privateNetworkClientServer" />
+    <!-- Bluetooth hands-free call audio (ADR-029): PhoneLineTransportDevice, PhoneLine, PhoneCall -->
+    <uap:Capability Name="phoneCall" />
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="phoneLineTransportManagement" />
+    <DeviceCapability Name="bluetooth" />
+    <DeviceCapability Name="microphone" />
   </Capabilities>
 </Package>

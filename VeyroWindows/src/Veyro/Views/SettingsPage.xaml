@@ -2,7 +2,13 @@
     x:Class="Veyro.Views.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:contracts="using:Veyro.Data.Contracts"
+    xmlns:converters="using:Veyro.Converters"
     Padding="24">
+
+    <Page.Resources>
+        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="760" HorizontalAlignment="Left" Spacing="16">
@@ -47,6 +53,73 @@
                     <TextBox
                         Header="Received Files Folder"
                         Text="{x:Bind ViewModel.DownloadDirectory, Mode=TwoWay}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Bluetooth calling Card (ADR-029) -->
+            <Border
+                Padding="16"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Spacing="12">
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Bluetooth calling" />
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Lets you answer phone calls and talk through this PC's speakers and microphone. Bluetooth is used only for call audio and call control; files, notifications and messages keep using the encrypted Wi-Fi link."
+                        TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ProgressRing
+                            Width="16"
+                            Height="16"
+                            IsActive="{x:Bind Bluetooth.IsBusy, Mode=OneWay}" />
+                        <TextBlock
+                            AutomationProperties.LiveSetting="Polite"
+                            Text="{x:Bind Bluetooth.StatusText, Mode=OneWay}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="12" Visibility="{x:Bind Bluetooth.IsSupported, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Button Click="PairBluetooth_Click" Content="Pair phone over Bluetooth" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox
+                                HorizontalAlignment="Stretch"
+                                Header="Phone for calls"
+                                ItemsSource="{x:Bind Bluetooth.Phones, Mode=OneWay}"
+                                PlaceholderText="No Bluetooth phone found"
+                                SelectedIndex="{x:Bind Bluetooth.SelectedIndex, Mode=TwoWay}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="contracts:BluetoothPhoneInfo">
+                                        <TextBlock Text="{x:Bind Name}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <Button
+                                Grid.Column="1"
+                                VerticalAlignment="Bottom"
+                                AutomationProperties.Name="Refresh Bluetooth phones"
+                                Click="RefreshBluetooth_Click"
+                                ToolTipService.ToolTip="Refresh">
+                                <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                            </Button>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button
+                                Click="ConnectBluetooth_Click"
+                                Content="Connect"
+                                IsEnabled="{x:Bind Bluetooth.CanConnect, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}" />
+                            <Button
+                                Click="DisconnectBluetooth_Click"
+                                Content="Disconnect"
+                                IsEnabled="{x:Bind Bluetooth.CanDisconnect, Mode=OneWay}" />
+                        </StackPanel>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
