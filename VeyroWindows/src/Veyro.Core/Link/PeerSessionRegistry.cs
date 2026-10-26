@@ -117,20 +117,27 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     }
 
     /// <summary>
-    /// Registers a new session. A newer session from the same peer replaces the older one (the
-    /// phone reconnected before the old socket was noticed dead); the replaced session is
-    /// reported closed first so per-session state is reset.
+    /// Registers a new session, inbound or dialled by this PC (ADR-040). Exactly one session per
+    /// peer is live: a newer one replaces the older (the phone reconnected before the old socket
+    /// was noticed dead, or it dialled in while this PC's own dial was up). The replaced session
+    /// is reported closed exactly once, so per-session companion state is reset once, and
+    /// <paramref name="onReplaced"/> asks its loop to close the socket cleanly. Its later
+    /// <see cref="Registration.Dispose"/> raises nothing.
     /// </summary>
-    internal Registration Open(string peerId, Func<LinkMessage, CancellationToken, Task> send)
+    internal Registration Open(string peerId, Func<LinkMessage, CancellationToken, Task> send, Action? onReplaced = null)
     {
-        var registration = new Registration(this, peerId, send);
+        var registration = new Registration(this, peerId, send, onReplaced);
         Registration? replaced;
         lock (_gate)
         {
             _sessions.TryGetValue(peerId, out replaced);
             _sessions[peerId] = registration;
         }
-        if (replaced is not null) Raise(SessionClosed, peerId, nameof(SessionClosed));
+        if (replaced is not null)
+        {
+            replaced.MarkReplaced();
+            Raise(SessionClosed, peerId, nameof(SessionClosed));
+        }
         Raise(SessionOpened, peerId, nameof(SessionOpened));
         return registration;
     }
@@ -223,18 +230,34 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     internal sealed class Registration : IDisposable
     {
         private readonly PeerSessionRegistry _owner;
+        private readonly Action? _onReplaced;
         private int _capabilities;
         private int _disposed;
+        private int _replaced;
 
-        public Registration(PeerSessionRegistry owner, string peerId, Func<LinkMessage, CancellationToken, Task> send)
+        public Registration(PeerSessionRegistry owner, string peerId, Func<LinkMessage, CancellationToken, Task> send, Action? onReplaced = null)
         {
             _owner = owner;
             PeerId = peerId;
             Send = send;
+            _onReplaced = onReplaced;
         }
 
         public string PeerId { get; }
         public Func<LinkMessage, CancellationToken, Task> Send { get; }
+
+        /// <summary>
+        /// A newer session from the same peer took over. The loop stops publishing companion
+        /// messages from this one (they would duplicate the new session's) and lets it close.
+        /// </summary>
+        public bool IsReplaced => Volatile.Read(ref _replaced) != 0;
+
+        internal void MarkReplaced()
+        {
+            if (Interlocked.Exchange(ref _replaced, 1) != 0) return;
+            try { _onReplaced?.Invoke(); }
+            catch (Exception error) { VeyroTrace.Error("Closing a replaced session failed", error); }
+        }
 
         /// <summary>Outbound transfers waiting on this session's replies (ADR-034).</summary>
         public TransferMailbox Transfers { get; } = new();

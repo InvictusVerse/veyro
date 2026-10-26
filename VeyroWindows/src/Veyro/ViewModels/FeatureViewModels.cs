@@ -130,8 +130,15 @@ public sealed class TransfersPageViewModel : BaseViewModel
         _transferService.ActiveTransferChanged += t => ActiveTransfer = t;
         _transferService.History.CollectionChanged += OnHistoryChanged;
         History.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoHistory));
+        // ADR-040: history follows the phone shown, like every other page.
+        _deviceManager.ActiveDeviceChanged += _ => RebuildHistory();
         RebuildHistory();
     }
+
+    /// <summary>The shown phone's transfers; every transfer when no phone is shown.</summary>
+    private bool IsShown(TransferRecord record)
+        => _deviceManager.ActiveDevice is not { } device ||
+           string.Equals(record.PeerDeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase);
 
     public async Task SendFilesToActiveDeviceAsync(IReadOnlyList<string> filePaths)
     {
@@ -146,10 +153,14 @@ public sealed class TransfersPageViewModel : BaseViewModel
 
     private void OnHistoryChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        if (e.Action == NotifyCollectionChangedAction.Add && e.NewStartingIndex >= 0 && e.NewItems is { } added)
+        // New records are inserted at the top (FileTransferService.History.Insert(0, ...)).
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewStartingIndex == 0 && e.NewItems is { } added)
         {
-            int index = e.NewStartingIndex;
-            foreach (TransferRecord record in added) History.Insert(index++, new TransferHistoryItemViewModel(record));
+            int index = 0;
+            foreach (TransferRecord record in added)
+            {
+                if (IsShown(record)) History.Insert(index++, new TransferHistoryItemViewModel(record));
+            }
             return;
         }
         RebuildHistory();
@@ -158,7 +169,10 @@ public sealed class TransfersPageViewModel : BaseViewModel
     private void RebuildHistory()
     {
         History.Clear();
-        foreach (TransferRecord record in _transferService.History) History.Add(new TransferHistoryItemViewModel(record));
+        foreach (TransferRecord record in _transferService.History)
+        {
+            if (IsShown(record)) History.Add(new TransferHistoryItemViewModel(record));
+        }
     }
 }
 

@@ -46,6 +46,16 @@ public interface IDeviceManager
     /// <summary>Starts discovery if needed and re-reads its current peers.</summary>
     Task RefreshDiscoveryAsync();
 
+    /// <summary>
+    /// Refresh in the device header (ADR-040): dials the phone now, bypassing the phone's own
+    /// reconnect grace, and rescans discovery. <see cref="PairedDeviceUiModel.IsConnecting"/> is
+    /// true while the dial is in flight. Completes when both are done; never throws.
+    /// </summary>
+    Task ConnectNowAsync(string deviceId);
+
+    /// <summary>Shows this paired phone on every page (a toast from it was clicked). No effect for an unknown id.</summary>
+    void Select(string deviceId);
+
     /// <summary>Re-reads the trust store, for example after a new device paired or one was removed.</summary>
     void ReloadPairedDevices();
 
@@ -108,6 +118,14 @@ public interface IWindowsWallpaperSource : IPcWallpaperSource, IDisposable
 
 /// <summary>This PC's Wi-Fi signal, published to the phone (ADR-038). Windows: NetworkInformation.</summary>
 public interface IWindowsNetworkSource : IPcNetworkSource, IDisposable
+{
+    void Start();
+}
+
+/// <summary>
+/// Network changes for the reconnect backoff (ADR-040). Windows: NetworkInformation.NetworkStatusChanged.
+/// </summary>
+public interface IWindowsNetworkChangeSignal : INetworkChangeSignal, IDisposable
 {
     void Start();
 }

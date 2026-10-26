@@ -176,11 +176,11 @@ public sealed class MessagesViewModel : BaseViewModel
         SetLoadingThreads(true);
         StatusText = string.Empty;
         try { await _messaging.RequestThreadsAsync(peer); }
-        catch (TimeoutException) { StatusText = "The phone did not answer. Try again."; }
+        catch (TimeoutException) { if (IsShown(peer)) StatusText = "The phone did not answer. Try again."; }
         catch (Exception error)
         {
             VeyroTrace.Error("Loading SMS threads failed", error);
-            StatusText = "Could not load conversations from the phone.";
+            if (IsShown(peer)) StatusText = "Could not load conversations from the phone.";
         }
         finally { SetLoadingThreads(false); }
     }
@@ -225,11 +225,11 @@ public sealed class MessagesViewModel : BaseViewModel
         long threadId = _selectedThreadId.Value;
         SetLoadingOlder(true);
         try { await _messaging.LoadOlderAsync(peer, threadId); }
-        catch (TimeoutException) { StatusText = "The phone did not answer. Try again."; }
+        catch (TimeoutException) { if (IsShown(peer)) StatusText = "The phone did not answer. Try again."; }
         catch (Exception error)
         {
             VeyroTrace.Error("Loading SMS page failed", error);
-            StatusText = "Could not load messages from the phone.";
+            if (IsShown(peer)) StatusText = "Could not load messages from the phone.";
         }
         finally { SetLoadingOlder(false); }
     }
@@ -245,11 +245,14 @@ public sealed class MessagesViewModel : BaseViewModel
         try
         {
             ConversationMessage message = await _messaging.SendAsync(peer, addresses, body, _selectedSim?.Id);
+            // ADR-040: the user may have switched phones while it was sending; the other phone's
+            // conversation must not pick up this phone's thread.
+            if (!IsShown(peer)) return;
             _selectedThreadId = message.ThreadId;
             _draftAddresses = null;
             SyncAll();
         }
-        catch (ArgumentException)
+        catch (ArgumentException) when (IsShown(peer))
         {
             ComposeText = body;
             StatusText = $"Messages need 1 to {PhoneAddress.MaxAddresses} valid numbers and 1 to {PhoneAddress.MaxBodyLength} characters.";
@@ -257,9 +260,11 @@ public sealed class MessagesViewModel : BaseViewModel
         catch (Exception error)
         {
             VeyroTrace.Error("Sending SMS failed", error);
-            StatusText = "Could not reach the phone.";
+            if (IsShown(peer)) StatusText = "Could not reach the phone.";
         }
     }
+
+    private bool IsShown(string peerId) => string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase);
 
     public async Task RetryAsync(SmsMessageItemViewModel item)
     {

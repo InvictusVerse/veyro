@@ -19,7 +19,8 @@ public sealed class MainPageViewModel : BaseViewModel
     private readonly IDeviceManager _deviceManager;
     private readonly IFileTransferService _transferService;
     private readonly DispatcherQueueTimer? _connectingTimer;
-    private DateTimeOffset _connectingUntil = DateTimeOffset.UtcNow + ConnectingWindow;
+    private readonly DateTimeOffset _connectingUntil = DateTimeOffset.UtcNow + ConnectingWindow;
+    private bool _refreshing;
 
     private PairedDeviceUiModel? _activeDevice;
     private ActiveTransfer? _activeTransfer;
@@ -55,21 +56,23 @@ public sealed class MainPageViewModel : BaseViewModel
     public bool IsDeviceConnected => Device?.IsConnected == true;
 
     /// <summary>
-    /// Phone Link's pill (ADR-038). "Connecting" only for a short window after start-up or a
-    /// refresh, while the phone is expected to open its session; otherwise not connected is Offline.
+    /// Phone Link's pill (ADR-038). "Connecting" while this PC dials the phone or a refresh is in
+    /// flight (ADR-040), and for a short window after start-up while the phone is expected to open
+    /// its session; otherwise not connected is Offline.
     /// </summary>
     public string ConnectionPillText => Device is null ? string.Empty
         : IsDeviceConnected ? "Connected"
         : IsConnecting ? "Connecting" : "Offline";
 
-    public bool IsConnecting => Device is { IsConnected: false } && DateTimeOffset.UtcNow < _connectingUntil;
+    public bool IsConnecting => Device is { IsConnected: false } device &&
+        (device.IsConnecting || _refreshing || DateTimeOffset.UtcNow < _connectingUntil);
     public bool IsOffline => Device is { IsConnected: false } && !IsConnecting;
 
     public string ConnectionHelpText => Device switch
     {
         null => string.Empty,
         { IsConnected: true } => $"{Device.Name} is connected to this PC over the encrypted link.",
-        _ => $"{Device.Name} is not connected. Open Veyro on the phone and keep it on the same Wi-Fi or hotspot as this PC; the phone connects on its own."
+        _ => $"{Device.Name} is not connected. Keep Veyro installed on the phone and both on the same Wi-Fi or hotspot; the phone connects on its own, and this PC reconnects to it when it is seen on the network."
     };
 
     /// <summary>What discovery reports for the shown phone right now (untrusted, informational only).</summary>
@@ -165,19 +168,29 @@ public sealed class MainPageViewModel : BaseViewModel
     public void RequestPairing() => PairRequested?.Invoke();
 
     /// <summary>
-    /// Refresh: the phone opens the link, so this re-announces the PC and re-reads discovery, then
-    /// shows Connecting for a short window.
+    /// Refresh (ADR-040): dials the shown phone at once, without waiting for it to reconnect by
+    /// itself, and rescans discovery. The pill says Connecting while that is in flight.
     /// </summary>
-    public Task RefreshDiscoveryAsync()
+    public async Task RefreshDiscoveryAsync()
     {
-        _connectingUntil = DateTimeOffset.UtcNow + ConnectingWindow;
-        RaiseConnectionPill();
-        if (_connectingTimer is not null)
+        if (_refreshing) return;
+        if (Device is not { } device)
         {
-            _connectingTimer.Stop();
-            _connectingTimer.Start();
+            await _deviceManager.RefreshDiscoveryAsync();
+            return;
         }
-        return _deviceManager.RefreshDiscoveryAsync();
+        _refreshing = true;
+        RaiseConnectionPill();
+        try
+        {
+            await _deviceManager.ConnectNowAsync(device.DeviceId);
+        }
+        finally
+        {
+            _refreshing = false;
+            RaiseConnectionPill();
+            OnPropertyChanged(nameof(NetworkText));
+        }
     }
 
     private void RaiseDeviceProperties()

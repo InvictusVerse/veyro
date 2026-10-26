@@ -33,11 +33,33 @@ public sealed class PairedDeviceUiModel : INotifyPropertyChanged
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(ConnectionStatusText));
                 OnPropertyChanged(nameof(StatusOpacity));
+                OnPropertyChanged(nameof(ShowsConnecting));
             }
         }
     }
 
-    public string ConnectionStatusText => IsConnected ? "Connected" : "Disconnected";
+    private bool _isConnecting;
+
+    /// <summary>This PC is dialling the phone right now (ADR-040).</summary>
+    public bool IsConnecting
+    {
+        get => _isConnecting;
+        set
+        {
+            if (_isConnecting != value)
+            {
+                _isConnecting = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ConnectionStatusText));
+                OnPropertyChanged(nameof(ShowsConnecting));
+            }
+        }
+    }
+
+    /// <summary>The switcher's amber dot: dialling and not yet connected.</summary>
+    public bool ShowsConnecting => _isConnecting && !_isConnected;
+
+    public string ConnectionStatusText => IsConnected ? "Connected" : IsConnecting ? "Connecting" : "Disconnected";
 
     private bool _autoAcceptTransfers;
 

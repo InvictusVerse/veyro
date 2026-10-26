@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,6 +10,19 @@ using Veyro.Core.Transfer;
 using Veyro.Core.Diagnostics;
 
 namespace Veyro.Core.Link;
+
+/// <summary>
+/// The phone answered the preamble with something other than a session, or (dialled sessions)
+/// not in time. Unless <see cref="IsBusy"/>, the phone no longer trusts this PC (ADR-040).
+/// </summary>
+public sealed class SessionRefusedException(string reason, bool isBusy = false)
+    : UnauthorizedAccessException($"Peer refused an authenticated session: {reason}")
+{
+    public string Reason { get; } = reason;
+
+    /// <summary>The phone is busy with another PC; it may accept later.</summary>
+    public bool IsBusy { get; } = isBusy;
+}
 
 /// <summary>
 /// Windows outbound transfers to already-paired peers. Pairing remains an explicit UI operation;
@@ -92,23 +107,9 @@ public sealed class VeyroLinkClient
         if (!string.Equals(peer.DeviceId, trustedPeer.DeviceId, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Trusted identity does not match the selected peer.");
 
-        byte[] secret;
-        try { secret = Convert.FromBase64String(trustedPeer.PairingSecretBase64); }
-        catch (FormatException ex) { throw new CryptographicException("Stored peer secret is malformed.", ex); }
-        if (secret.Length != 32) throw new CryptographicException("Stored peer secret has invalid length.");
-
         PeerEndpoint endpoint = peer.Endpoints.FirstOrDefault()
             ?? throw new InvalidOperationException("The peer has no discovered endpoint.");
-        using var socket = new ClientWebSocket { Options = { KeepAliveInterval = TimeSpan.FromSeconds(20) } };
-        await socket.ConnectAsync(new Uri($"ws://{endpoint.Host}:{endpoint.Port}/veyro"), ct).ConfigureAwait(false);
-        await SendTextAsync(socket, LinkJson.Encode(new LinkPreamble(_localDeviceId, _localName, "windows")), ct).ConfigureAwait(false);
-
-        LinkPreambleAck ack = LinkJson.Decode<LinkPreambleAck>(await ReceiveTextAsync(socket, ct).ConfigureAwait(false))
-            ?? throw new InvalidDataException("Peer returned an invalid VLP preamble response.");
-        if (!string.Equals(ack.Mode, LinkPreambleAck.ModeSession, StringComparison.Ordinal))
-            throw new UnauthorizedAccessException($"Peer refused an authenticated session: {ack.Reason ?? ack.Mode}");
-
-        await using var session = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, peer.DeviceId);
+        await using var session = await ConnectAuthenticatedAsync(endpoint, trustedPeer, ct).ConfigureAwait(false);
         // This outbound connection only carries one transfer, so it does not advertise
         // NotificationMirror. It does advertise the companion families so the phone knows the
         // PC speaks them; any companion frame the phone sends here is skipped while waiting for
@@ -124,6 +125,140 @@ public sealed class VeyroLinkClient
 
         LinkMessage.TransferDecision decision = await ReceiveDecisionAsync(session, plan.TransferId, ct).ConfigureAwait(false);
         return await RunDataPlaneAsync(plan, decision, progress, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Bounds connect, preamble and Hello of a dialled persistent session.</summary>
+    public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How long a dialled phone has to answer the preamble. A phone that trusts this PC answers at
+    /// once; one that removed it would hold the answer while it shows its user a pairing prompt,
+    /// so the dial gives up quickly (<see cref="SessionRefusedException"/>) instead of leaving
+    /// that prompt up.
+    /// </summary>
+    public TimeSpan PreambleAckTimeout { get; init; } = TimeSpan.FromSeconds(4);
+
+    /// <summary>
+    /// ADR-040: opens the companion session to a paired phone that is on the network but not
+    /// connected (the phone could not reconnect: app killed, battery saver). Preamble with the
+    /// stored session secret, encrypted Hello with this PC's full capabilities, then the session
+    /// is handed to <paramref name="runner"/>, which registers it exactly like an inbound one and
+    /// keeps it running until it closes or the listener stops. Returns true once it is registered;
+    /// false when the phone connected on its own during the handshake (nothing is replaced then).
+    /// The endpoint comes from discovery and is untrusted; the session secret authenticates the
+    /// phone. Throws when the phone refuses or cannot be reached.
+    /// </summary>
+    public async Task<bool> OpenPersistentSessionAsync(
+        PeerEndpoint endpoint,
+        TrustedPeer trustedPeer,
+        ILinkSessionRunner runner,
+        IPeerSessionRegistry sessions,
+        CancellationToken ct = default)
+    {
+        if (!runner.IsRunning) throw new InvalidOperationException("The listener is stopped.");
+        // A second connection would only be closed again (or, on a peer that keeps one session,
+        // displace the live one), so a connected phone is not dialled.
+        if (sessions.IsConnected(trustedPeer.DeviceId)) return false;
+        SecureLinkSession session;
+        using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            handshake.CancelAfter(HandshakeTimeout);
+            session = await ConnectAuthenticatedAsync(endpoint, trustedPeer, handshake.Token, PreambleAckTimeout).ConfigureAwait(false);
+            try
+            {
+                await session.SendAsync(new LinkMessage.Hello(
+                    _localDeviceId, _localName, "windows", Capabilities: VeyroLinkServer.LocalCapabilities), handshake.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+        if (sessions.IsConnected(trustedPeer.DeviceId))
+        {
+            // The phone's own reconnect won the race; keep its session.
+            await session.DisposeAsync().ConfigureAwait(false);
+            return false;
+        }
+
+        IPAddress? remote = IPAddress.TryParse(endpoint.Host, out IPAddress? parsed) ? parsed : null;
+        var addresses = new SessionAddresses(remote, remote is null ? null : LocalAddressFor(remote));
+        Task run;
+        try
+        {
+            // The session lives as long as the listener, not as long as this call.
+            run = runner.RunOutboundSessionAsync(session, trustedPeer, addresses, CancellationToken.None);
+        }
+        catch
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+        _ = run.ContinueWith(_ => session.DisposeAsync().AsTask(), CancellationToken.None,
+            TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+        return true;
+    }
+
+    /// <summary>
+    /// Connect, preamble, and the encrypted session under the stored secret (shared by the
+    /// one-transfer fallback and the persistent dial). The returned session owns the socket.
+    /// </summary>
+    private async Task<SecureLinkSession> ConnectAuthenticatedAsync(
+        PeerEndpoint endpoint, TrustedPeer trustedPeer, CancellationToken ct, TimeSpan? ackTimeout = null)
+    {
+        byte[] secret;
+        try { secret = Convert.FromBase64String(trustedPeer.PairingSecretBase64); }
+        catch (FormatException ex) { throw new CryptographicException("Stored peer secret is malformed.", ex); }
+        if (secret.Length != 32) throw new CryptographicException("Stored peer secret has invalid length.");
+
+        var socket = new ClientWebSocket { Options = { KeepAliveInterval = TimeSpan.FromSeconds(20) } };
+        try
+        {
+            await socket.ConnectAsync(new Uri($"ws://{endpoint.Host}:{endpoint.Port}/veyro"), ct).ConfigureAwait(false);
+            await SendTextAsync(socket, LinkJson.Encode(new LinkPreamble(_localDeviceId, _localName, "windows")), ct).ConfigureAwait(false);
+
+            string reply;
+            using (var ackWait = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                if (ackTimeout is { } limit) ackWait.CancelAfter(limit);
+                try { reply = await ReceiveTextAsync(socket, ackWait.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ackWait.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    // A phone that trusts this PC answers at once; one that does not holds the
+                    // reply while it asks its user (ADR-040).
+                    throw new SessionRefusedException("no-answer");
+                }
+            }
+            LinkPreambleAck ack = LinkJson.Decode<LinkPreambleAck>(reply)
+                ?? throw new InvalidDataException("Peer returned an invalid VLP preamble response.");
+            if (!string.Equals(ack.Mode, LinkPreambleAck.ModeSession, StringComparison.Ordinal))
+                throw new SessionRefusedException(ack.Reason ?? ack.Mode, isBusy: string.Equals(ack.Mode, "busy", StringComparison.Ordinal));
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+        return new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, trustedPeer.DeviceId);
+    }
+
+    /// <summary>
+    /// The local address the OS routes to <paramref name="remote"/> from: a connected UDP socket
+    /// picks it without sending anything. Used for <c>decision.tcpHost</c> on dialled sessions.
+    /// </summary>
+    private static IPAddress? LocalAddressFor(IPAddress remote)
+    {
+        try
+        {
+            using var probe = new Socket(remote.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            probe.Connect(remote, 9);
+            return (probe.LocalEndPoint as IPEndPoint)?.Address;
+        }
+        catch (SocketException)
+        {
+            return null;
+        }
     }
 
     private async Task<Vtc1TransferResult> SendOverChannelAsync(

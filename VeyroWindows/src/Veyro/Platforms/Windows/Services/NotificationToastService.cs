@@ -32,6 +32,8 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly ICallService _calls;
     private readonly CallRouter _router;
     private readonly Action<string, long> _openThread;
+    private readonly Func<string, string?> _phoneName;
+    private readonly Action<string> _showPhone;
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
     private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
@@ -46,7 +48,9 @@ public sealed class NotificationToastService : INotificationToastService
         ICallService calls,
         CallRouter router,
         Action<string, long> openThread,
-        string fallbackDataDirectory)
+        string fallbackDataDirectory,
+        Func<string, string?>? phoneName = null,
+        Action<string>? showPhone = null)
     {
         _mirror = mirror;
         _messaging = messaging;
@@ -54,6 +58,18 @@ public sealed class NotificationToastService : INotificationToastService
         _router = router;
         _openThread = openThread;
         _fallbackDataDirectory = fallbackDataDirectory;
+        // ADR-040: with several phones a toast says which one it came from, and opening it shows that phone.
+        _phoneName = phoneName ?? (_ => null);
+        _showPhone = showPhone ?? (_ => { });
+    }
+
+    /// <summary>"From Pixel 8" under the toast, so toasts from two phones are told apart. Shown, never logged.</summary>
+    private AppNotificationBuilder FromPhone(AppNotificationBuilder builder, string peerId)
+    {
+        string? name;
+        try { name = _phoneName(peerId); }
+        catch (Exception) { name = null; }
+        return string.IsNullOrWhiteSpace(name) ? builder : builder.SetAttributionText(Clip("From " + name.Trim(), MaxTitleLength));
     }
 
     public void Initialize()
@@ -120,6 +136,7 @@ public sealed class NotificationToastService : INotificationToastService
                 builder.AddText(Clip(notification.Title, MaxTitleLength));
             if (!string.IsNullOrWhiteSpace(notification.Body))
                 builder.AddText(Clip(notification.Body, MaxBodyLength));
+            FromPhone(builder, peer);
 
             if (CacheIcon(notification) is { } logo)
                 builder.SetAppLogoOverride(logo, AppNotificationImageCrop.Circle);
@@ -187,6 +204,7 @@ public sealed class NotificationToastService : INotificationToastService
                     .AddArgument("peer", peerId)
                     .AddArgument("thread", thread64)
                     .SetInputId(SmsReplyInputId));
+            FromPhone(builder, peerId);
             AppNotification notification = builder.BuildNotification();
             notification.ExpiresOnReboot = true;
             AppNotificationManager.Default.Show(notification);
@@ -242,6 +260,7 @@ public sealed class NotificationToastService : INotificationToastService
                 .AddButton(CallButton(bluetooth ? "Answer on PC" : "Answer (on phone)", "call-answer", call, AppNotificationButtonStyle.Success))
                 .AddButton(CallButton("Decline", "call-decline", call, AppNotificationButtonStyle.Critical))
                 .AddButton(CallButton("Silence", "call-silence", call, null));
+            FromPhone(builder, call.PeerId);
             AppNotification notification = builder.BuildNotification();
             notification.ExpiresOnReboot = true;
             AppNotificationManager.Default.Show(notification);
@@ -393,7 +412,13 @@ public sealed class NotificationToastService : INotificationToastService
         }
         if (action is "open" or "call-open")
         {
-            App.MainWindow?.DispatcherQueue.TryEnqueue(App.ShowMainWindow);
+            arguments.TryGetValue("peer", out string? from);
+            App.MainWindow?.DispatcherQueue.TryEnqueue(() =>
+            {
+                App.ShowMainWindow();
+                // The pages follow the phone the toast came from, not whichever was shown.
+                if (from is not null) _showPhone(from);
+            });
             return;
         }
 

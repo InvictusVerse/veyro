@@ -190,6 +190,28 @@ public sealed class SecureLinkSession : IAsyncDisposable
         Interlocked.Exchange(ref _outboundSequence, 0);
     }
 
+    /// <summary>
+    /// Starts a clean close (ADR-040): sends the WebSocket close frame after any send in progress.
+    /// The receive loop then sees the peer's answering close and ends. Never throws.
+    /// </summary>
+    public async Task CloseOutputAsync(string reason)
+    {
+        try
+        {
+            await _sendGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                    await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, reason, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _sendGate.Release();
+            }
+        }
+        catch (Exception error) when (error is WebSocketException or IOException or ObjectDisposedException or InvalidOperationException) { }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _sendGate.Dispose();

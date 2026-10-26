@@ -27,6 +27,7 @@ public sealed class PhotosViewModel : BaseViewModel
     private List<PhotoItemViewModel> _ordered = [];
     private DispatcherQueueTimer? _thumbnailTimer;
     private string? _peerId;
+    private string? _loadingPeer;
     private bool _isActive;
     private bool _isLoading;
     private string _statusText = string.Empty;
@@ -45,6 +46,9 @@ public sealed class PhotosViewModel : BaseViewModel
             _peerId = device?.DeviceId;
             ViewerItem = null;
             StatusText = string.Empty;
+            // A list still loading for the previous phone must not block this one.
+            _loadingPeer = null;
+            IsLoading = false;
             SyncAll();
             EnsureLoaded();
         });
@@ -134,21 +138,30 @@ public sealed class PhotosViewModel : BaseViewModel
     public async Task RefreshAsync()
     {
         if (_peerId is not { } peer || !IsAvailable || IsLoading) return;
+        // ADR-040: the load belongs to this phone. Switching phones clears it, so the other phone
+        // loads at once and this one's late answer does not touch the other's page.
+        _loadingPeer = peer;
         IsLoading = true;
         StatusText = string.Empty;
         try { await _photos.RequestListAsync(peer); }
-        catch (TimeoutException) { StatusText = "The phone did not answer. Try again."; }
+        catch (TimeoutException) { if (IsShown(peer)) StatusText = "The phone did not answer. Try again."; }
         catch (Exception error)
         {
             VeyroTrace.Warn($"Loading photos failed: {error.GetType().Name}");
-            StatusText = "Could not load photos from the phone.";
+            if (IsShown(peer)) StatusText = "Could not load photos from the phone.";
         }
         finally
         {
-            IsLoading = false;
-            SyncList();
+            if (string.Equals(_loadingPeer, peer, StringComparison.OrdinalIgnoreCase))
+            {
+                _loadingPeer = null;
+                IsLoading = false;
+            }
+            if (IsShown(peer)) SyncList();
         }
     }
+
+    private bool IsShown(string peerId) => string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>A tile came on screen: show its thumbnail, asking the phone if needed.</summary>
     public void OnTileRealized(PhotoItemViewModel item)

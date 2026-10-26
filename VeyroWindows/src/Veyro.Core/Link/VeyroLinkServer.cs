@@ -49,12 +49,33 @@ public sealed record InboundPairingRequest(
 }
 
 /// <summary>
+/// Runs a persistent session this PC dialled (ADR-040) with the same loop as an inbound one, so
+/// every companion feature and transfer works over it.
+/// </summary>
+public interface ILinkSessionRunner
+{
+    /// <summary>False while the listener is stopped ("Pause sync"); nothing is dialled then.</summary>
+    bool IsRunning { get; }
+
+    /// <summary>
+    /// Registers <paramref name="secure"/> in the session registry before the returned task first
+    /// yields, then runs it until the peer closes, a newer session replaces it, the listener stops
+    /// or <paramref name="ct"/> is cancelled. Never faults; the caller disposes the session after.
+    /// </summary>
+    Task RunOutboundSessionAsync(SecureLinkSession secure, TrustedPeer peer, SessionAddresses addresses, CancellationToken ct = default);
+}
+
+/// <summary>
 /// Windows listener for authenticated inbound sessions. An unknown peer pairs either through the
 /// open <see cref="Link.PairingWindow"/> (ADR-030) or, when none is open, only after the
-/// <see cref="PairingAuthorizer"/> prompt approves it.
+/// <see cref="PairingAuthorizer"/> prompt approves it. Also runs the sessions this PC dials
+/// (<see cref="ILinkSessionRunner"/>, ADR-040) with the same session loop.
 /// </summary>
-public sealed class VeyroLinkServer : IAsyncDisposable
+public sealed class VeyroLinkServer : IAsyncDisposable, ILinkSessionRunner
 {
+    /// <summary>How long a replaced session waits for the peer to answer its close frame.</summary>
+    public static readonly TimeSpan ReplacedCloseTimeout = TimeSpan.FromSeconds(5);
+
     public const int PortRangeStart = 5150;
     public const int PortRangeEnd = 5169;
     private readonly string _localDeviceId;
@@ -553,9 +574,49 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// The persistent authenticated session (ADR-025). Runs until the peer closes the socket or
-    /// the server stops. Transfers run one at a time in the background so heartbeats and
-    /// companion messages keep flowing while a VTC1 transfer is in progress.
+    /// A session this PC dialled (ADR-040), run by the same loop as an inbound one. The outbound
+    /// Hello was already sent by the dialler; the phone's HelloAck and its own Hello are handled
+    /// here as on any session.
+    /// </summary>
+    public Task RunOutboundSessionAsync(SecureLinkSession secure, TrustedPeer peer, SessionAddresses addresses, CancellationToken ct = default)
+    {
+        if (!IsRunning) throw new InvalidOperationException("The listener is stopped.");
+        // The listener's stop token ends dialled sessions too, so "Pause sync" disconnects them.
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _stop.Token);
+        return RunOutboundCoreAsync(linked);
+
+        async Task RunOutboundCoreAsync(CancellationTokenSource cancellation)
+        {
+            try
+            {
+                await RunSessionAsync(secure, peer, addresses, cancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (Exception error)
+            {
+                VeyroTrace.Error("Outbound session failed", error);
+            }
+            finally
+            {
+                cancellation.Dispose();
+            }
+        }
+    }
+
+    private static async Task CloseReplacedAsync(SecureLinkSession secure, CancellationTokenSource sessionStop)
+    {
+        VeyroTrace.Info("Session replaced by a newer one from the same peer; closing it");
+        await secure.CloseOutputAsync("replaced").ConfigureAwait(false);
+        // A peer that never answers the close must not keep the old loop alive.
+        try { sessionStop.CancelAfter(ReplacedCloseTimeout); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// The persistent authenticated session (ADR-025), shared by inbound sessions and the ones
+    /// this PC dials (ADR-040). Runs until the peer closes the socket, a newer session from the
+    /// same peer replaces it, or the server stops. Transfers run one at a time in the background
+    /// so heartbeats and companion messages keep flowing while a VTC1 transfer is in progress.
     /// </summary>
     private async Task RunSessionAsync(
         SecureLinkSession secure,
@@ -564,7 +625,10 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         CancellationToken ct,
         Task<SecureLinkMessage?>? pendingReceive = null)
     {
-        using PeerSessionRegistry.Registration registration = _sessions.Open(peer.DeviceId, secure.SendAsync);
+        using var sessionStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        CancellationToken sessionCt = sessionStop.Token;
+        using PeerSessionRegistry.Registration registration = _sessions.Open(
+            peer.DeviceId, secure.SendAsync, onReplaced: () => _ = CloseReplacedAsync(secure, sessionStop));
         VeyroTrace.Info($"Session opened for peer {peer.DeviceId}");
         Task? activeTransfer = null;
         string? activeTransferId = null;
@@ -581,13 +645,15 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     // Confirm pairing hands over the receive it already had outstanding while the
                     // user decided; it reads with whatever key is current, so after Rekey that is
                     // the session secret.
-                    Task<SecureLinkMessage?> receive = pendingReceive ?? secure.ReceiveAsync(ct);
+                    Task<SecureLinkMessage?> receive = pendingReceive ?? secure.ReceiveAsync(sessionCt);
                     pendingReceive = null;
                     message = await receive.ConfigureAwait(false);
                 }
                 catch (Exception error) when (error is WebSocketException or IOException && !ct.IsCancellationRequested)
                 {
-                    VeyroTrace.Info($"Session closed by peer {peer.DeviceId}");
+                    VeyroTrace.Info(registration.IsReplaced
+                        ? $"Replaced session closed for peer {peer.DeviceId}"
+                        : $"Session closed by peer {peer.DeviceId}");
                     break;
                 }
                 if (message is null) break;
@@ -595,20 +661,24 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 // ADR-034: replies to a PC-to-phone transfer sent over this session go to its sender.
                 if (registration.Transfers.TryDeliver(message.Envelope.Payload)) continue;
 
+                // ADR-040: a replaced session only drains until its close completes; the newer
+                // session carries the companion state, so nothing here is published twice.
+                if (registration.IsReplaced) continue;
+
                 switch (message.Envelope.Payload)
                 {
                     case LinkMessage.Hello hello:
                         // Answer first: setting the capabilities lets companion services send
                         // their on-connect snapshots, which must not overtake the HelloAck.
                         await secure.SendAsync(new LinkMessage.HelloAck(
-                            _localDeviceId, _localName, "windows", LocalCapabilities), ct).ConfigureAwait(false);
+                            _localDeviceId, _localName, "windows", LocalCapabilities), sessionCt).ConfigureAwait(false);
                         registration.Capabilities = hello.Capabilities;
                         break;
                     case LinkMessage.HelloAck helloAck:
                         registration.Capabilities = helloAck.Capabilities;
                         break;
                     case LinkMessage.Ping ping:
-                        await secure.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);
+                        await secure.SendAsync(new LinkMessage.Pong(ping.Nonce), sessionCt).ConfigureAwait(false);
                         break;
                     case LinkMessage.Pong:
                         break;
@@ -622,11 +692,11 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         if (requested.ContainsKey(offer.TransferId))
                         {
                             VeyroTrace.Warn("Requested offer answered busy: its transfer id is already running");
-                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Busy), ct).ConfigureAwait(false);
+                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Busy), sessionCt).ConfigureAwait(false);
                             RequestedOffers?.OnFailed(peer.DeviceId, offer.RequestId!, new InvalidDataException("Duplicate transfer id."));
                             break;
                         }
-                        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(sessionCt);
                         requested[offer.TransferId] = (
                             HandleOfferAsync(secure, peer, offer, addresses, claim, cancellation.Token),
                             cancellation);
@@ -638,11 +708,11 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         if (activeTransfer is { IsCompleted: false })
                         {
                             VeyroTrace.Info("Offer answered busy: another transfer is running on this session");
-                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Busy), ct).ConfigureAwait(false);
+                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Busy), sessionCt).ConfigureAwait(false);
                             break;
                         }
                         transferCancellation?.Dispose();
-                        transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(sessionCt);
                         activeTransferId = offer.TransferId;
                         activeTransfer = HandleOfferAsync(secure, peer, offer, addresses, claim: null, transferCancellation.Token);
                         break;
@@ -709,6 +779,13 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         break;
                 }
             }
+        }
+        catch (Exception error) when (registration.IsReplaced && !ct.IsCancellationRequested &&
+                                      error is OperationCanceledException or WebSocketException or IOException or InvalidOperationException)
+        {
+            // ADR-040: the close of a replaced session (its close frame went out, or the peer did
+            // not answer it in time). Not a failure.
+            VeyroTrace.Info($"Replaced session ended for peer {peer.DeviceId}");
         }
         finally
         {

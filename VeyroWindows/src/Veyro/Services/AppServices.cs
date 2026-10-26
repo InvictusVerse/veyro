@@ -33,6 +33,7 @@ public sealed class DeviceManagerService : IDeviceManager
     private readonly ITrustStore _trustStore;
     private readonly IDiscoveryService _discovery;
     private readonly IPeerSessionRegistry _sessions;
+    private readonly SessionKeeper? _keeper;
     private readonly DispatcherQueue? _dispatcher;
     private readonly object _discoveryGate = new();
     private IReadOnlyList<PeerDevice> _latestDiscovered = [];
@@ -60,11 +61,12 @@ public sealed class DeviceManagerService : IDeviceManager
     public event Action<string>? ConnectionChanged;
     public event Action? DiscoveryChanged;
 
-    public DeviceManagerService(ITrustStore trustStore, IDiscoveryService discovery, IPeerSessionRegistry sessions)
+    public DeviceManagerService(ITrustStore trustStore, IDiscoveryService discovery, IPeerSessionRegistry sessions, SessionKeeper? keeper = null)
     {
         _trustStore = trustStore;
         _discovery = discovery;
         _sessions = sessions;
+        _keeper = keeper;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _discovery.PeersUpdated += peers =>
         {
@@ -73,7 +75,36 @@ public sealed class DeviceManagerService : IDeviceManager
         };
         _sessions.SessionOpened += peerId => Post(() => OnConnectionChanged(peerId, opened: true));
         _sessions.SessionClosed += peerId => Post(() => OnConnectionChanged(peerId, opened: false));
+        // ADR-040: the switcher shows "Connecting" while this PC dials a phone.
+        if (_keeper is not null) _keeper.DialingChanged += peerId => Post(() => OnDialingChanged(peerId));
         ReloadPairedDevices();
+    }
+
+    public void Select(string deviceId)
+    {
+        if (Find(deviceId) is { } device) ActiveDevice = device;
+    }
+
+    /// <summary>
+    /// The device header's refresh (ADR-040): dials the phone at once (no grace period) and
+    /// rescans discovery. The phone's IsConnecting is true while the dial is in flight.
+    /// </summary>
+    public async Task ConnectNowAsync(string deviceId)
+    {
+        Task rescan = RefreshDiscoveryAsync();
+        if (_keeper is not null)
+        {
+            try { await _keeper.ConnectNowAsync(deviceId).ConfigureAwait(true); }
+            catch (Exception error) { VeyroTrace.Warn($"Connecting to the phone failed: {error.GetType().Name}"); }
+        }
+        await rescan.ConfigureAwait(true);
+    }
+
+    private void OnDialingChanged(string peerId)
+    {
+        if (Find(peerId) is not { } device) return;
+        device.IsConnecting = _keeper?.IsDialing(peerId) == true;
+        ConnectionChanged?.Invoke(device.DeviceId);
     }
 
     public void ReloadPairedDevices()
@@ -91,6 +122,7 @@ public sealed class DeviceManagerService : IDeviceManager
                 Fingerprint = FingerprintOf(entry.PublicKeyBase64),
                 Platform = entry.Platform,
                 IsConnected = entry.IsConnected,
+                IsConnecting = _keeper?.IsDialing(entry.DeviceId) == true,
                 AutoAcceptTransfers = _trustStore.GetPeer(entry.DeviceId)?.AutoAcceptTransfers == true
             });
         }

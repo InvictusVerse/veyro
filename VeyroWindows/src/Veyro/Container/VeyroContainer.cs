@@ -31,6 +31,8 @@ public sealed class VeyroContainer
     public IWindowsBatterySource PcBatterySource { get; }
     public IWindowsNetworkSource PcNetworkSource { get; }
     public IWindowsWallpaperSource PcWallpaperSource { get; }
+    public SessionKeeper SessionKeeper { get; }
+    public IWindowsNetworkChangeSignal NetworkChangeSignal { get; }
     public DeviceStatusService DeviceStatus { get; }
     public WallpaperService Wallpaper { get; }
     public MessagingService Messaging { get; }
@@ -118,6 +120,17 @@ public sealed class VeyroContainer
             IdentityManager.DeriveLocalKey("presence-token"),
             IdentityManager.PublicKey.Span,
             controlPort: () => LinkServer.IsRunning ? LinkServer.Port : 0);
+        // ADR-040: dial a paired phone that is on the network but did not reconnect by itself.
+        // The dialled session runs in the listener's session loop, so "Pause sync" ends it too.
+        NetworkChangeSignal = new WindowsNetworkChangeSignal();
+        SessionKeeper = new SessionKeeper(
+            PeerSessions,
+            DiscoveryService,
+            TrustStore,
+            new PersistentSessionDialer(IdentityManager.DeviceId.Value, () => SettingsStore.Current.DeviceName, LinkServer, PeerSessions),
+            isEnabled: () => SettingsStore.Current.ReconnectAutomatically && LinkServer.IsRunning,
+            NetworkChangeSignal);
+        NetworkChangeSignal.Start();
 
         // Tray clicks arrive long after construction, once the main window exists.
         SystemTrayService = new SystemTrayService(
@@ -129,7 +142,7 @@ public sealed class VeyroContainer
         LoginStartup = new LoginStartupService();
         ThemeModeService = new AppThemeModeService();
         // Paired phones from the trust store, connected state from the live sessions.
-        DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService, PeerSessions);
+        DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService, PeerSessions, SessionKeeper);
         // ADR-034: sends over the phone's live session; dials only when there is none.
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
         // ADR-029: Bluetooth hands-free call audio (Windows 11); answers route through CallRouter.
@@ -140,7 +153,10 @@ public sealed class VeyroContainer
             NotificationMirror, Messaging, Calls, CallRouter,
             // Invoked on toast activation, long after construction has assigned the view model.
             openThread: (peerId, threadId) => MessagesViewModel!.RequestOpenThread(peerId, threadId),
-            DataDirectory);
+            DataDirectory,
+            // ADR-040: toasts name their phone; opening one shows that phone (UI thread).
+            phoneName: peerId => TrustStore.GetPeer(peerId)?.DisplayName,
+            showPhone: peerId => DeviceManager.Select(peerId));
         // ADR-036: incoming files are asked about one at a time, by dialog or actionable toast,
         // with a 60 s deadline that reaches the phone as "timeout", not "declined".
         // ADR-038: "Always accept from this phone" (pre-ticked) is saved in the trust store.

@@ -120,11 +120,12 @@ public sealed class CallsPageViewModel : BaseViewModel
         SetLoading(true);
         StatusText = string.Empty;
         try { await _calls.RequestCallLogAsync(peer); }
-        catch (TimeoutException) { StatusText = "The phone did not answer. Try again."; }
+        // ADR-040: a late answer from the previous phone does not speak for the one now shown.
+        catch (TimeoutException) { if (IsShown(peer)) StatusText = "The phone did not answer. Try again."; }
         catch (Exception error)
         {
             VeyroTrace.Error("Loading call log failed", error);
-            StatusText = "Could not load calls from the phone.";
+            if (IsShown(peer)) StatusText = "Could not load calls from the phone.";
         }
         finally { SetLoading(false); }
     }
@@ -173,6 +174,8 @@ public sealed class CallsPageViewModel : BaseViewModel
         }
         return false;
     }
+
+    private bool IsShown(string peerId) => string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase);
 
     private void OnChanged(CallChange change)
     {
