@@ -124,6 +124,7 @@ public static class LinkCapabilities
     public const int Messaging = 0x0800;
     public const int Calls = 0x1000;
     public const int Photos = 0x2000;
+    public const int Wallpaper = 0x4000;
 }
 
 public sealed record PhotoInfo(
@@ -259,6 +260,8 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(PhotoFetch), "photoFetch")]
 [JsonDerivedType(typeof(PhotoNew), "photoNew")]
 [JsonDerivedType(typeof(PhotoRemoved), "photoRemoved")]
+[JsonDerivedType(typeof(PcLock), "pcLock")]
+[JsonDerivedType(typeof(Wallpaper), "wallpaper")]
 public abstract record LinkMessage
 {
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
@@ -338,7 +341,22 @@ public abstract record LinkMessage
         [property: JsonPropertyName("charging")] bool? Charging = null,
         /// <summary>normal | vibrate | silent (phones only).</summary>
         [property: JsonPropertyName("ringer")] string? Ringer = null,
-        [property: JsonPropertyName("dnd")] bool? Dnd = null) : LinkMessage;
+        [property: JsonPropertyName("dnd")] bool? Dnd = null,
+        /// <summary>Wi-Fi signal 0..4, -1 off/disconnected (ADR-038).</summary>
+        [property: JsonPropertyName("wifi")] int? Wifi = null,
+        /// <summary>Strongest cellular signal 0..4, -1 no service.</summary>
+        [property: JsonPropertyName("cell")] int? Cell = null,
+        /// <summary>Carrier of the data SIM. User data: never log.</summary>
+        [property: JsonPropertyName("carrier")] string? Carrier = null,
+        [property: JsonPropertyName("bluetooth")] bool? Bluetooth = null,
+        [property: JsonPropertyName("mobileData")] bool? MobileData = null) : LinkMessage;
+
+    /// <summary>Phone to PC: lock this PC (Phone Link "Lock PC").</summary>
+    public sealed record PcLock : LinkMessage;
+
+    /// <summary>Either direction: sender's wallpaper, JPEG &lt;= 720 px, &lt;= 96 KiB, base64.</summary>
+    public sealed record Wallpaper(
+        [property: JsonPropertyName("jpeg")] string? Jpeg = null) : LinkMessage;
 
     // ── Companion: SMS (ADR-027), gated by LinkCapabilities.Messaging ─────────────────────
     // Pull model. Bodies, numbers and names are user data: never log them.

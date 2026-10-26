@@ -91,4 +91,7 @@ public enum class Capability(public val bit: Int) {
 
     /** Recent photos browsed on the PC, originals fetched on demand (ADR-034). */
     PHOTOS(0x2000),
+
+    /** Wallpaper exchanged so each side can draw the other device (ADR-038). */
+    WALLPAPER(0x4000),
 }

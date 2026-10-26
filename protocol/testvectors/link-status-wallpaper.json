@@ -1,0 +1,13 @@
+{
+  "description": "Extended device status, PC lock and wallpaper (ADR-038). Each 'json' is the LinkMessage payload as LinkJson encodes it (discriminator 't', nulls omitted). Both clients must decode each entry to the listed type and re-encode to semantically identical JSON.",
+  "vectors": [
+    {
+      "type": "devStatus",
+      "json": "{\"t\":\"devStatus\",\"battery\":57,\"charging\":false,\"ringer\":\"normal\",\"dnd\":false,\"wifi\":3,\"cell\":2,\"carrier\":\"Carrier A\",\"bluetooth\":true,\"mobileData\":false}"
+    },
+    { "type": "devStatus", "json": "{\"t\":\"devStatus\",\"wifi\":-1,\"cell\":-1}" },
+    { "type": "pcLock", "json": "{\"t\":\"pcLock\"}" },
+    { "type": "wallpaper", "json": "{\"t\":\"wallpaper\",\"jpeg\":\"/9j/4AAQSkZJRg==\"}" },
+    { "type": "wallpaper", "json": "{\"t\":\"wallpaper\"}" }
+  ]
+}

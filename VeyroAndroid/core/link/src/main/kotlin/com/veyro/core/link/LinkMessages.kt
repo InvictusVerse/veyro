@@ -411,7 +411,29 @@ public sealed interface LinkMessage {
         /** `normal` | `vibrate` | `silent` (phones only). */
         val ringer: String? = null,
         val dnd: Boolean? = null,
+        /** Wi-Fi signal 0..4, or -1 when Wi-Fi is off/disconnected (ADR-038). */
+        val wifi: Int? = null,
+        /** Strongest cellular signal 0..4, or -1 for no service. */
+        val cell: Int? = null,
+        /** Carrier name of the data SIM. User data: never log. */
+        val carrier: String? = null,
+        val bluetooth: Boolean? = null,
+        /** Mobile data in use for the internet connection. */
+        val mobileData: Boolean? = null,
     ) : LinkMessage
+
+    /** Phone to PC: lock the PC (Phone Link "Lock PC"). Gated by DEVICE_STATUS (ADR-038). */
+    @Serializable
+    @SerialName("pcLock")
+    public data object PcLock : LinkMessage
+
+    /**
+     * Either direction: the sender's wallpaper, sent on connect and when it changes.
+     * JPEG, longest side <= 720 px, <= 96 KiB, base64. Gated by WALLPAPER (0x4000).
+     */
+    @Serializable
+    @SerialName("wallpaper")
+    public data class Wallpaper(val jpeg: String? = null) : LinkMessage
 
     /** PC to phone. Each set field is a request; the phone applies what it is permitted to. */
     @Serializable
