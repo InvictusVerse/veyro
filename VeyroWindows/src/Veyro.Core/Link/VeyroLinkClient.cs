@@ -201,7 +201,10 @@ public sealed class VeyroLinkClient
             items.Select(item => new LinkItem(item.Index, item.RelativePath, item.Size, File.GetLastWriteTimeUtc(item.Path).Ticks, false)).ToList(),
             items.Sum(item => item.Size),
             _localName,
-            [TransferRoute.LanTcp.ToString().ToUpperInvariant()]);
+            // Wire name is "LAN_TCP" (04-PROTOCOL 7.1). "LanTcp".ToUpperInvariant() gave "LANTCP",
+            // which Android did not recognise: it answered with a WebSocket-only decision and
+            // no VTC1 endpoint ("Peer accepted without a complete VTC1 endpoint").
+            [RouteWireNames.LanTcp]);
         return new TransferPlan(transferId, items, offer);
     }
 

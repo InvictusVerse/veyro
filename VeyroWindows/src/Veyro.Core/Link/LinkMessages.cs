@@ -105,6 +105,13 @@ public sealed record LinkEnvelope
     [JsonPropertyName("payload")] public required LinkMessage Payload { get; init; }
 }
 
+/// <summary>Route names exactly as they appear on the wire (Kotlin <c>TransferRoute.name</c>).</summary>
+public static class RouteWireNames
+{
+    public const string LanTcp = "LAN_TCP";
+    public const string WifiDirect = "WIFI_DIRECT";
+}
+
 /// <summary>Bits for Hello/HelloAck <c>capabilities</c>. Mirrors Kotlin <c>Capability</c>.</summary>
 public static class LinkCapabilities
 {
