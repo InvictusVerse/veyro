@@ -5,12 +5,40 @@ import android.content.Intent
 import com.veyro.core.common.AppDispatchers
 import kotlinx.coroutines.flow.Flow
 
-/** What the background notification shows about the paired PC. */
+/**
+ * What the background notification shows about the kept PCs (multiple PCs). [peerDeviceId] and
+ * [peerName] name the PC the notification's Send files goes to; [connected] is true while at
+ * least one kept PC is connected.
+ */
 public data class BackgroundStatus(
     val peerDeviceId: String,
     val peerName: String,
     val connected: Boolean,
-)
+    /** Every kept PC connected right now. */
+    val connectedNames: List<String> = if (connected) listOf(peerName) else emptyList(),
+    /** Every kept PC not connected right now, being looked for. */
+    val lookingNames: List<String> = if (connected) emptyList() else listOf(peerName),
+) {
+    /** "Connected to Office PC", "Connected to 2 PCs", "Looking for Office PC". */
+    val title: String
+        get() = when {
+            connectedNames.size > 1 -> "Connected to ${connectedNames.size} PCs"
+            connectedNames.size == 1 -> "Connected to ${connectedNames.single()}"
+            lookingNames.size > 1 -> "Looking for ${lookingNames.size} PCs"
+            else -> "Looking for ${lookingNames.firstOrNull() ?: peerName}"
+        }
+
+    /** The names behind a count, and what is still being looked for. */
+    val text: String
+        get() = when {
+            connectedNames.size > 1 && lookingNames.isEmpty() -> connectedNames.joinToString(", ")
+            connectedNames.size > 1 -> connectedNames.joinToString(", ") + ". Looking for " + lookingNames.joinToString(", ")
+            connectedNames.size == 1 && lookingNames.isNotEmpty() -> "Looking for " + lookingNames.joinToString(", ")
+            connectedNames.size == 1 -> "Notifications, photos and files stay in sync."
+            lookingNames.size > 1 -> lookingNames.joinToString(", ") + ". Reconnects when they are on the same network."
+            else -> "Reconnects when your PC is on the same network."
+        }
+}
 
 /**
  * What [VeyroBackgroundService] and [VeyroBootReceiver] need from the app, implemented in `:app`

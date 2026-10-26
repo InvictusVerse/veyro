@@ -96,7 +96,7 @@ class SmsBridgeTest {
         val on = MutableStateFlow(enabled)
         val source = FakeSource()
         val sender = FakeSender()
-        SmsBridge(links, on, source, sender, backgroundScope).start()
+        SmsBridge(links.asLinkList(), on, source, sender, backgroundScope).start()
         runCurrent()
         return Rig(links, on, source, sender)
     }

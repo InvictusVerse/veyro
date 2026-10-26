@@ -104,8 +104,8 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = repo,
             networkMonitor = QuietNetwork,
-            pcStatus = MutableStateFlow(LinkMessage.DeviceStatus(battery = 80, charging = true)),
-            connectedPeerId = MutableStateFlow(laptop.deviceId.value),
+            pcStatus = MutableStateFlow(mapOf(laptop.deviceId.value to LinkMessage.DeviceStatus(battery = 80, charging = true))),
+            connectedPeerIds = MutableStateFlow(setOf(laptop.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office, laptop, trusted(3, "Old").copy(revoked = true))),
         )
 
@@ -122,14 +122,14 @@ class HomeViewModelTest {
     fun `toggle on a nearby device dials its discovered endpoints, and on the connected one disconnects`() {
         val office = trusted(1, "Office PC")
         val repo = FakeRepository().apply { peers.value = listOf(seen(office)) }
-        val connected = MutableStateFlow<String?>(null)
+        val connected = MutableStateFlow<Set<String>>(emptySet())
         val answer = CompletableDeferred<Boolean>()
         var dialled: List<Endpoint>? = null
         var disconnects = 0
         val vm = HomeViewModel(
             deviceRepository = repo,
             networkMonitor = QuietNetwork,
-            connectedPeerId = connected,
+            connectedPeerIds = connected,
             trustedPeers = MutableStateFlow(listOf(office)),
             connectPeer = { _, _, endpoints ->
                 dialled = endpoints
@@ -143,7 +143,7 @@ class HomeViewModelTest {
         assertEquals(ConnectionStatus.CONNECTING, vm.state.value.pairedDevices.single().status)
 
         answer.complete(true)
-        connected.value = office.deviceId.value
+        connected.value = setOf(office.deviceId.value)
         assertEquals(ConnectionStatus.CONNECTED, vm.state.value.pairedDevices.single().status)
 
         vm.toggleConnection(office.deviceId)
@@ -196,10 +196,10 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
-            pcStatus = MutableStateFlow(LinkMessage.DeviceStatus(battery = 64, charging = true, wifi = 3)),
-            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            pcStatus = MutableStateFlow(mapOf(office.deviceId.value to LinkMessage.DeviceStatus(battery = 64, charging = true, wifi = 3))),
+            connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office)),
-            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.FILE_TRANSFER, Capability.DEVICE_STATUS)),
+            peerCapabilities = MutableStateFlow(mapOf(office.deviceId.value to Capabilities.of(Capability.FILE_TRANSFER, Capability.DEVICE_STATUS))),
         )
 
         val pc = vm.state.value.selectedPc!!
@@ -219,9 +219,9 @@ class HomeViewModelTest {
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
             // A stale status from before the disconnect must not be shown for it.
-            pcStatus = MutableStateFlow(LinkMessage.DeviceStatus(battery = 64, wifi = 3)),
+            pcStatus = MutableStateFlow(mapOf(office.deviceId.value to LinkMessage.DeviceStatus(battery = 64, wifi = 3))),
             trustedPeers = MutableStateFlow(listOf(office)),
-            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.DEVICE_STATUS)),
+            peerCapabilities = MutableStateFlow(mapOf(office.deviceId.value to Capabilities.of(Capability.DEVICE_STATUS))),
         )
 
         val pc = vm.state.value.selectedPc!!
@@ -239,9 +239,9 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
-            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office)),
-            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.FILE_TRANSFER)),
+            peerCapabilities = MutableStateFlow(mapOf(office.deviceId.value to Capabilities.of(Capability.FILE_TRANSFER))),
             lockPc = { error("must not be called") },
         )
         assertFalse(vm.state.value.canLockPc)
@@ -256,9 +256,9 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
-            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office)),
-            peerCapabilities = MutableStateFlow(Capabilities.of(Capability.DEVICE_STATUS)),
+            peerCapabilities = MutableStateFlow(mapOf(office.deviceId.value to Capabilities.of(Capability.DEVICE_STATUS))),
             lockPc = {
                 locks++
                 true
@@ -279,7 +279,7 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
-            connectedPeerId = MutableStateFlow(office.deviceId.value),
+            connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office, laptop)),
             pcWallpapers = MutableStateFlow(mapOf(office.deviceId.value to officeJpeg)),
         )
@@ -290,6 +290,88 @@ class HomeViewModelTest {
         vm.selectPc(laptop.deviceId)
         assertEquals("Laptop", vm.state.value.selectedPc?.name)
         assertNull("no wallpaper: the gradient fallback", vm.state.value.selectedWallpaper)
+    }
+
+    // ── Multiple PCs ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `two connected PCs each show their own live state and the switcher drives the selected one`() {
+        val office = trusted(1, "Office PC")
+        val laptop = trusted(2, "Laptop")
+        val laptopJpeg = byteArrayOf(2)
+        val selected = mutableListOf<String>()
+        val commands = mutableListOf<Pair<String, LinkMessage.MediaCommand>>()
+        val disconnected = mutableListOf<String>()
+        val locked = mutableListOf<String>()
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value, laptop.deviceId.value)),
+            pcStatus = MutableStateFlow(
+                mapOf(
+                    office.deviceId.value to LinkMessage.DeviceStatus(battery = 90),
+                    laptop.deviceId.value to LinkMessage.DeviceStatus(battery = 15, wifi = 2),
+                ),
+            ),
+            pcMedia = MutableStateFlow(mapOf(laptop.deviceId.value to LinkMessage.MediaState(sessions = emptyList(), volume = 33))),
+            peerCapabilities = MutableStateFlow(
+                mapOf(
+                    office.deviceId.value to Capabilities.of(Capability.FILE_TRANSFER),
+                    laptop.deviceId.value to Capabilities.of(Capability.DEVICE_STATUS),
+                ),
+            ),
+            pcWallpapers = MutableStateFlow(mapOf(laptop.deviceId.value to laptopJpeg)),
+            trustedPeers = MutableStateFlow(listOf(office, laptop)),
+            sendMediaCommand = { id, command -> commands += id to command; true },
+            disconnectPeer = { disconnected += it },
+            lockPc = { locked += it; true },
+            onPcSelected = { selected += it },
+        )
+
+        val cards = vm.state.value.pairedDevices
+        assertEquals(listOf(ConnectionStatus.CONNECTED, ConnectionStatus.CONNECTED), cards.map { it.status })
+        assertEquals(90, cards.first { it.name == "Office PC" }.battery)
+        assertEquals(15, cards.first { it.name == "Laptop" }.battery)
+        assertTrue("two connected PCs: Send files asks where", vm.state.value.sendNeedsChoice)
+        assertEquals(2, vm.state.value.connectedDevices.size)
+
+        // Office is selected first and cannot be locked (no DEVICE_STATUS) nor shows media.
+        assertEquals("Office PC", vm.state.value.selectedPc?.name)
+        assertFalse(vm.state.value.canLockPc)
+        assertNull(vm.state.value.pcMedia)
+
+        vm.selectPc(laptop.deviceId)
+        assertEquals(listOf(laptop.deviceId.value), selected)
+        assertEquals(2, vm.state.value.selectedPc?.wifi)
+        assertTrue(vm.state.value.selectedWallpaper === laptopJpeg)
+        assertTrue(vm.state.value.canLockPc)
+        assertEquals(33, vm.state.value.pcMedia?.volume)
+
+        vm.lockSelectedPc()
+        assertEquals(listOf(laptop.deviceId.value), locked)
+        vm.mediaCommand(LinkMessage.MediaCommand.VOLUME, value = 50)
+        assertEquals(laptop.deviceId.value, commands.single().first)
+
+        // Disconnecting one PC from its card names that PC only.
+        vm.toggleConnection(office.deviceId)
+        assertEquals(listOf(office.deviceId.value), disconnected)
+    }
+
+    @Test
+    fun `with one PC connected Send files goes straight to it even if an offline PC is selected`() {
+        val office = trusted(1, "Office PC")
+        val laptop = trusted(2, "Laptop")
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value)),
+            trustedPeers = MutableStateFlow(listOf(office, laptop)),
+        )
+        assertFalse(vm.state.value.sendNeedsChoice)
+        assertEquals(office.deviceId, vm.defaultSendTarget())
+
+        vm.selectPc(laptop.deviceId)
+        assertEquals("the one connected PC, not the offline selection", office.deviceId, vm.defaultSendTarget())
     }
 
     @Test

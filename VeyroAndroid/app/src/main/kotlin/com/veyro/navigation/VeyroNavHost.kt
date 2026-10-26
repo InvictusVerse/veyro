@@ -65,8 +65,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 @Composable
 public fun VeyroNavHost(
     viewModelFactory: ViewModelProvider.Factory,
-    /** Opens the system file picker and sends what is picked to this device id (null: the connected PC). */
-    onSendFiles: (deviceId: String?) -> Unit,
+    /** Opens the system file picker and sends what is picked to these device ids (empty: the selected PC). */
+    onSendFiles: (deviceIds: List<String>) -> Unit,
     transferCoordinator: TransferCoordinator? = null,
     modifier: Modifier = Modifier,
     /** Runtime permissions need the Activity, like the picker (ADR-027). */
@@ -154,7 +154,7 @@ public fun VeyroNavHost(
                     devicesViewModel = devicesViewModel,
                     settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
                     onNavigateBack = { navController.navigateUp() },
-                    onSendFiles = { onSendFiles(route.deviceId) },
+                    onSendFiles = { onSendFiles(listOf(route.deviceId)) },
                     onOpenMediaSettings = { navController.navigate(VeyroDestination.DeviceMedia) },
                     onOpenMessagesSettings = { navController.navigate(VeyroDestination.DeviceMessages) },
                     onRequestMessagingPermissions = onRequestMessagingPermissions,

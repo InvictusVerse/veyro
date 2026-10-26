@@ -100,17 +100,17 @@ public data class HomeUiState(
      */
     val searchedLongEnough: Boolean = false,
 
-    /** Device id of the PC the live session is with, if any. */
-    val connectedPeerId: DeviceId? = null,
+    /** Device ids of the PCs with a live session (multiple PCs). */
+    val connectedPeerIds: Set<DeviceId> = emptySet(),
 
-    /** The connected PC's media sessions (ADR-026). Null when no capable PC is connected. */
-    val pcMedia: LinkMessage.MediaState? = null,
+    /** Each connected PC's media sessions (ADR-026), by device id string. */
+    val pcMediaByPeer: Map<String, LinkMessage.MediaState> = emptyMap(),
 
-    /** The connected PC's own status (battery, Wi-Fi), when it reports one. */
-    val pcStatus: LinkMessage.DeviceStatus? = null,
+    /** Each connected PC's own status (battery, Wi-Fi), by device id string. */
+    val pcStatuses: Map<String, LinkMessage.DeviceStatus> = emptyMap(),
 
-    /** What the connected PC advertised in its hello; NONE while disconnected. */
-    val peerCapabilities: Capabilities = Capabilities.NONE,
+    /** What each connected PC advertised in its hello, by device id string. */
+    val peerCapabilities: Map<String, Capabilities> = emptyMap(),
 
     /** The last wallpaper each PC sent (JPEG), by device id string (ADR-038). */
     val pcWallpapers: Map<String, ByteArray> = emptyMap(),
@@ -133,13 +133,17 @@ public data class HomeUiState(
     /** A one-line confirmation for the snackbar ("Locking Office PC"); cleared once shown. */
     val message: String? = null,
 ) {
+    /** The selected PC's media, which the media and volume cards show; null when it shares none. */
+    val pcMedia: LinkMessage.MediaState?
+        get() = selectedPc?.takeIf { it.isConnected }?.let { pcMediaByPeer[it.deviceId.value] }
+
     /** The PC session the media card shows: the playing one, else the first. */
     val pcMediaSession: LinkMessage.MediaSessionInfo?
         get() = pcMedia?.sessions?.let { sessions -> sessions.firstOrNull { it.playing } ?: sessions.firstOrNull() }
 
-    /** Status line extras for [device], present only for the connected PC. */
+    /** Status line extras for [device], present only while that PC is connected. */
     public fun statusFor(device: PeerDevice): LinkMessage.DeviceStatus? =
-        pcStatus?.takeIf { connectedPeerId != null && device.deviceId == connectedPeerId }
+        pcStatuses[device.deviceId.value]?.takeIf { device.deviceId in connectedPeerIds }
 
     val trustedDevices: List<PeerDevice>
         get() = devices.filter { it.trust == TrustState.TRUSTED }
@@ -155,7 +159,8 @@ public data class HomeUiState(
     val pairedDevices: List<PairedDeviceUi>
         get() = pairedPeers
             .map { peer ->
-                val connected = connectedPeerId == peer.deviceId
+                val connected = peer.deviceId in connectedPeerIds
+                val pcStatus = if (connected) pcStatuses[peer.deviceId.value] else null
                 val status = when {
                     connected -> ConnectionStatus.CONNECTED
                     connectingId == peer.deviceId -> ConnectionStatus.CONNECTING
@@ -177,11 +182,11 @@ public data class HomeUiState(
             }
             .sortedBy { if (it.isConnected) 0 else 1 }
 
-    /** The connected device's card, if any, for the quick actions. */
-    val connectedDevice: PairedDeviceUi?
-        get() = pairedDevices.firstOrNull { it.isConnected }
+    /** Every connected PC's card, for "Send to" (multiple PCs). */
+    val connectedDevices: List<PairedDeviceUi>
+        get() = pairedDevices.filter { it.isConnected }
 
-    /** The PC Home is about: the one picked in the switcher, else the connected one, else the first. */
+    /** The PC Home is about: the one picked in the switcher, else a connected one, else the first. */
     val selectedPc: PairedDeviceUi?
         get() {
             val all = pairedDevices
@@ -192,9 +197,16 @@ public data class HomeUiState(
     val selectedWallpaper: ByteArray?
         get() = selectedPc?.let { pcWallpapers[it.deviceId.value] }
 
-    /** Lock PC needs the live session with that PC, and the PC must understand `pcLock`. */
+    /** Lock PC needs the live session with that PC, and that PC must understand `pcLock`. */
     val canLockPc: Boolean
-        get() = selectedPc?.isConnected == true && Capability.DEVICE_STATUS in peerCapabilities
+        get() {
+            val pc = selectedPc ?: return false
+            return pc.isConnected && Capability.DEVICE_STATUS in (peerCapabilities[pc.deviceId.value] ?: Capabilities.NONE)
+        }
+
+    /** Send files asks "Send to" only when more than one PC is connected. */
+    val sendNeedsChoice: Boolean
+        get() = connectedDevices.size > 1
 
     /** Send files works for any paired PC: the coordinator dials it if it is not connected. */
     val canSendFiles: Boolean

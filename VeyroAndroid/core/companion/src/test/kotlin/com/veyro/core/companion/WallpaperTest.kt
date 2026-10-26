@@ -112,7 +112,7 @@ class WallpaperTest {
         val on = MutableStateFlow(enabled)
         val source = FakeSource()
         val cache = FakeCache().apply { initial = cached }
-        val bridge = WallpaperBridge(links, on, source, cache, backgroundScope)
+        val bridge = WallpaperBridge(links.asLinkList(), on, source, cache, backgroundScope)
         bridge.start()
         runCurrent()
         return Rig(bridge, links, on, source, cache)

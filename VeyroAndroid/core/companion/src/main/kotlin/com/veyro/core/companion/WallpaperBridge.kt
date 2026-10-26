@@ -110,7 +110,8 @@ public object WallpaperEncoding {
  * Wallpapers are user data: their bytes are never logged.
  */
 public class WallpaperBridge(
-    private val links: Flow<CompanionLink?>,
+    /** Every live paired session (multiple PCs). */
+    private val links: Flow<List<CompanionLink>>,
     private val enabled: Flow<Boolean>,
     private val source: WallpaperSource,
     private val cache: PeerWallpaperCache,
@@ -143,7 +144,9 @@ public class WallpaperBridge(
         runCatching { cache.loadAll() }
             .onSuccess { cached -> _peerWallpapers.update { cached.filterValues(WallpaperEncoding::acceptsIncoming) + it } }
             .onFailure { VeyroLog.w(TAG) { "Wallpaper cache unreadable: ${it.javaClass.simpleName}" } }
-        links.distinctUntilChanged().collectLatest { link -> if (link != null) serve(link) }
+        // One session per connected PC: the phone's wallpaper goes to each capable PC, and each
+        // PC's wallpaper is kept under its own id.
+        links.forEachLink { link -> serve(link) }
     }
 
     private suspend fun serve(link: CompanionLink) {

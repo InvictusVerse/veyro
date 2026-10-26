@@ -39,28 +39,31 @@ import kotlinx.coroutines.launch
 public class HomeViewModel(
     private val deviceRepository: DeviceRepository,
     private val networkMonitor: NetworkMonitor,
-    /** The connected PC's media (ADR-026); null when none. */
-    pcMedia: Flow<LinkMessage.MediaState?> = flowOf(null),
-    /** The connected PC's own status; null when none. */
-    pcStatus: Flow<LinkMessage.DeviceStatus?> = flowOf(null),
-    /** Device id of the PC the live session is with. */
-    connectedPeerId: Flow<String?> = flowOf(null),
-    private val sendMediaCommand: suspend (LinkMessage.MediaCommand) -> Boolean = { false },
+    /** Each connected PC's media (ADR-026), by device id. */
+    pcMedia: Flow<Map<String, LinkMessage.MediaState>> = flowOf(emptyMap()),
+    /** Each connected PC's own status, by device id. */
+    pcStatus: Flow<Map<String, LinkMessage.DeviceStatus>> = flowOf(emptyMap()),
+    /** Device ids of the PCs with a live session (multiple PCs). */
+    connectedPeerIds: Flow<Set<String>> = flowOf(emptySet()),
+    /** Sends a media command to the PC with this device id; true if it was sent. */
+    private val sendMediaCommand: suspend (deviceId: String, LinkMessage.MediaCommand) -> Boolean = { _, _ -> false },
     /** Paired devices, for the device cards and the PC switcher. */
     trustedPeers: Flow<List<TrustedPeer>> = flowOf(emptyList()),
     /** Opens a session with a paired device at the given endpoints; true on success. */
     private val connectPeer: suspend (deviceId: String, name: String, endpoints: List<Endpoint>) -> Boolean =
         { _, _, _ -> false },
-    /** Closes the live session. */
-    private val disconnectPeer: () -> Unit = {},
-    /** The capabilities the connected PC advertised (NONE while disconnected). */
-    peerCapabilities: Flow<Capabilities> = flowOf(Capabilities.NONE),
+    /** Closes the live session with this PC only; other PCs stay connected. */
+    private val disconnectPeer: (deviceId: String) -> Unit = {},
+    /** What each connected PC advertised, by device id. */
+    peerCapabilities: Flow<Map<String, Capabilities>> = flowOf(emptyMap()),
     /** The last wallpaper each PC sent, by device id (ADR-038). */
     pcWallpapers: Flow<Map<String, ByteArray>> = flowOf(emptyMap()),
     /** Transfer history, newest first, for the Recent card. */
     history: Flow<List<Transfer>> = flowOf(emptyList()),
-    /** Sends `pcLock` over the live session; true if it was sent. */
-    private val lockPc: suspend () -> Boolean = { false },
+    /** Sends `pcLock` over that PC's live session; true if it was sent. */
+    private val lockPc: suspend (deviceId: String) -> Boolean = { false },
+    /** The switcher's choice, so the connection layer's selected PC follows Home. */
+    private val onPcSelected: (deviceId: String) -> Unit = {},
     /** Drops one entry from the transfer history. */
     private val removeHistory: suspend (transferId: String) -> Unit = {},
     /** A small preview of a received image, read off the main thread by `:app`. */
@@ -96,15 +99,20 @@ public class HomeViewModel(
             .launchIn(viewModelScope)
 
         pcMedia
-            .onEach { media -> _state.update { it.copy(pcMedia = media) } }
+            .catch { emit(emptyMap()) }
+            .onEach { media -> _state.update { it.copy(pcMediaByPeer = media) } }
             .launchIn(viewModelScope)
 
         pcStatus
-            .onEach { status -> _state.update { it.copy(pcStatus = status) } }
+            .catch { emit(emptyMap()) }
+            .onEach { statuses -> _state.update { it.copy(pcStatuses = statuses) } }
             .launchIn(viewModelScope)
 
-        connectedPeerId
-            .onEach { id -> _state.update { it.copy(connectedPeerId = DeviceId.parseOrNull(id)) } }
+        connectedPeerIds
+            .catch { emit(emptySet()) }
+            .onEach { ids ->
+                _state.update { it.copy(connectedPeerIds = ids.mapNotNull(DeviceId::parseOrNull).toSet()) }
+            }
             .launchIn(viewModelScope)
 
         trustedPeers
@@ -113,7 +121,7 @@ public class HomeViewModel(
             .launchIn(viewModelScope)
 
         peerCapabilities
-            .catch { emit(Capabilities.NONE) }
+            .catch { emit(emptyMap()) }
             .onEach { caps -> _state.update { it.copy(peerCapabilities = caps) } }
             .launchIn(viewModelScope)
 
@@ -128,19 +136,20 @@ public class HomeViewModel(
             .launchIn(viewModelScope)
     }
 
-    /** The PC switcher on Home. */
+    /** The PC switcher on Home. The hero, Lock PC, media and Send files follow it. */
     public fun selectPc(deviceId: DeviceId) {
         _state.update { it.copy(selectedId = deviceId) }
+        onPcSelected(deviceId.value)
     }
 
     /**
-     * The card's sync button: disconnects the connected device, otherwise dials [deviceId] at the
-     * endpoints discovery currently reports for it.
+     * The card's sync button: disconnects [deviceId] if it is connected (other PCs stay
+     * connected), otherwise dials it at the endpoints discovery currently reports for it.
      */
     public fun toggleConnection(deviceId: DeviceId) {
         val current = _state.value
-        if (current.connectedPeerId == deviceId) {
-            disconnectPeer()
+        if (deviceId in current.connectedPeerIds) {
+            disconnectPeer(deviceId.value)
             return
         }
         if (current.connectingId != null) return
@@ -170,7 +179,7 @@ public class HomeViewModel(
         if (!current.canLockPc) return
         viewModelScope.launch {
             val sent = try {
-                lockPc()
+                lockPc(pc.deviceId.value)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -193,11 +202,24 @@ public class HomeViewModel(
         _state.update { it.copy(message = null) }
     }
 
-    /** Drives the connected PC's media session [id] (ADR-026). Fire and forget. */
+    /** Drives the selected PC's media session [id] (ADR-026). Fire and forget. */
     public fun mediaCommand(action: String, id: String? = null, value: Long? = null) {
+        val pc = _state.value.selectedPc?.takeIf { it.isConnected } ?: return
         viewModelScope.launch {
-            sendMediaCommand(LinkMessage.MediaCommand(action = action, id = id, value = value))
+            sendMediaCommand(pc.deviceId.value, LinkMessage.MediaCommand(action = action, id = id, value = value))
         }
+    }
+
+    /**
+     * What Send files sends to when no question is needed: the selected PC if it is connected,
+     * else the one connected PC, else the selected (possibly offline) PC, which the coordinator
+     * dials. Null when nothing is paired.
+     */
+    public fun defaultSendTarget(): DeviceId? {
+        val current = _state.value
+        val selected = current.selectedPc ?: return null
+        if (selected.isConnected) return selected.deviceId
+        return current.connectedDevices.singleOrNull()?.deviceId ?: selected.deviceId
     }
 
     /** Opens the discovery window. Safe to call repeatedly; the second call is a no-op. */

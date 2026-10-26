@@ -6,7 +6,6 @@ import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -18,9 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -63,7 +61,8 @@ public interface DeviceController {
  *    [RING_TIMEOUT_MS]. The resulting status is always sent back after a `devControl`.
  */
 public class DeviceStatusPublisher(
-    private val links: Flow<CompanionLink?>,
+    /** Every live paired session (multiple PCs). */
+    private val links: Flow<List<CompanionLink>>,
     private val controlAllowed: Flow<Boolean>,
     private val source: DeviceStatusSource,
     private val controller: DeviceController,
@@ -84,13 +83,16 @@ public class DeviceStatusPublisher(
         private val RINGER_MODES = setOf(RINGER_NORMAL, RINGER_VIBRATE, RINGER_SILENT)
     }
 
-    private val _peerStatus = MutableStateFlow<LinkMessage.DeviceStatus?>(null)
+    private val _peerStatus = MutableStateFlow<Map<String, LinkMessage.DeviceStatus>>(emptyMap())
 
-    /** The connected PC's status, or null when no capable PC is connected. */
-    public val peerStatus: StateFlow<LinkMessage.DeviceStatus?> = _peerStatus.asStateFlow()
+    /** Each connected capable PC's own status, by device id. A PC that left is absent. */
+    public val peerStatus: StateFlow<Map<String, LinkMessage.DeviceStatus>> = _peerStatus.asStateFlow()
 
-    private val sendLock = Mutex()
-    private var lastSent: LinkMessage.DeviceStatus? = null
+    /** One PC's session: what it was last sent, so each PC gets every change exactly once. */
+    private class Peer {
+        val sendLock = Mutex()
+        var lastSent: LinkMessage.DeviceStatus? = null
+    }
 
     private val ringLock = Mutex()
     private var ringTimeout: Job? = null
@@ -101,26 +103,27 @@ public class DeviceStatusPublisher(
     @Synchronized
     public fun start(): Job = job?.takeIf { it.isActive } ?: scope.launch { run() }.also { job = it }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun run() {
-        links
-            .flatMapLatest { link ->
-                link?.peerCapabilities?.map { caps ->
-                    link.takeIf { Capability.DEVICE_STATUS in caps }
-                } ?: flowOf(null)
-            }
-            .distinctUntilChanged()
-            .collectLatest { link -> if (link != null) serve(link) }
+        // One session per connected PC: this phone's status goes to every capable PC, each PC's
+        // status is kept under its id, and a devControl is answered on the PC that sent it.
+        links.forEachLink { link ->
+            link.peerCapabilities
+                .map { Capability.DEVICE_STATUS in it }
+                .distinctUntilChanged()
+                .collectLatest { capable -> if (capable) serve(link) }
+        }
     }
 
     private suspend fun serve(link: CompanionLink) {
+        val key = link.peerKey
+        val peer = Peer()
         try {
             coroutineScope {
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.DeviceStatus -> _peerStatus.value = message
-                            is LinkMessage.DeviceControl -> handleControl(link, message)
+                            is LinkMessage.DeviceStatus -> _peerStatus.update { it + (key to message) }
+                            is LinkMessage.DeviceControl -> handleControl(link, peer, message)
                             else -> Unit
                         }
                     }
@@ -130,29 +133,28 @@ public class DeviceStatusPublisher(
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     source.changes.collect { signals.trySend(Unit) }
                 }
-                publish(link, force = true)
-                for (signal in signals) publish(link, force = false)
+                publish(link, peer, force = true)
+                for (signal in signals) publish(link, peer, force = false)
             }
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
             VeyroLog.w(TAG) { "Status session ended: ${t.javaClass.simpleName}" }
         } finally {
-            _peerStatus.value = null
-            sendLock.withLock { lastSent = null }
+            _peerStatus.update { it - key }
         }
     }
 
-    private suspend fun publish(link: CompanionLink, force: Boolean) {
-        sendLock.withLock {
+    private suspend fun publish(link: CompanionLink, peer: Peer, force: Boolean) {
+        peer.sendLock.withLock {
             val status = source.current()
-            if (!force && status == lastSent) return
+            if (!force && status == peer.lastSent) return
             link.send(status)
-            lastSent = status
+            peer.lastSent = status
         }
     }
 
-    private suspend fun handleControl(link: CompanionLink, control: LinkMessage.DeviceControl) {
+    private suspend fun handleControl(link: CompanionLink, peer: Peer, control: LinkMessage.DeviceControl) {
         try {
             if (!controlAllowed.first()) {
                 VeyroLog.i(TAG) { "Ignored devControl: not allowed in Settings" }
@@ -182,8 +184,9 @@ public class DeviceStatusPublisher(
         } catch (t: Throwable) {
             VeyroLog.w(TAG) { "devControl failed: ${t.javaClass.simpleName}" }
         }
-        // The PC's toggles follow what actually happened, applied or not.
-        publish(link, force = true)
+        // The PC's toggles follow what actually happened, applied or not. Other PCs hear of a
+        // ringer or DND change through the store's change signal, like any other change.
+        publish(link, peer, force = true)
     }
 
     private suspend fun startRing(fromName: String?) {

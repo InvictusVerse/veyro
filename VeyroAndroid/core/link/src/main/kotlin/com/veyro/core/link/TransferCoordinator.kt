@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -339,8 +340,9 @@ public class TransferCoordinator(
         peerName: String,
     ): SessionResolution {
         // 1. Reuse a valid, connected, authenticated session for the exact target device ID
-        val current = connectionManager.activeConnection.value
-        if (current != null && current.isConnected && current.peerDeviceId == peerDeviceId.value) {
+        // (with several PCs connected, the one for this peer, whichever PC is selected on Home).
+        val current = connectionManager.connectionFor(peerDeviceId.value)
+        if (current != null) {
             VeyroLog.i(TAG) { "[$transferId] Reusing active authenticated session with $peerName" }
             return SessionResolution.Ready(current)
         }
@@ -379,9 +381,10 @@ public class TransferCoordinator(
         }
 
         val session = withTimeoutOrNull(CONNECT_WAIT_MS) {
-            connectionManager.activeConnection.filterNotNull().first {
-                it.isConnected && (it.peerDeviceId == null || it.peerDeviceId == peerDeviceId.value)
-            }
+            connectionManager.connections
+                .map { it[peerDeviceId.value] }
+                .filterNotNull()
+                .first { it.isConnected }
         } ?: run {
             VeyroLog.w(TAG) { "[$transferId] Timed out waiting for active session with $peerName" }
             return SessionResolution.Failed("$peerName did not answer")

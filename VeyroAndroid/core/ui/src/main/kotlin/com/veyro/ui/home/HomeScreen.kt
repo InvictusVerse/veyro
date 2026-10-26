@@ -8,12 +8,20 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalIconButton
@@ -66,8 +74,8 @@ public fun HomeScreen(
     onOpenSettings: () -> Unit,
     onPcSettings: (DeviceId) -> Unit,
     onAddDevice: () -> Unit,
-    /** Opens the system file picker and sends the result to this PC, with no screen between. */
-    onSendFiles: (DeviceId) -> Unit,
+    /** Opens the system file picker and sends the result to these PCs, with no screen between. */
+    onSendFiles: (List<DeviceId>) -> Unit,
     onOpenHistory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -96,6 +104,7 @@ public fun HomeScreen(
     }
 
     var refreshing by rememberSaveable { mutableStateOf(false) }
+    var askSendTo by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(refreshing) {
         if (refreshing) {
             delay(1_500)
@@ -171,7 +180,14 @@ public fun HomeScreen(
                                 label = "Send files",
                                 icon = VeyroIcons.Upload,
                                 enabled = state.canSendFiles,
-                                onClick = { onSendFiles(pc.deviceId) },
+                                onClick = {
+                                    // Several PCs connected: ask which. Otherwise straight to the one.
+                                    if (state.sendNeedsChoice) {
+                                        askSendTo = true
+                                    } else {
+                                        viewModel.defaultSendTarget()?.let { onSendFiles(listOf(it)) }
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -209,7 +225,7 @@ public fun HomeScreen(
                     item(key = "pc_volume") {
                         val muted = state.pcMedia?.muted == true
                         PcVolumeCard(
-                            pcName = state.connectedDevice?.name ?: "PC",
+                            pcName = state.selectedPc?.name ?: "PC",
                             volume = volume,
                             muted = muted,
                             onVolumeChange = { viewModel.mediaCommand(LinkMessage.MediaCommand.VOLUME, null, it.toLong()) },
@@ -227,6 +243,69 @@ public fun HomeScreen(
                 .align(Alignment.BottomCenter)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         )
+    }
+
+    if (askSendTo) {
+        SendToDialog(
+            connected = state.connectedDevices,
+            preselected = state.selectedPc?.takeIf { it.isConnected }?.deviceId,
+            onDismiss = { askSendTo = false },
+            onConfirm = { targets ->
+                askSendTo = false
+                if (targets.isNotEmpty()) onSendFiles(targets)
+            },
+        )
+    }
+}
+
+/**
+ * "Send to", shown before the file picker when more than one PC is connected (multiple PCs).
+ * The selected PC is preselected; "All connected" sends the same files to every connected PC.
+ */
+@Composable
+private fun SendToDialog(
+    connected: List<PairedDeviceUi>,
+    preselected: DeviceId?,
+    onDismiss: () -> Unit,
+    onConfirm: (List<DeviceId>) -> Unit,
+) {
+    // Null means "All connected".
+    var choice by rememberSaveable { mutableStateOf(preselected?.value ?: connected.firstOrNull()?.deviceId?.value) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Send to") },
+        text = {
+            Column(Modifier.selectableGroup()) {
+                connected.forEach { pc ->
+                    SendToOption(label = pc.name, selected = choice == pc.deviceId.value) { choice = pc.deviceId.value }
+                }
+                SendToOption(label = "All connected (${connected.size})", selected = choice == null) { choice = null }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val id = choice
+                onConfirm(if (id == null) connected.map { it.deviceId } else listOfNotNull(connected.firstOrNull { it.deviceId.value == id }?.deviceId))
+            }) { Text("Choose files") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun SendToOption(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton)
+            .padding(horizontal = 4.dp),
+    ) {
+        // The row carries the semantics; the button is decorative.
+        RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(12.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

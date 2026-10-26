@@ -7,7 +7,6 @@ import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -18,8 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -86,7 +83,8 @@ public fun interface PhotoSender {
  * data: nothing here logs them, only counts.
  */
 public class PhotoBridge(
-    private val links: Flow<CompanionLink?>,
+    /** Every live paired session (multiple PCs). */
+    private val links: Flow<List<CompanionLink>>,
     private val enabled: Flow<Boolean>,
     private val source: PhotoSource,
     private val sender: PhotoSender,
@@ -111,24 +109,21 @@ public class PhotoBridge(
         private const val PENDING_FETCHES = 16
     }
 
-    /** Tracks [enabled] for per-request checks; written only by [serve]. */
-    private val on = MutableStateFlow(false)
-
     private var job: Job? = null
 
     /** Starts observing. Idempotent; returns the running job. */
     @Synchronized
     public fun start(): Job = job?.takeIf { it.isActive } ?: scope.launch { run() }.also { job = it }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun run() {
-        links
-            .flatMapLatest { link ->
-                link?.peerCapabilities?.map { caps -> link.takeIf { Capability.PHOTOS in caps } }
-                    ?: flowOf(null)
-            }
-            .distinctUntilChanged()
-            .collectLatest { link -> if (link != null) serve(link) }
+        // One session per connected PC: new and removed photos are pushed to every capable PC;
+        // lists, thumbnails and originals go back to the PC that asked, on its own session.
+        links.forEachLink { link ->
+            link.peerCapabilities
+                .map { Capability.PHOTOS in it }
+                .distinctUntilChanged()
+                .collectLatest { capable -> if (capable) serve(link) }
+        }
     }
 
     /** What the PC has been told exists, so removals can be reported. One per session. */
@@ -138,20 +133,24 @@ public class PhotoBridge(
 
         /** Highest id the PC has been told about; null until the store was first readable. */
         var mark: Long? = null
+
+        /** Tracks [enabled] for this session's per-request checks; written only by [serve]. */
+        val on = MutableStateFlow(false)
     }
 
-    private fun available(): Boolean = on.value && source.canRead()
+    private fun available(known: Known): Boolean = known.on.value && source.canRead()
 
     private suspend fun serve(link: CompanionLink) {
         try {
             coroutineScope {
+                val known = Known()
+                val on = known.on
                 on.value = enabled.first()
                 launch { enabled.collect { on.value = it } }
-                val known = Known()
                 val thumbs = Channel<LinkMessage.PhotoThumbRequest>(PENDING_THUMB_REQUESTS, BufferOverflow.DROP_OLDEST)
                 val fetches = Channel<LinkMessage.PhotoFetch>(PENDING_FETCHES, BufferOverflow.DROP_OLDEST)
-                launch { for (request in thumbs) serveThumbs(link, request) }
-                launch { for (request in fetches) fetch(link, request) }
+                launch { for (request in thumbs) serveThumbs(link, known, request) }
+                launch { for (request in fetches) fetch(link, known, request) }
                 launch {
                     // Never blocks: the session's incoming buffer drops what a slow collector misses.
                     link.incoming.collect { message ->
@@ -170,13 +169,11 @@ public class PhotoBridge(
         } catch (t: Throwable) {
             // Usually the socket closing under a send. The next session starts afresh.
             VeyroLog.w(TAG) { "Photo session ended: ${t.javaClass.simpleName}" }
-        } finally {
-            on.value = false
         }
     }
 
     private suspend fun list(request: LinkMessage.PhotosRequest, known: Known): LinkMessage.Photos {
-        if (!available()) return LinkMessage.Photos(emptyList())
+        if (!available(known)) return LinkMessage.Photos(emptyList())
         val limit = request.limit.coerceIn(1, MAX_LIMIT)
         val items = safely(emptyList()) { source.photos(limit) }.take(limit)
         known.mutex.withLock {
@@ -189,10 +186,10 @@ public class PhotoBridge(
         return LinkMessage.Photos(items)
     }
 
-    private suspend fun serveThumbs(link: CompanionLink, request: LinkMessage.PhotoThumbRequest) {
+    private suspend fun serveThumbs(link: CompanionLink, known: Known, request: LinkMessage.PhotoThumbRequest) {
         val size = request.size.coerceIn(MIN_THUMB_SIZE, MAX_THUMB_SIZE)
         val ids = request.ids.take(MAX_THUMB_IDS)
-        val readable = available()
+        val readable = available(known)
         var served = 0
         for (id in ids) {
             val jpeg = if (readable) safely(null) { encodeThumbnail(id, size) } else null
@@ -215,8 +212,8 @@ public class PhotoBridge(
         }
     }
 
-    private suspend fun fetch(link: CompanionLink, request: LinkMessage.PhotoFetch) {
-        if (!available()) return
+    private suspend fun fetch(link: CompanionLink, known: Known, request: LinkMessage.PhotoFetch) {
+        if (!available(known)) return
         val file = safely(null) { source.original(request.id) } ?: run {
             VeyroLog.i(TAG) { "photoFetch for an unknown or out-of-scope photo; ignored" }
             return

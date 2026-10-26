@@ -74,7 +74,7 @@ class DeviceStatusPublisherTest {
         val source = FakeSource()
         val controller = FakeController()
         val publisher = DeviceStatusPublisher(
-            links = links,
+            links = links.asLinkList(),
             controlAllowed = allow,
             source = source,
             controller = controller,
@@ -154,11 +154,11 @@ class DeviceStatusPublisherTest {
         val link = connect(rig)
         link.inbound.emit(LinkMessage.DeviceStatus(battery = 55, charging = true))
         runCurrent()
-        assertEquals(55, rig.publisher.peerStatus.value?.battery)
+        assertEquals(55, rig.publisher.peerStatus.value["PC-ID"]?.battery)
 
         rig.links.value = null
         runCurrent()
-        assertNull(rig.publisher.peerStatus.value)
+        assertNull(rig.publisher.peerStatus.value["PC-ID"])
     }
 
     @Test

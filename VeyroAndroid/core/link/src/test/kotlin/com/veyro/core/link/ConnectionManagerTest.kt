@@ -315,6 +315,122 @@ class ConnectionManagerTest {
         secondJob.join()
     }
 
+    // ── Several PCs at once (multiple PCs) ─────────────────────────────────────────────────
+    //
+    // One live session per paired peer. A second PC is no longer answered busy/already-connected,
+    // and one PC leaving never takes the other's session with it.
+
+    private val homePc: TrustedPeer = run {
+        val pk = ByteArray(32) { 6 }
+        TrustedPeer(
+            deviceId = DeviceId.fromPublicKey(pk),
+            staticPublicKey = pk,
+            pairingSecret = ByteArray(32) { 8 },
+            name = "Home PC",
+            platform = com.veyro.core.model.Platform.WINDOWS,
+            pairedAtEpochMillis = 2L,
+        )
+    }
+
+    private fun twoPcManager(client: ConnectionClient = ConnectionClient()): ConnectionManager = ConnectionManager(
+        dispatchers = dispatchers,
+        scope = CoroutineScope(testDispatcher),
+        localDeviceId = { localId },
+        localDeviceName = { "Local Device" },
+        localPublicKey = { localPk },
+        trustedPeer = { id -> listOf(officePc, homePc).firstOrNull { it.deviceId.value == id } },
+        saveTrustedPeer = {},
+        client = client,
+    )
+
+    private fun firstAck(ws: FakeDefaultWebSocketSession): LinkPreambleAck = LinkJson.codec.decodeFromString(
+        LinkPreambleAck.serializer(),
+        (ws.outgoingChannel.tryReceive().getOrNull() as Frame.Text).readText(),
+    )
+
+    @Test
+    fun `two PCs are connected at once, and closing one leaves the other`() = runTest(testDispatcher) {
+        val manager = twoPcManager()
+        val driven = mutableListOf<PeerConnection>()
+        manager.sessionDriver = { connection, _ -> driven += connection }
+        val officeId = officePc.deviceId.value
+        val homeId = homePc.deviceId.value
+
+        val officeWs = FakeDefaultWebSocketSession()
+        val officeJob = launch { dialIn(manager, officeWs, officeId) }
+        val homeWs = FakeDefaultWebSocketSession()
+        val homeJob = launch { dialIn(manager, homeWs, homeId) }
+
+        assertEquals(LinkPreambleAck.MODE_SESSION, firstAck(officeWs).mode)
+        assertEquals("a second PC is admitted, not answered busy", LinkPreambleAck.MODE_SESSION, firstAck(homeWs).mode)
+        assertEquals(listOf(officeId, homeId), manager.connections.value.keys.toList())
+        val office = manager.connections.value.getValue(officeId)
+        val home = manager.connections.value.getValue(homeId)
+        assertTrue(office.isConnected && home.isConnected)
+        assertEquals("each session gets its own receive driver", 2, driven.size)
+        assertSame("the most recent PC is selected by default", home, manager.activeConnection.value)
+
+        manager.selectPeer(officeId)
+        assertSame("the selection follows Home's switcher", office, manager.activeConnection.value)
+        assertSame(home, manager.connectionFor(homeId))
+
+        officeWs.incomingChannel.close()
+        officeJob.join()
+        assertEquals("only the closed PC leaves", listOf(homeId), manager.connections.value.keys.toList())
+        assertTrue(home.isConnected)
+        assertSame("the selection falls back to the PC still connected", home, manager.activeConnection.value)
+        assertNull(manager.connectionFor(officeId))
+
+        homeWs.incomingChannel.close()
+        homeJob.join()
+        assertTrue(manager.connections.value.isEmpty())
+        assertNull(manager.activeConnection.value)
+    }
+
+    @Test
+    fun `dialling a second PC while another is connected opens a second session`() = runTest(testDispatcher) {
+        val homeWs = FakeDefaultWebSocketSession()
+        homeWs.incomingChannel.send(Frame.Text("""{"mode":"session"}"""))
+        val client = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = homeWs
+        }
+        val manager = twoPcManager(client)
+        val officeWs = FakeDefaultWebSocketSession()
+        val officeJob = launch { dialIn(manager, officeWs, officePc.deviceId.value) }
+
+        val ok = manager.connect(homePc.deviceId.value, "Home PC", listOf(Endpoint("192.168.1.30", 5150)))
+
+        assertTrue("no 'Already connected to a peer' any more", ok)
+        assertEquals(setOf(officePc.deviceId.value, homePc.deviceId.value), manager.connections.value.keys)
+        assertTrue(manager.connections.value.getValue(officePc.deviceId.value).isConnected)
+
+        // Disconnecting one PC closes only its session.
+        manager.disconnect(homePc.deviceId.value)
+        homeWs.incomingChannel.close()
+        assertEquals(setOf(officePc.deviceId.value), manager.connections.value.keys)
+
+        officeWs.incomingChannel.close()
+        officeJob.join()
+    }
+
+    @Test
+    fun `a paired PC opens its session while another device's pairing prompt is up`() = runTest(testDispatcher) {
+        val manager = twoPcManager()
+        val strangerWs = FakeDefaultWebSocketSession()
+        val strangerJob = launch { dialIn(manager, strangerWs, "unknown-peer") }
+        assertNotNull("the stranger's pairing prompt is showing", manager.pendingInbound.value)
+
+        val officeWs = FakeDefaultWebSocketSession()
+        val officeJob = launch { dialIn(manager, officeWs, officePc.deviceId.value) }
+        assertEquals(LinkPreambleAck.MODE_SESSION, firstAck(officeWs).mode)
+        assertNotNull(manager.connectionFor(officePc.deviceId.value))
+
+        officeWs.incomingChannel.close()
+        officeJob.join()
+        manager.cancelInboundPairing()
+        strangerJob.cancel()
+    }
+
     @Test
     fun `inbound pairing request prompts for consent with placeholder pin and peer details`() = runTest(testDispatcher) {
         val manager = testManager(ConnectionClient())

@@ -77,8 +77,8 @@ internal fun MainScreen(
     homeViewModel: HomeViewModel,
     devicesViewModel: DevicesViewModel,
     onRequestMessagingPermissions: () -> Unit,
-    /** Send files from Home: the system picker, then straight to the PC (ADR-038). */
-    onSendFiles: (deviceId: String?) -> Unit,
+    /** Send files from Home: the system picker, then straight to the chosen PCs (ADR-038). */
+    onSendFiles: (deviceIds: List<String>) -> Unit,
     homeNavController: NavHostController = rememberNavController(),
 ) {
     val backStackState by homeNavController.currentBackStackEntryAsState()
@@ -153,7 +153,7 @@ internal fun MainScreen(
                     onOpenSettings = { navigateToTab(homeNavController, VeyroDestination.Settings) },
                     onPcSettings = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
                     onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
-                    onSendFiles = { onSendFiles(it.value) },
+                    onSendFiles = { ids -> onSendFiles(ids.map { it.value }) },
                     onOpenHistory = { navigateToTab(homeNavController, VeyroDestination.History) },
                 )
             }

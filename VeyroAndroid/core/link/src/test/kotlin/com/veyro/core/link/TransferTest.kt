@@ -396,12 +396,8 @@ class TransferTest {
         )
         activeConn.start()
 
-        // Access internal active connection field through reflection or by calling runConnection
-        val activeField = ConnectionManager::class.java.getDeclaredField("_activeConnection")
-        activeField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val flow = activeField.get(manager) as kotlinx.coroutines.flow.MutableStateFlow<PeerConnection?>
-        flow.value = activeConn
+        // Register the session as this peer's live connection, as an established session would be
+        manager.adoptForTest(activeConn)
 
         // Call connect with the same peer
         val connected = manager.connect(peerId.value, "Test Samsung", listOf(Endpoint("192.168.1.50", 8080)))
@@ -449,11 +445,7 @@ class TransferTest {
             client = fakeClient,
         )
 
-        val activeField = ConnectionManager::class.java.getDeclaredField("_activeConnection")
-        activeField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val flow = activeField.get(manager) as kotlinx.coroutines.flow.MutableStateFlow<PeerConnection?>
-        flow.value = senderSession
+        manager.adoptForTest(senderSession)
 
         val stagingDir = tempDir.newFolder("staging")
         val destDir = tempDir.newFolder("received_reuse")
@@ -535,11 +527,7 @@ class TransferTest {
             client = fakeClient,
         )
 
-        val activeField = ConnectionManager::class.java.getDeclaredField("_activeConnection")
-        activeField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val flow = activeField.get(manager) as kotlinx.coroutines.flow.MutableStateFlow<PeerConnection?>
-        flow.value = senderSession
+        manager.adoptForTest(senderSession)
 
         val stagingDir = tempDir.newFolder("staging_empty_endpoints")
         val destDir = tempDir.newFolder("received_empty_endpoints")
@@ -605,8 +593,6 @@ class TransferTest {
         val (senderSession1, receiverSession1) = createConnectedPair(localId, peerId.value)
         val runner = TransferRunner(dispatchers)
 
-        val activeField = ConnectionManager::class.java.getDeclaredField("_activeConnection")
-        activeField.isAccessible = true
 
         val stagingDir = tempDir.newFolder("staging_seq")
         val destDir = tempDir.newFolder("received_seq")
@@ -647,9 +633,7 @@ class TransferTest {
             client = fakeClient,
         )
 
-        @Suppress("UNCHECKED_CAST")
-        val flow = activeField.get(manager) as kotlinx.coroutines.flow.MutableStateFlow<PeerConnection?>
-        flow.value = senderSession1
+        manager.adoptForTest(senderSession1)
 
         val coordinator = TransferCoordinator(
             connectionManager = manager,
@@ -674,7 +658,6 @@ class TransferTest {
         // Close session 1
         senderSession1.close()
         receiverSession1.close()
-        flow.value = null
 
         // Transfer 2 must now dial and succeed via newly established session
         // Set up active connection for dialed session
@@ -689,7 +672,7 @@ class TransferTest {
             endpointsFor = { listOf(Endpoint("192.168.1.50", 8080)) },
             autoAcceptFor = { true },
         )
-        flow.value = senderSession2
+        manager.adoptForTest(senderSession2)
 
         val file2Data = "File 2 content".toByteArray()
         val file2 = OutgoingFile("file2.txt", file2Data.size.toLong(), System.currentTimeMillis()) { ByteArrayInputStream(file2Data) }
@@ -722,8 +705,6 @@ class TransferTest {
         val (senderSession, receiverSession) = createConnectedPair(localId, peerId.value)
         val runner = TransferRunner(dispatchers)
 
-        val activeField = ConnectionManager::class.java.getDeclaredField("_activeConnection")
-        activeField.isAccessible = true
 
         val manager = ConnectionManager(
             dispatchers = dispatchers,
@@ -756,9 +737,7 @@ class TransferTest {
             autoAcceptFor = { true },
             discoverEndpoints = { id, _ ->
                 discoverCalled = true
-                @Suppress("UNCHECKED_CAST")
-                val flow = activeField.get(manager) as kotlinx.coroutines.flow.MutableStateFlow<PeerConnection?>
-                flow.value = senderSession
+                manager.adoptForTest(senderSession)
                 listOf(Endpoint("192.168.1.99", 7777))
             },
         )
@@ -876,11 +855,7 @@ class TransferTest {
         )
         activeConn.start()
 
-        val activeField = ConnectionManager::class.java.getDeclaredField("_activeConnection")
-        activeField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val flow = activeField.get(manager) as kotlinx.coroutines.flow.MutableStateFlow<PeerConnection?>
-        flow.value = activeConn
+        manager.adoptForTest(activeConn)
 
         // With forceReconnect = true, existing activeConn should be closed and dial attempted
         manager.connect(peerId.value, "Test Samsung", listOf(Endpoint("192.168.1.50", 8080)), forceReconnect = true)

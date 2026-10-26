@@ -14,6 +14,8 @@ import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
 import com.veyro.core.model.Platform
 import com.veyro.core.model.PeerDevice
+import com.veyro.core.model.TrustedPeer
+import com.veyro.core.link.PeerConnection
 import com.veyro.core.network.NetworkMonitor
 import com.veyro.core.service.BackgroundHost
 import com.veyro.core.service.BackgroundStatus
@@ -27,12 +29,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.runningFold
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -40,8 +43,9 @@ import kotlinx.coroutines.launch
  * it the status line, and owns the [CompanionKeeper] that reconnects to the paired PC.
  *
  * Runs when "Run in background" is on (default), a Windows PC is paired, and the user has not
- * pressed Disconnect (on the notification or on Home) since they last connected. The PC kept is
- * the one last connected, else the most recently used paired PC.
+ * pressed Disconnect on the notification since they last connected. Every paired Windows PC is
+ * kept connected, one keeper loop each (multiple PCs), except a PC the user disconnected on Home
+ * until they connect it again.
  *
  * Nothing here is touched at process start: [observe] is first called when the app becomes
  * visible, at boot, or when a sticky restart brings the service back, so a process started only
@@ -70,38 +74,65 @@ public class BackgroundController(
         const val DISCOVERY_WINDOW_MS = 8_000L
     }
 
-    /** Set by Disconnect; cleared when the user connects again or toggles the setting. */
-    private val paused = MutableStateFlow(false)
-    private val lastConnectedId = MutableStateFlow<String?>(null)
+    /** Set by the notification's Disconnect; cleared when the user connects again or toggles the setting. */
+    private val pausedAll = MutableStateFlow(false)
 
-    private val connectedPeerId: Flow<String?> by lazy {
-        flowOf(Unit).flatMapLatest { connectionManager().activeConnection }.map { it?.peerDeviceId }
+    /** PCs the user disconnected on Home; the others stay kept (multiple PCs). */
+    private val pausedPeers = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Live sessions by peer id, oldest first. */
+    private val connections: Flow<Map<String, PeerConnection>> by lazy {
+        flowOf(Unit).flatMapLatest { connectionManager().connections }
     }
 
-    private val target: Flow<KeepTarget?> by lazy {
-        combine(trustStore.peers, lastConnectedId) { peers, last ->
-            val pcs = peers.filter { !it.revoked && it.platform == Platform.WINDOWS }
-            val chosen = pcs.firstOrNull { it.deviceId.value == last }
-                ?: pcs.maxWithOrNull(compareBy({ it.lastConnectedEpochMillis }, { it.pairedAtEpochMillis }))
-            chosen?.let { KeepTarget(it.deviceId.value, it.name) }
+    private val connectedPeerIds: Flow<Set<String>> by lazy {
+        connections.map { it.keys.toSet() }.distinctUntilChanged()
+    }
+
+    /** Every paired Windows PC the user has not disconnected, most recently used first. */
+    private val targets: Flow<List<KeepTarget>> by lazy {
+        combine(trustStore.peers, pausedPeers) { peers, paused ->
+            peers
+                .filter { !it.revoked && it.platform == Platform.WINDOWS && it.deviceId.value !in paused }
+                .sortedWith(compareByDescending<TrustedPeer> { it.lastConnectedEpochMillis }.thenByDescending { it.pairedAtEpochMillis })
+                .map { KeepTarget(it.deviceId.value, it.name) }
         }.distinctUntilChanged()
     }
 
     private val shouldRun: Flow<Boolean> by lazy {
-        combine(settings.runInBackground, paused, target) { on, isPaused, t -> on && !isPaused && t != null }
+        combine(settings.runInBackground, pausedAll, targets) { on, isPaused, t -> on && !isPaused && t.isNotEmpty() }
             .distinctUntilChanged()
     }
 
     override val backgroundStatus: Flow<BackgroundStatus?> by lazy {
-        combine(shouldRun, target, connectedPeerId) { run, t, peer ->
-            if (!run || t == null) null else BackgroundStatus(t.deviceId, t.name, connected = peer == t.deviceId)
+        val selected = flowOf(Unit).flatMapLatest { connectionManager().activeConnection }.map { it?.peerDeviceId }
+        combine(shouldRun, targets, connectedPeerIds, selected) { run, t, live, chosen ->
+            if (!run || t.isEmpty()) null else statusOf(t, live, chosen)
         }.distinctUntilChanged()
+    }
+
+    /**
+     * The notification's content for every kept PC: which are connected, which are looked for.
+     * Send files goes to the PC selected on Home while it is connected, else the first connected,
+     * else the first target.
+     */
+    private fun statusOf(targets: List<KeepTarget>, live: Set<String>, selected: String?): BackgroundStatus {
+        val connected = targets.filter { it.deviceId in live }
+        val looking = targets.filterNot { it.deviceId in live }
+        val primary = connected.firstOrNull { it.deviceId == selected } ?: connected.firstOrNull() ?: targets.first()
+        return BackgroundStatus(
+            peerDeviceId = primary.deviceId,
+            peerName = primary.name,
+            connected = connected.isNotEmpty(),
+            connectedNames = connected.map { it.name },
+            lookingNames = looking.map { it.name },
+        )
     }
 
     private val keeper: CompanionKeeper by lazy {
         CompanionKeeper(
-            target = combine(target, paused) { t, isPaused -> t.takeUnless { isPaused } },
-            connectedPeerId = connectedPeerId,
+            targets = combine(targets, pausedAll) { t, isPaused -> if (isPaused) emptyList() else t },
+            connectedPeerIds = connectedPeerIds,
             wakeups = wakeups(),
             attempt = ::attempt,
         )
@@ -115,7 +146,6 @@ public class BackgroundController(
     public fun observe() {
         if (observing?.isActive == true) return
         observing = scope.launch {
-            launch { connectedPeerId.filterNotNull().collect { lastConnectedId.value = it } }
             shouldRun.collect { run ->
                 if (run) {
                     ensureReceiving()
@@ -135,20 +165,28 @@ public class BackgroundController(
         }
     }
 
-    /** Home's Connect: the user wants the PC again, so background keeping resumes. */
-    public fun onUserConnect() {
-        paused.value = false
+    /** Home's Connect: the user wants [deviceId] again, so background keeping resumes for it. */
+    public fun onUserConnect(deviceId: String) {
+        pausedAll.value = false
+        pausedPeers.update { it - deviceId }
     }
 
-    /** Home's Disconnect or the notification's: close the session and stop reconnecting. */
-    public fun onUserDisconnect() {
-        paused.value = true
+    /** Home's Disconnect for one PC: close its session and stop reconnecting to it only. */
+    public fun onUserDisconnect(deviceId: String) {
+        pausedPeers.update { it + deviceId }
+        connectionManager().disconnect(deviceId)
+    }
+
+    /** The notification's Disconnect: close every session and stop reconnecting. */
+    public fun onUserDisconnectAll() {
+        pausedAll.value = true
         connectionManager().disconnect()
     }
 
     /** Called when the user flips "Run in background", so an old Disconnect does not linger. */
     public fun onSettingChanged() {
-        paused.value = false
+        pausedAll.value = false
+        pausedPeers.value = emptySet()
     }
 
     // ── BackgroundHost ──────────────────────────────────────────────────────────────────────
@@ -170,7 +208,7 @@ public class BackgroundController(
     }
 
     override fun onDisconnectRequested() {
-        onUserDisconnect()
+        onUserDisconnectAll()
     }
 
     override fun onBoot(context: Context, done: () -> Unit) {
@@ -217,11 +255,15 @@ public class BackgroundController(
             .drop(1)
             .filter { (usable, _) -> usable }
             .map { },
-        combine(discoveredPeers, lastConnectedId) { peers, last ->
-            last != null && peers.any { it.deviceId.value == last && it.endpoints.isNotEmpty() }
+        // A target PC turning up in discovery: the set of visible targets grew.
+        combine(discoveredPeers, targets) { peers, t ->
+            t.filter { target -> peers.any { it.deviceId.value == target.deviceId && it.endpoints.isNotEmpty() } }
+                .map { it.deviceId }
+                .toSet()
         }
             .distinctUntilChanged()
-            .filter { it }
+            .runningFold(emptySet<String>() to emptySet<String>()) { (_, previous), now -> previous to now }
+            .filter { (previous, now) -> (now - previous).isNotEmpty() }
             .map { },
     )
 }

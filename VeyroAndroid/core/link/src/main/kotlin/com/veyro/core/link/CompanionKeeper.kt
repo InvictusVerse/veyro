@@ -2,6 +2,7 @@ package com.veyro.core.link
 
 import com.veyro.core.common.VeyroLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -10,17 +11,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 
-/** The paired PC the background connection is kept to. */
+/** A paired PC the background connection is kept to. */
 public data class KeepTarget(val deviceId: String, val name: String)
 
-/** What the background notification says. */
+/** What the background notification says about one target. */
 public sealed interface KeeperState {
-    /** Nothing to keep (no paired PC, or switched off). */
+    /** Nothing to keep (not a target, or switched off). */
     public data object Idle : KeeperState
 
     /** Not connected; trying with backoff, woken early by network changes. */
@@ -30,26 +33,28 @@ public sealed interface KeeperState {
 }
 
 /**
- * Keeps the companion session to one paired PC alive while the app runs in the background
- * (`VeyroBackgroundService`).
+ * Keeps the companion session to every target PC alive while the app runs in the background
+ * (`VeyroBackgroundService`). One keeper loop per target, started and stopped as [targets]
+ * changes (multiple PCs); a PC that drops never affects the loops of the others.
  *
- * Battery rules: there is no loop that spins. While connected it only waits for the session to
- * change. While disconnected it makes one bounded [attempt] (a short discovery window plus a
- * dial), then sleeps on an exponential backoff from [BACKOFF_MS], up to [MAX_BACKOFF_MS]. A
- * [wakeups] signal (a network change from the NetworkCallback, or the PC turning up in discovery)
- * cuts the sleep short and resets the backoff, which is when a retry is likely to work.
+ * Battery rules, per loop: there is no loop that spins. While connected it only waits for the
+ * session to change. While disconnected it makes one bounded [attempt] (a short discovery window
+ * plus a dial), then sleeps on an exponential backoff from [BACKOFF_MS], up to [MAX_BACKOFF_MS].
+ * A [wakeups] signal (a network change from the NetworkCallback, or a PC turning up in
+ * discovery) is shared: it cuts every loop's sleep short and resets its backoff, which is when a
+ * retry is likely to work.
  *
  * Pure Kotlin over flows and lambdas, so the policy is JVM-tested without a device.
  */
 public class CompanionKeeper(
-    private val target: Flow<KeepTarget?>,
-    /** Device id of the live session's peer, null while there is none. */
-    private val connectedPeerId: Flow<String?>,
+    private val targets: Flow<List<KeepTarget>>,
+    /** Device ids of the peers with a live session. */
+    private val connectedPeerIds: Flow<Set<String>>,
     private val wakeups: Flow<Unit>,
     /** One bounded connection attempt; true if a session is (being) established. */
     private val attempt: suspend (KeepTarget) -> Boolean,
     private val backoffMs: (failures: Int) -> Long = ::defaultBackoff,
-    /** How long a successful attempt gets to show up as [connectedPeerId] before retrying. */
+    /** How long a successful attempt gets to show up in [connectedPeerIds] before retrying. */
     private val settleMs: Long = SETTLE_MS,
 ) {
 
@@ -65,33 +70,55 @@ public class CompanionKeeper(
             BACKOFF_MS.getOrElse(failures) { MAX_BACKOFF_MS }
     }
 
-    private val _state = MutableStateFlow<KeeperState>(KeeperState.Idle)
-    public val state: StateFlow<KeeperState> = _state.asStateFlow()
+    private val _states = MutableStateFlow<Map<String, KeeperState>>(emptyMap())
+
+    /** Each target's state, by device id. A device that is not a target is absent. */
+    public val states: StateFlow<Map<String, KeeperState>> = _states.asStateFlow()
+
+    /** [deviceId]'s state; [KeeperState.Idle] when it is not a target. */
+    public fun stateOf(deviceId: String): KeeperState = _states.value[deviceId] ?: KeeperState.Idle
 
     /** Runs until cancelled. Call from the background service's scope. */
     public suspend fun run() {
         try {
             coroutineScope {
-                val wake = Channel<Unit>(Channel.CONFLATED)
-                launch { wakeups.collect { wake.trySend(Unit) } }
-                combine(target, connectedPeerId) { t, peer -> t to peer }
-                    .distinctUntilChanged()
-                    .collectLatest { (t, peer) ->
-                        when {
-                            t == null -> _state.value = KeeperState.Idle
-                            peer == t.deviceId -> _state.value = KeeperState.Connected(t)
-                            else -> {
-                                _state.value = KeeperState.Looking(t)
-                                // Signals from before this disconnect say nothing about now.
-                                wake.tryReceive()
-                                keepTrying(t, wake)
-                            }
-                        }
+                val wakes = ConcurrentHashMap<String, Channel<Unit>>()
+                launch { wakeups.collect { wakes.values.forEach { it.trySend(Unit) } } }
+                val running = HashMap<KeepTarget, Job>()
+                targets.distinctUntilChanged().collect { list ->
+                    val wanted = list.toSet()
+                    for (gone in running.keys.filter { it !in wanted }) {
+                        running.remove(gone)?.cancel()
+                        wakes.remove(gone.deviceId)
+                        _states.update { it - gone.deviceId }
                     }
+                    for (t in wanted) {
+                        if (t in running) continue
+                        val wake = Channel<Unit>(Channel.CONFLATED)
+                        wakes[t.deviceId] = wake
+                        running[t] = launch { keep(t, wake) }
+                    }
+                }
             }
         } finally {
-            _state.value = KeeperState.Idle
+            _states.value = emptyMap()
         }
+    }
+
+    private suspend fun keep(t: KeepTarget, wake: Channel<Unit>) {
+        connectedPeerIds
+            .map { t.deviceId in it }
+            .distinctUntilChanged()
+            .collectLatest { connected ->
+                if (connected) {
+                    _states.update { it + (t.deviceId to KeeperState.Connected(t)) }
+                } else {
+                    _states.update { it + (t.deviceId to KeeperState.Looking(t)) }
+                    // Signals from before this disconnect say nothing about now.
+                    wake.tryReceive()
+                    keepTrying(t, wake)
+                }
+            }
     }
 
     private suspend fun keepTrying(t: KeepTarget, wake: Channel<Unit>) {

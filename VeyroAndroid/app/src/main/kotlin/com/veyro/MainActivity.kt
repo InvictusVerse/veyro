@@ -58,24 +58,24 @@ public class MainActivity : ComponentActivity() {
     }
 
     /**
-     * The PC the open picker is for (null: the connected or most recent PC). Saved with the
-     * instance state, so a rotation or process death while the picker is open keeps the target.
+     * The PCs the open picker is for (empty: the selected or most recent PC). Saved with the
+     * instance state, so a rotation or process death while the picker is open keeps the targets.
      */
-    private var sendTarget: String? = null
+    private var sendTargets: ArrayList<String> = ArrayList()
     private var sendPending = false
 
     private val pickFiles = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
-        val target = sendTarget
+        val targets = sendTargets.toList()
         val wasPending = sendPending
-        sendTarget = null
+        sendTargets = ArrayList()
         sendPending = false
         if (!wasPending || uris.isNullOrEmpty()) return@registerForActivityResult
         val files = uris.mapNotNull { describe(it) }
         if (files.isEmpty()) return@registerForActivityResult
-        // ADR-038: straight to the PC, no Send screen; the banner shows progress.
-        (application as VeyroApplication).container.sendFiles(target, files)
+        // ADR-038: straight to the PCs, no Send screen; the banner shows progress.
+        (application as VeyroApplication).container.sendFiles(targets, files)
     }
 
     private val requestPermissions = registerForActivityResult(
@@ -97,7 +97,7 @@ public class MainActivity : ComponentActivity() {
         val container = (application as VeyroApplication).container
         val factory = VeyroViewModelFactory(container)
         if (savedInstanceState != null) {
-            sendTarget = savedInstanceState.getString(STATE_SEND_TARGET)
+            sendTargets = savedInstanceState.getStringArrayList(STATE_SEND_TARGET) ?: ArrayList()
             sendPending = savedInstanceState.getBoolean(STATE_SEND_PENDING, false)
         } else {
             // A recreated Activity gets the same intent again; the picker must open only once.
@@ -149,7 +149,7 @@ public class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putString(STATE_SEND_TARGET, sendTarget)
+        outState.putStringArrayList(STATE_SEND_TARGET, sendTargets)
         outState.putBoolean(STATE_SEND_PENDING, sendPending)
     }
 
@@ -158,15 +158,15 @@ public class MainActivity : ComponentActivity() {
         val target = intent.getStringExtra(EXTRA_SEND_TO)
         // Consumed, so returning to the task later does not open the picker again.
         intent.action = Intent.ACTION_MAIN
-        launchSendPicker(target)
+        launchSendPicker(listOfNotNull(target))
     }
 
     /**
-     * Every Send files entry point (Home's tile, a device's settings, the background
-     * notification) opens the system picker directly (ADR-038).
+     * Every Send files entry point (Home's tile or its "Send to" choice, a device's settings, the
+     * background notification) opens the system picker directly (ADR-038).
      */
-    private fun launchSendPicker(deviceId: String?) {
-        sendTarget = deviceId
+    private fun launchSendPicker(deviceIds: List<String>) {
+        sendTargets = ArrayList(deviceIds)
         sendPending = true
         try {
             // Any type rather than a list: Veyro transfers arbitrary files, and restricting the

@@ -5,7 +5,6 @@ import com.veyro.core.link.LinkMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -13,8 +12,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -69,7 +66,8 @@ public interface CallController {
  * Numbers and names are user data: nothing here logs them.
  */
 public class CallBridge(
-    private val links: Flow<CompanionLink?>,
+    /** Every live paired session (multiple PCs). */
+    private val links: Flow<List<CompanionLink>>,
     private val enabled: Flow<Boolean>,
     private val source: CallSource,
     private val controller: CallController,
@@ -107,10 +105,16 @@ public class CallBridge(
         val name: String?,
     )
 
-    private val on = MutableStateFlow(false)
-    private val lock = Mutex()
-    private var current: Call? = null
-    private var pendingDial: Pair<String, Long>? = null
+    /**
+     * One PC's view of the phone's calls (multiple PCs). Each PC gets its own call ids, so an
+     * action names a call that PC was told about, and is acted on only for it.
+     */
+    private class Session {
+        val on = MutableStateFlow(false)
+        val lock = Mutex()
+        var current: Call? = null
+        var pendingDial: Pair<String, Long>? = null
+    }
 
     private var job: Job? = null
 
@@ -118,39 +122,40 @@ public class CallBridge(
     @Synchronized
     public fun start(): Job = job?.takeIf { it.isActive } ?: scope.launch { run() }.also { job = it }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun run() {
-        links
-            .flatMapLatest { link ->
-                link?.peerCapabilities?.map { caps -> link.takeIf { Capability.CALLS in caps } }
-                    ?: flowOf(null)
-            }
-            .distinctUntilChanged()
-            .collectLatest { link -> if (link != null) serve(link) }
+        // One session per connected PC: call state goes to every capable PC; call-log requests
+        // and call actions are handled on the PC's own session.
+        links.forEachLink { link ->
+            link.peerCapabilities
+                .map { Capability.CALLS in it }
+                .distinctUntilChanged()
+                .collectLatest { capable -> if (capable) serve(link) }
+        }
     }
 
     private suspend fun serve(link: CompanionLink) {
+        val s = Session()
         try {
             coroutineScope {
                 // Read before any request is handled, then followed; the settings store is only
                 // touched once a capable session exists.
-                on.value = enabled.first()
-                launch { enabled.collect { on.value = it } }
+                s.on.value = enabled.first()
+                launch { enabled.collect { s.on.value = it } }
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.CallLogRequest -> link.send(callLog(message))
-                            is LinkMessage.CallAction -> handleAction(message)
+                            is LinkMessage.CallLogRequest -> link.send(callLog(s, message))
+                            is LinkMessage.CallAction -> handleAction(s, message)
                             else -> Unit
                         }
                     }
                 }
-                on.collectLatest { enabled ->
+                s.on.collectLatest { enabled ->
                     if (enabled) {
-                        track(link)
+                        track(link, s)
                     } else {
                         // Switched off mid-call: the PC must not keep showing a stale call.
-                        val stale = lock.withLock { current.also { current = null } }
+                        val stale = s.lock.withLock { s.current.also { s.current = null } }
                         if (stale != null) link.send(stale.copy(state = STATE_ENDED).toMessage())
                     }
                 }
@@ -160,24 +165,24 @@ public class CallBridge(
         } catch (t: Throwable) {
             VeyroLog.w(TAG) { "Call session ended: ${t.javaClass.simpleName}" }
         } finally {
-            on.value = false
-            current = null
-            pendingDial = null
+            s.on.value = false
+            s.current = null
+            s.pendingDial = null
             controller.restoreAfterCall()
         }
     }
 
-    private suspend fun track(link: CompanionLink) {
+    private suspend fun track(link: CompanionLink, s: Session) {
         try {
-            source.signals.collect { signal -> onSignal(link, signal) }
+            source.signals.collect { signal -> onSignal(link, s, signal) }
         } finally {
             controller.restoreAfterCall()
         }
     }
 
-    private suspend fun onSignal(link: CompanionLink, signal: CallSignal) {
-        val outgoing: Call? = lock.withLock {
-            val call = current
+    private suspend fun onSignal(link: CompanionLink, s: Session, signal: CallSignal) {
+        val outgoing: Call? = s.lock.withLock {
+            val call = s.current
             when (signal.state) {
                 TelephonyCallState.RINGING -> when {
                     call == null -> {
@@ -191,10 +196,10 @@ public class CallBridge(
                 }
                 TelephonyCallState.OFFHOOK -> when {
                     call == null -> {
-                        val dialed = pendingDial
+                        val dialed = s.pendingDial
                             ?.takeIf { (_, at) -> clock() - at <= DIAL_MATCH_WINDOW_MS }
                             ?.first
-                        pendingDial = null
+                        s.pendingDial = null
                         Call(newCallId(), STATE_ACTIVE, DIR_OUT, dialed, dialed?.let { lookup(it) })
                     }
                     call.state == STATE_RINGING -> call.copy(state = STATE_ACTIVE)
@@ -202,7 +207,7 @@ public class CallBridge(
                 }
                 TelephonyCallState.IDLE -> call?.copy(state = STATE_ENDED)
             }?.also { next ->
-                current = next.takeUnless { it.state == STATE_ENDED }
+                s.current = next.takeUnless { it.state == STATE_ENDED }
             }
         }
         if (outgoing != null) {
@@ -220,8 +225,8 @@ public class CallBridge(
         null
     }
 
-    private suspend fun handleAction(action: LinkMessage.CallAction) {
-        if (!on.value) {
+    private suspend fun handleAction(s: Session, action: LinkMessage.CallAction) {
+        if (!s.on.value) {
             VeyroLog.i(TAG) { "Ignored callAction: messages and calls are off" }
             return
         }
@@ -232,11 +237,11 @@ public class CallBridge(
                     VeyroLog.d(TAG) { "Ignored dial: invalid number" }
                     return
                 }
-                lock.withLock { pendingDial = number to clock() }
+                s.lock.withLock { s.pendingDial = number to clock() }
                 controller.dial(number)
                 return
             }
-            val call = lock.withLock { current }
+            val call = s.lock.withLock { s.current }
             if (call == null || action.callId != call.id) {
                 VeyroLog.d(TAG) { "Ignored callAction for a call that is not current" }
                 return
@@ -254,8 +259,8 @@ public class CallBridge(
         }
     }
 
-    private suspend fun callLog(request: LinkMessage.CallLogRequest): LinkMessage.CallLog {
-        if (!on.value) return LinkMessage.CallLog(emptyList())
+    private suspend fun callLog(s: Session, request: LinkMessage.CallLogRequest): LinkMessage.CallLog {
+        if (!s.on.value) return LinkMessage.CallLog(emptyList())
         val limit = request.limit.coerceIn(1, MAX_LOG_LIMIT)
         val entries = try {
             source.callLog(limit).take(limit)

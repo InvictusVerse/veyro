@@ -72,7 +72,7 @@ class NotificationMirrorTest {
 
     private fun TestScope.rig(): Rig {
         val rig = Rig()
-        NotificationMirror(rig.links, rig.enabled, rig.source, rig.executor, backgroundScope).start()
+        NotificationMirror(rig.links.asLinkList(), rig.enabled, rig.source, rig.executor, backgroundScope).start()
         runCurrent()
         return rig
     }

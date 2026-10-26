@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
- * Keeps the companion session to the paired PC alive while the app is in the background
+ * Keeps the companion sessions to the paired PCs alive while the app is in the background
  * (ADR-036). Replaces the never-started `VeyroDiscoverableService`: one background service, not
  * two competing for the same job.
  *
@@ -136,16 +136,8 @@ public class VeyroBackgroundService : Service() {
     }
 
     private fun buildNotification(status: BackgroundStatus?) = notifications.background(
-        title = when {
-            status == null -> "Veyro is running in the background"
-            status.connected -> "Connected to ${status.peerName}"
-            else -> "Looking for ${status.peerName}"
-        },
-        text = when {
-            status == null -> "Keeping your PC connection ready."
-            status.connected -> "Notifications, photos and files stay in sync."
-            else -> "Reconnects when your PC is on the same network."
-        },
+        title = status?.title ?: "Veyro is running in the background",
+        text = status?.text ?: "Keeping your PC connection ready.",
         contentIntent = host?.let { activityIntent(it.openAppIntent(this, null), REQUEST_OPEN) },
         sendIntent = host?.takeIf { status != null }
             ?.let { activityIntent(it.openAppIntent(this, status?.peerDeviceId), REQUEST_SEND) },

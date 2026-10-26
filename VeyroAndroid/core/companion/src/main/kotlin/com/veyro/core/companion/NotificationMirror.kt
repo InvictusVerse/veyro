@@ -6,7 +6,6 @@ import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -15,9 +14,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -36,7 +32,8 @@ import kotlinx.coroutines.launch
  * Notification contents are user data: nothing here logs a title, text, message or key.
  */
 public class NotificationMirror(
-    private val links: Flow<CompanionLink?>,
+    /** Every live paired session (multiple PCs). */
+    private val links: Flow<List<CompanionLink>>,
     private val enabled: Flow<Boolean>,
     private val source: NotificationSource,
     private val executor: NotificationActionExecutor,
@@ -59,24 +56,21 @@ public class NotificationMirror(
     @Synchronized
     public fun start(): Job = job?.takeIf { it.isActive } ?: scope.launch { run() }.also { job = it }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun run() {
         enabled
             .distinctUntilChanged()
-            .flatMapLatest { on ->
-                if (!on) {
-                    flowOf(null)
-                } else {
-                    combine(links, source.available) { link, available -> link.takeIf { available } }
-                }
+            .collectLatest { on ->
+                // One mirror per connected PC; each answers requests on its own session only.
+                if (on) links.forEachLink { link -> mirrorWhileCapable(link) }
             }
-            .flatMapLatest { link ->
-                link?.peerCapabilities?.map { caps ->
-                    link.takeIf { Capability.NOTIFICATION_MIRROR in caps }
-                } ?: flowOf(null)
-            }
+    }
+
+    private suspend fun mirrorWhileCapable(link: CompanionLink) {
+        combine(link.peerCapabilities, source.available) { caps, available ->
+            available && Capability.NOTIFICATION_MIRROR in caps
+        }
             .distinctUntilChanged()
-            .collectLatest { link -> if (link != null) mirrorTo(link) }
+            .collectLatest { active -> if (active) mirrorTo(link) }
     }
 
     private suspend fun mirrorTo(link: CompanionLink) {

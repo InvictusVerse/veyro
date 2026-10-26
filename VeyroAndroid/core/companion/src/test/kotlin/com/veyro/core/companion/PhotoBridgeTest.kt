@@ -107,7 +107,7 @@ class PhotoBridgeTest {
         val on = MutableStateFlow(enabled)
         val source = FakeSource().apply { store += photos }
         val sender = FakeSender()
-        PhotoBridge(links, on, source, sender, backgroundScope).start()
+        PhotoBridge(links.asLinkList(), on, source, sender, backgroundScope).start()
         runCurrent()
         return Rig(links, on, source, sender)
     }

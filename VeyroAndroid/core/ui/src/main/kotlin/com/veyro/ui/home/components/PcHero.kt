@@ -154,15 +154,21 @@ private fun PcSwitcher(
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
+        val connectedCount = allPcs.count { it.isConnected }
         TextButton(
             onClick = { open = true },
             modifier = Modifier
                 .widthIn(max = 320.dp)
                 .semantics {
                     role = Role.DropdownList
-                    stateDescription = if (allPcs.size > 1) "${allPcs.size} PCs paired" else "PC options"
+                    stateDescription = buildString {
+                        append(if (pc.isConnected) "Connected" else "Not connected")
+                        if (allPcs.size > 1) append(". ${allPcs.size} PCs paired, $connectedCount connected")
+                    }
                 },
         ) {
+            ConnectedDot(connected = pc.isConnected)
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = pc.name,
                 style = MaterialTheme.typography.headlineSmall,
@@ -198,6 +204,7 @@ private fun PcSwitcher(
                             Spacer(Modifier.size(24.dp))
                         }
                     },
+                    trailingIcon = { ConnectedDot(connected = item.isConnected) },
                     onClick = {
                         open = false
                         onSelect(item)
@@ -221,6 +228,23 @@ private fun PcSwitcher(
                     onAddPc()
                 },
             )
+        }
+    }
+}
+
+/**
+ * The switcher's live-state dot: filled in the primary colour while that PC is connected, an
+ * outlined ring otherwise, so the state does not rely on colour alone. Decorative: the text next
+ * to it, or the switcher's state description, says the same.
+ */
+@Composable
+private fun ConnectedDot(connected: Boolean) {
+    val color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    Canvas(modifier = Modifier.size(10.dp)) {
+        if (connected) {
+            drawCircle(color = color)
+        } else {
+            drawCircle(color = color, radius = size.minDimension / 2f - 1.dp.toPx(), style = Stroke(width = 1.5.dp.toPx()))
         }
     }
 }

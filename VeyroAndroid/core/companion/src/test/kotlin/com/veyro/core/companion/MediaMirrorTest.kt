@@ -21,7 +21,11 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class MediaMirrorTest {
 
-    private class FakeLink(caps: Capabilities) : CompanionLink {
+    private companion object {
+        const val PC = "PC-ID"
+    }
+
+    private class FakeLink(caps: Capabilities, override val peerDeviceId: String = PC) : CompanionLink {
         val caps = MutableStateFlow(caps)
         val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 16)
         val sent = mutableListOf<LinkMessage>()
@@ -77,7 +81,7 @@ class MediaMirrorTest {
         val on = MutableStateFlow(enabled)
         val source = FakeSource()
         val executor = FakeExecutor()
-        val mirror = MediaMirror(links, on, source, executor, backgroundScope)
+        val mirror = MediaMirror(links.asLinkList(), on, source, executor, backgroundScope)
         mirror.start()
         runCurrent()
         return Rig(mirror, links, on, source, executor)
@@ -107,8 +111,8 @@ class MediaMirrorTest {
         rig.source.changeFlow.emit(Unit)
         runCurrent()
         assertTrue(link.sent.isEmpty())
-        assertNull(rig.mirror.peerMedia.value)
-        assertFalse(rig.mirror.sendMediaCommand(LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "pc")))
+        assertNull(rig.mirror.peerMedia.value[PC])
+        assertFalse(rig.mirror.sendMediaCommand(PC, LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "pc")))
 
         // The bit arriving later (hello after connect) starts it.
         link.caps.value = mediaCaps
@@ -127,10 +131,10 @@ class MediaMirrorTest {
         assertTrue(link.sent.isEmpty())
         link.inbound.emit(state(session("pc")))
         runCurrent()
-        assertEquals(state(session("pc")), rig.mirror.peerMedia.value)
+        assertEquals(state(session("pc")), rig.mirror.peerMedia.value[PC])
 
         val command = LinkMessage.MediaCommand(LinkMessage.MediaCommand.TOGGLE, "pc")
-        assertTrue(rig.mirror.sendMediaCommand(command))
+        assertTrue(rig.mirror.sendMediaCommand(PC, command))
         assertEquals(listOf<LinkMessage>(command), link.sent)
 
         // Commands from the PC are ignored while not sharing.
@@ -241,11 +245,11 @@ class MediaMirrorTest {
         runCurrent()
         link.inbound.emit(state(session("pc")))
         runCurrent()
-        assertEquals(state(session("pc")), rig.mirror.peerMedia.value)
+        assertEquals(state(session("pc")), rig.mirror.peerMedia.value[PC])
 
         rig.links.value = null
         runCurrent()
-        assertNull(rig.mirror.peerMedia.value)
-        assertFalse(rig.mirror.sendMediaCommand(LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "pc")))
+        assertNull(rig.mirror.peerMedia.value[PC])
+        assertFalse(rig.mirror.sendMediaCommand(PC, LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "pc")))
     }
 }

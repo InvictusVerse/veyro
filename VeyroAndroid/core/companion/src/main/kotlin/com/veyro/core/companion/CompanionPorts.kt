@@ -3,8 +3,11 @@ package com.veyro.core.companion
 import com.veyro.core.link.LinkMessage
 import com.veyro.core.link.PeerConnection
 import com.veyro.core.model.Capabilities
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * The seams [NotificationMirror] works through.
@@ -69,3 +72,28 @@ public data class PeerConnectionLink(public val connection: PeerConnection) : Co
 }
 
 public fun PeerConnection.asCompanionLink(): CompanionLink = PeerConnectionLink(this)
+
+/** One optional link as the list every companion feature takes (a single PC, or tests). */
+public fun Flow<CompanionLink?>.asLinkList(): Flow<List<CompanionLink>> = map { listOfNotNull(it) }
+
+/**
+ * Runs [block] once per live link, concurrently: started when a link appears in the latest list,
+ * cancelled when it leaves (multiple PCs). A block that returns on its own is not restarted while
+ * its link stays. Phone-side events therefore reach every connected PC, and a request is handled
+ * by the block of the link it arrived on, so it is answered on that PC's session only.
+ */
+internal suspend fun Flow<List<CompanionLink>>.forEachLink(block: suspend (CompanionLink) -> Unit) {
+    coroutineScope {
+        val running = HashMap<CompanionLink, Job>()
+        collect { links ->
+            val current = links.toSet()
+            for (gone in running.keys.filter { it !in current }) running.remove(gone)?.cancel()
+            for (link in current) {
+                if (link !in running) running[link] = launch { block(link) }
+            }
+        }
+    }
+}
+
+/** Key for per-PC state received from [this] link. */
+internal val CompanionLink.peerKey: String get() = peerDeviceId.orEmpty()

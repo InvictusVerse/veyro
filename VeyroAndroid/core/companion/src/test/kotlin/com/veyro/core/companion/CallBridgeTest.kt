@@ -72,7 +72,7 @@ class CallBridgeTest {
         val controller = FakeController()
         var n = 0
         CallBridge(
-            links, on, source, controller, backgroundScope,
+            links.asLinkList(), on, source, controller, backgroundScope,
             clock = { testScheduler.currentTime },
             newCallId = { "call-${++n}" },
         ).start()

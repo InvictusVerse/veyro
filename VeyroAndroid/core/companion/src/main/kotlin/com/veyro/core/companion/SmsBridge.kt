@@ -6,7 +6,6 @@ import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -16,8 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
@@ -90,7 +87,8 @@ public interface SmsSender {
  * Bodies, numbers, names and SIM labels are user data: nothing here logs them, only counts.
  */
 public class SmsBridge(
-    private val links: Flow<CompanionLink?>,
+    /** Every live paired session (multiple PCs). */
+    private val links: Flow<List<CompanionLink>>,
     private val enabled: Flow<Boolean>,
     private val source: SmsSource,
     private val sender: SmsSender,
@@ -123,40 +121,38 @@ public class SmsBridge(
         }
     }
 
-    /** Tracks [enabled] for per-request checks; written only by [run]. */
-    private val on = MutableStateFlow(false)
-
     private var job: Job? = null
 
     /** Starts observing. Idempotent; returns the running job. */
     @Synchronized
     public fun start(): Job = job?.takeIf { it.isActive } ?: scope.launch { run() }.also { job = it }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun run() {
-        links
-            .flatMapLatest { link ->
-                link?.peerCapabilities?.map { caps -> link.takeIf { Capability.MESSAGING in caps } }
-                    ?: flowOf(null)
-            }
-            .distinctUntilChanged()
-            .collectLatest { link -> if (link != null) serve(link) }
+        // One session per connected PC: new texts are pushed to every capable PC; a PC's
+        // requests are answered on its own session only.
+        links.forEachLink { link ->
+            link.peerCapabilities
+                .map { Capability.MESSAGING in it }
+                .distinctUntilChanged()
+                .collectLatest { capable -> if (capable) serve(link) }
+        }
     }
 
     private suspend fun serve(link: CompanionLink) {
         try {
             coroutineScope {
-                // Read before any request is handled, then followed; the settings store is only
-                // touched once a capable session exists.
-                on.value = enabled.first()
+                // Tracks [enabled] for this session's per-request checks. Read before any request
+                // is handled, then followed; the settings store is only touched once a capable
+                // session exists.
+                val on = MutableStateFlow(enabled.first())
                 launch { enabled.collect { on.value = it } }
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.SmsThreadsRequest -> link.send(threads(message))
-                            is LinkMessage.SmsMessagesRequest -> link.send(messages(message))
+                            is LinkMessage.SmsThreadsRequest -> link.send(threads(on.value, message))
+                            is LinkMessage.SmsMessagesRequest -> link.send(messages(on.value, message))
                             // Concurrent, so a slow radio never blocks history requests.
-                            is LinkMessage.SmsSend -> launch { link.send(send(message)) }
+                            is LinkMessage.SmsSend -> launch { link.send(send(on.value, message)) }
                             else -> Unit
                         }
                     }
@@ -168,8 +164,6 @@ public class SmsBridge(
         } catch (t: Throwable) {
             // Usually the socket closing under a send. The next session starts afresh.
             VeyroLog.w(TAG) { "SMS session ended: ${t.javaClass.simpleName}" }
-        } finally {
-            on.value = false
         }
     }
 
@@ -202,16 +196,16 @@ public class SmsBridge(
         }
     }
 
-    private suspend fun threads(request: LinkMessage.SmsThreadsRequest): LinkMessage.SmsThreads {
-        if (!on.value) return LinkMessage.SmsThreads(emptyList())
+    private suspend fun threads(on: Boolean, request: LinkMessage.SmsThreadsRequest): LinkMessage.SmsThreads {
+        if (!on) return LinkMessage.SmsThreads(emptyList())
         val limit = request.limit.coerceIn(1, MAX_LIMIT)
         val threads = safely(emptyList()) { source.threads(limit) }.take(limit)
         VeyroLog.d(TAG) { "smsThreads: ${threads.size}" }
         return LinkMessage.SmsThreads(threads)
     }
 
-    private suspend fun messages(request: LinkMessage.SmsMessagesRequest): LinkMessage.SmsMessages {
-        if (!on.value) return LinkMessage.SmsMessages(threadId = request.threadId, messages = emptyList())
+    private suspend fun messages(on: Boolean, request: LinkMessage.SmsMessagesRequest): LinkMessage.SmsMessages {
+        if (!on) return LinkMessage.SmsMessages(threadId = request.threadId, messages = emptyList())
         val limit = request.limit.coerceIn(1, MAX_LIMIT)
         // One extra row tells whether an older page exists.
         val rows = safely(emptyList()) { source.messages(request.threadId, request.beforeTs, limit + 1) }
@@ -224,9 +218,9 @@ public class SmsBridge(
      * Refusals are checked in privacy order: switched off first (tells the PC nothing), then the
      * request's own shape, then the permission. One result per `clientId`, always.
      */
-    private suspend fun send(request: LinkMessage.SmsSend): LinkMessage.SmsSendResult {
+    private suspend fun send(on: Boolean, request: LinkMessage.SmsSend): LinkMessage.SmsSendResult {
         fun fail(error: String) = LinkMessage.SmsSendResult(clientId = request.clientId, ok = false, error = error)
-        if (!on.value) return fail(ERR_DISABLED)
+        if (!on) return fail(ERR_DISABLED)
         val addresses = validate(request.addresses, request.body) ?: return fail(ERR_INVALID)
         if (!sender.canSend()) return fail(ERR_PERMISSION)
 

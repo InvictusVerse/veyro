@@ -70,6 +70,8 @@ import com.veyro.core.companion.asCompanionLink
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import java.util.concurrent.ConcurrentHashMap
@@ -234,57 +236,65 @@ public class VeyroContainer(context: Context) {
      */
     private val connectionManagerReady = MutableStateFlow<ConnectionManager?>(null)
 
-    /** The live paired session as a [CompanionLink], null while there is none. */
+    /** Every live paired session, by peer device id (multiple PCs). Empty until the layer exists. */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val companionLinks: Flow<CompanionLink?> by lazy {
-        connectionManagerReady
-            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
-            .map { it?.asCompanionLink() }
+    private val liveConnections: Flow<Map<String, com.veyro.core.link.PeerConnection>> by lazy {
+        connectionManagerReady.flatMapLatest { manager -> manager?.connections ?: flowOf(emptyMap()) }
     }
 
-    /** Device id of the PC the live session is with, for the Home screen. */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    public val connectedPeerId: Flow<String?> by lazy {
-        connectionManagerReady
-            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
-            .map { it?.peerDeviceId }
+    /** Every live paired session as a [CompanionLink]; each companion feature fans out over it. */
+    private val companionLinks: Flow<List<CompanionLink>> by lazy {
+        liveConnections.map { connections -> connections.values.map { it.asCompanionLink() } }
     }
 
-    /** What the connected PC advertised in its hello, for Home's Lock PC (ADR-038). */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    public val connectedPeerCapabilities: Flow<Capabilities> by lazy {
-        connectionManagerReady
-            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
-            .flatMapLatest { connection -> connection?.peerCapabilities ?: flowOf(Capabilities.NONE) }
+    /** Device ids of the PCs with a live session, for Home and the Devices list. */
+    public val connectedPeerIds: Flow<Set<String>> by lazy {
+        liveConnections.map { it.keys.toSet() }.distinctUntilChanged()
     }
 
-    /** Home's Lock PC: `pcLock` over the live session (ADR-038). False when there is none. */
-    public suspend fun lockConnectedPc(): Boolean {
-        val connection = connectionManagerReady.value?.activeConnection?.value ?: return false
-        if (!connection.isConnected || Capability.DEVICE_STATUS !in connection.peerCapabilities.value) return false
+    /** What each connected PC advertised in its hello, by device id, for Lock PC (ADR-038). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    public val connectedPeerCapabilities: Flow<Map<String, Capabilities>> by lazy {
+        liveConnections.flatMapLatest { connections ->
+            if (connections.isEmpty()) {
+                flowOf(emptyMap())
+            } else {
+                combine(connections.map { (id, c) -> c.peerCapabilities.map { id to it } }) { it.toMap() }
+            }
+        }
+    }
+
+    /** Home's PC switcher: the selected PC is the one single-PC callers act on. */
+    public fun selectPc(deviceId: String?) {
+        connectionManagerReady.value?.selectPeer(deviceId)
+    }
+
+    /** Home's Lock PC: `pcLock` over that PC's live session (ADR-038). False when there is none. */
+    public suspend fun lockPc(deviceId: String): Boolean {
+        val connection = connectionManagerReady.value?.connectionFor(deviceId) ?: return false
+        if (Capability.DEVICE_STATUS !in connection.peerCapabilities.value) return false
         return runCatching { connection.send(LinkMessage.PcLock) }
             .onFailure { VeyroLog.w("Container") { "pcLock not sent: ${it.javaClass.simpleName}" } }
             .isSuccess
     }
 
     /**
-     * Sends what the picker returned (ADR-038: no Send screen). [deviceId] is the PC the user
-     * chose; null means the connected PC, else the most recently used paired PC. Runs on the app
+     * Sends what the picker returned (ADR-038: no Send screen) to every PC in [deviceIds], one
+     * after the other so the banner shows each in turn (multiple PCs: "All connected"). Empty
+     * means the selected connected PC, else the most recently used paired PC. Runs on the app
      * scope, so leaving the app does not stop it; progress and the outcome show in the banner.
      */
-    public fun sendFiles(deviceId: String?, files: List<OutgoingFile>) {
+    public fun sendFiles(deviceIds: List<String>, files: List<OutgoingFile>) {
         if (files.isEmpty()) return
         appScope.launch {
             val peers = runCatching { trustStore.snapshot() }.getOrDefault(emptyList()).filterNot { it.revoked }
-            val connected = connectionManagerReady.value?.activeConnection?.value?.peerDeviceId
-            val target = peers.firstOrNull { it.deviceId.value == deviceId }
-                ?: peers.firstOrNull { it.deviceId.value == connected }
-                ?: peers.maxWithOrNull(compareBy({ it.lastConnectedEpochMillis }, { it.pairedAtEpochMillis }))
-            if (target == null) {
-                VeyroLog.w("Container") { "Send files: no paired device to send to" }
-                return@launch
+            val selected = connectionManagerReady.value?.activeConnection?.value?.peerDeviceId
+            val sent = SendTargets.sendToEach(peers, deviceIds, selected) { target ->
+                // SendResult reports failures in the banner; an exception must not skip the rest.
+                runCatching { transferCoordinator.sendTo(target.deviceId, target.name, files) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             }
-            transferCoordinator.sendTo(target.deviceId, target.name, files)
+            if (sent == 0) VeyroLog.w("Container") { "Send files: no paired device to send to" }
         }
     }
 
@@ -448,8 +458,8 @@ public class VeyroContainer(context: Context) {
      */
     public val notificationMirror: NotificationMirror by lazy {
         NotificationMirror(
-            links = flow { emitAll(connectionManager.activeConnection) }
-                .map { it?.asCompanionLink() },
+            links = flow { emitAll(connectionManager.connections) }
+                .map { connections -> connections.values.map { it.asCompanionLink() } },
             enabled = flow { emitAll(settingsStore.notificationMirrorEnabled) },
             source = notificationSource,
             executor = notificationSource,
