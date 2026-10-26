@@ -22,7 +22,7 @@ other and transfer, with Bluetooth off.
 | | |
 |---|---|
 | **Discovery** | mDNS/DNS-SD `_veyro._tcp` + UDP beacon fallback. No Bluetooth, no location permission. |
-| **Security** | X25519 identities, mutually authenticated Noise handshake, ChaCha20-Poly1305 for every byte, QR/6-digit out-of-band pairing. The LAN is never trusted. |
+| **Security** | X25519 identities, confirm-code or QR pairing. Every command, notification, message and call event is encrypted and authenticated. File contents travel unencrypted on the local network for maximum speed, authenticated per transfer and SHA-256 verified. |
 | **Integrity** | Per-file SHA-256 verification, atomic commit, resume that re-verifies on-disk chunks. |
 | **Idle cost** | No background scanning, no beacons, no wakelocks when idle. Discovery runs only in a bounded, user-initiated window. |
 | **Diagnosis** | AP client isolation, blocked multicast, VPN interference and firewall blocks are detected and named — never a generic "device not found". |
