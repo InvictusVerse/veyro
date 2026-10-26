@@ -142,6 +142,13 @@ public class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // ADR-038: "All files access" may have just been granted in system settings. Unchanged
+        // wallpapers are not resent, so this costs one local read.
+        (application as VeyroApplication).container.wallpaperBridge.refresh()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         readSendRequest(intent)

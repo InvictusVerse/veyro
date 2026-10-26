@@ -69,6 +69,12 @@
     <!-- Photos on the PC (ADR-034). Runtime-requested only when the user turns on "Photos on PC"
          (off by default); only camera-roll and screenshot images are ever read. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Wallpaper on the PC (ADR-038): Android 14+ returns the wallpaper image only to apps with
+         "All files access". Optional; asked for only from the "Show the exact wallpaper" row.
+         Without it the PC gets a picture in the wallpaper's colours. GitHub build only. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />

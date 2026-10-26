@@ -77,10 +77,11 @@ public class AndroidWallpaperSource(
             VeyroLog.w(TAG) { "Wallpaper read failed: ${e.javaClass.simpleName}" }
             null
         }
-        if (drawable == null) return@withContext null
-
+        // Android 14+ refuses the image to ordinary apps (and 13 may return the stock wallpaper);
+        // only "All files access" unlocks it. Without the image, send a picture made from the
+        // wallpaper's colours, which needs no permission, so the PC still matches the phone.
         val source: Bitmap? = try {
-            toBitmap(drawable)
+            if (drawable != null) toBitmap(drawable) else colourWallpaper()
         } catch (e: OutOfMemoryError) {
             VeyroLog.w(TAG) { "Wallpaper too large to read" }
             null
@@ -108,6 +109,37 @@ public class AndroidWallpaperSource(
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, tw, th)
         drawable.draw(canvas)
+        return bitmap
+    }
+
+    /**
+     * A phone-shaped gradient from `WallpaperColors` (API 27+, no permission). Null if the
+     * platform reports no colours.
+     */
+    private fun colourWallpaper(): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return null
+        val colors = runCatching {
+            WallpaperManager.getInstance(appContext).getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+        }.getOrNull() ?: return null
+        val primary = colors.primaryColor.toArgb()
+        val secondary = colors.secondaryColor?.toArgb() ?: primary
+        val tertiary = colors.tertiaryColor?.toArgb() ?: secondary
+        val metrics = appContext.resources.displayMetrics
+        val (w, h) = WallpaperEncoding.scaledSize(
+            metrics.widthPixels.coerceAtLeast(1),
+            metrics.heightPixels.coerceAtLeast(1),
+        )
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val paint = android.graphics.Paint().apply {
+            shader = android.graphics.LinearGradient(
+                0f, 0f, w.toFloat(), h.toFloat(),
+                intArrayOf(primary, secondary, tertiary),
+                floatArrayOf(0f, 0.55f, 1f),
+                android.graphics.Shader.TileMode.CLAMP,
+            )
+        }
+        Canvas(bitmap).drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+        VeyroLog.i(TAG) { "Sending a colour version of the wallpaper (image not readable)" }
         return bitmap
     }
 

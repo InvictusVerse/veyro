@@ -247,20 +247,35 @@ public fun DeviceSettingsScreen(
             }
 
             item {
-                // ADR-038. On by default; reading the wallpaper may need photo access, which this
-                // row asks for. Without it the PC is told there is no wallpaper.
-                val granted = settings.photosPermissionGranted
+                // ADR-038. On by default. Android 14+ gives the wallpaper image only to apps with
+                // "All files access"; without it the PC gets a picture in the wallpaper's colours.
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val exact = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R ||
+                    android.os.Environment.isExternalStorageManager()
                 SwitchPreferenceWidget(
                     title = "Show my wallpaper on PC",
-                    subtitle = "The PC draws this phone with your wallpaper." +
-                        if (granted) "" else " Some Android versions need photo access to read it; tap to grant it.",
+                    subtitle = if (exact) {
+                        "The PC draws this phone with your wallpaper."
+                    } else {
+                        "The PC shows your wallpaper's colours. Android only lets apps read the picture " +
+                            "itself with All files access: tap \"Show the exact wallpaper\" below."
+                    },
                     icon = VeyroIcons.Mobile,
                     checked = settings.wallpaperShareEnabled,
-                    onCheckedChanged = { on ->
-                        settingsViewModel.setWallpaperShareEnabled(on)
-                        if (on && !granted) onRequestPhotosPermission()
-                    },
+                    onCheckedChanged = { on -> settingsViewModel.setWallpaperShareEnabled(on) },
                 )
+                if (!exact && settings.wallpaperShareEnabled) {
+                    TextButton(
+                        onClick = {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                android.net.Uri.fromParts("package", context.packageName, null),
+                            )
+                            runCatching { context.startActivity(intent) }
+                        },
+                        modifier = Modifier.padding(start = 56.dp),
+                    ) { Text("Show the exact wallpaper") }
+                }
             }
 
             item {
