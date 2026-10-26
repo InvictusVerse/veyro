@@ -20,7 +20,7 @@ public sealed partial class MainPage : Page
         { "Calls", typeof(CallsPage) },
         { "Messages", typeof(MessagesPage) },
         { "Transfers", typeof(TransfersPage) },
-        { "Apps", typeof(AppsPage) }
+        { "Photos", typeof(PhotosPage) }
     };
 
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
@@ -41,7 +41,7 @@ public sealed partial class MainPage : Page
         {
             // The phone tabs hide without a phone; do not leave one of them on screen.
             if (e.PropertyName == nameof(MainPageViewModel.HasActiveDevice) && !ViewModel.HasActiveDevice &&
-                MainNavigationView.SelectedItem is NavigationViewItem { Tag: "Calls" or "Messages" or "Apps" })
+                MainNavigationView.SelectedItem is NavigationViewItem { Tag: "Calls" or "Messages" or "Photos" })
             {
                 OpenSettings(null);
             }
@@ -91,7 +91,7 @@ public sealed partial class MainPage : Page
             "Calls" => CallsNavigationItem,
             "Messages" => MessagesNavigationItem,
             "Transfers" => TransfersNavigationItem,
-            "Apps" => AppsNavigationItem,
+            "Photos" => PhotosNavigationItem,
             _ => null
         };
         if (item is not null && !ReferenceEquals(MainNavigationView.SelectedItem, item))
@@ -183,6 +183,8 @@ public sealed partial class MainPage : Page
 
     private void Grid_DragOver(object sender, DragEventArgs e)
     {
+        // A photo dragged out of the Photos tab came from the phone; dropping it here must not send it back.
+        if (PhotosPage.IsDraggingPhoto) return;
         if (!ViewModel.HasActiveDevice || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.DragUIOverride.Caption = $"Send to {ViewModel.Device?.Name}";
@@ -190,6 +192,7 @@ public sealed partial class MainPage : Page
 
     private async void Page_Drop(object sender, DragEventArgs e)
     {
+        if (PhotosPage.IsDraggingPhoto) return;
         if (!ViewModel.HasActiveDevice || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
         var items = await e.DataView.GetStorageItemsAsync();

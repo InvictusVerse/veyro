@@ -212,6 +212,7 @@ public sealed class FileTransferService : IFileTransferService
     private readonly IIdentityManager _identityManager;
     private readonly ISettingsStore _settingsStore;
     private readonly DeviceManagerService _deviceManager;
+    private readonly IPeerSessionRegistry _sessions;
     private CancellationTokenSource? _transferCancellation;
     public ActiveTransfer? ActiveTransfer { get; private set; }
     public ObservableCollection<TransferRecord> History { get; } = [];
@@ -222,13 +223,15 @@ public sealed class FileTransferService : IFileTransferService
         ITrustStore trustStore,
         IIdentityManager identityManager,
         ISettingsStore settingsStore,
-        DeviceManagerService deviceManager)
+        DeviceManagerService deviceManager,
+        IPeerSessionRegistry sessions)
     {
         _historyStore = historyStore;
         _trustStore = trustStore;
         _identityManager = identityManager;
         _settingsStore = settingsStore;
         _deviceManager = deviceManager;
+        _sessions = sessions;
         foreach (var item in _historyStore.GetHistory())
         {
             History.Add(item);
@@ -265,9 +268,11 @@ public sealed class FileTransferService : IFileTransferService
             Items: items);
 
         ActiveTransferChanged?.Invoke(ActiveTransfer);
+        // ADR-034: the phone's live session carries the offer; the discovered endpoint is only
+        // needed when the phone is visible but not connected.
         var peer = _deviceManager.FindDiscoveredPeer(target.DeviceId);
         var trusted = _trustStore.GetPeer(target.DeviceId);
-        if (peer is null || trusted is null)
+        if (trusted is null || (peer is null && !_sessions.IsConnected(target.DeviceId)))
         {
             ActiveTransfer = ActiveTransfer with
             {
@@ -304,7 +309,7 @@ public sealed class FileTransferService : IFileTransferService
             });
             var client = new VeyroLinkClient(_identityManager.DeviceId.Value, _settingsStore.Current.DeviceName);
             Vtc1TransferResult result = await client.SendFilesAsync(
-                peer, trusted, filePaths, progress, _transferCancellation.Token).ConfigureAwait(true);
+                _sessions, peer, trusted, filePaths, progress, _transferCancellation.Token).ConfigureAwait(true);
             var verifiedItems = items.Select(item => item with { Verification = VerificationOutcome.Verified }).ToList();
             ActiveTransfer = ActiveTransfer with
             {

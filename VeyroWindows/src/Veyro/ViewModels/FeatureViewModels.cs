@@ -171,17 +171,3 @@ public sealed class TransferHistoryItemViewModel(TransferRecord record)
     public string ErrorText => Record.ErrorMessage ?? string.Empty;
     public bool HasError => !string.IsNullOrEmpty(Record.ErrorMessage);
 }
-
-/// <summary>
-/// The Apps tab. Veyro cannot list, mirror or launch phone apps yet, so the page says so and
-/// shows nothing else (no sample apps).
-/// </summary>
-public sealed class AppsViewModel : BaseViewModel
-{
-    public const string UnavailableTitle = "Apps are not available yet";
-    public const string UnavailableText =
-        "Veyro cannot list, mirror or open the phone's apps yet. This page stays empty until that feature exists.";
-
-    public string Title => UnavailableTitle;
-    public string Text => UnavailableText;
-}

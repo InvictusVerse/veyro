@@ -502,6 +502,7 @@ public abstract record LinkMessage
                && TotalBytes == other.TotalBytes
                && SenderName == other.SenderName
                && SenderWifiP2pAddress == other.SenderWifiP2pAddress
+               && RequestId == other.RequestId
                && Items.SequenceEqual(other.Items)
                && PreferredRoutes.SequenceEqual(other.PreferredRoutes);
 

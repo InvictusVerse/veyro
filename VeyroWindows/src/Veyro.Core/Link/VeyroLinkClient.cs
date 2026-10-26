@@ -10,8 +10,13 @@ using Veyro.Core.Diagnostics;
 namespace Veyro.Core.Link;
 
 /// <summary>
-/// Windows outbound client for already-paired peers. Pairing remains an explicit UI operation;
+/// Windows outbound transfers to already-paired peers. Pairing remains an explicit UI operation;
 /// this class refuses to connect without the persisted session secret.
+///
+/// A transfer goes over the phone's live session when there is one (ADR-034): Android closes an
+/// existing session when a second inbound one from the same peer arrives, so dialling a separate
+/// connection per transfer killed the companion session. Dialling is the fallback for a phone
+/// that is visible on the network but not connected.
 /// </summary>
 public sealed class VeyroLinkClient
 {
@@ -25,14 +30,65 @@ public sealed class VeyroLinkClient
         _localName = localName;
     }
 
+    /// <summary>How long the phone has to accept or decline an offer sent over the live session.</summary>
+    public TimeSpan DecisionTimeout { get; init; } = TransferMailbox.DecisionTimeout;
+
+    /// <summary>
+    /// Loopback tests only. A phone never legitimately names 127.0.0.1, and connecting there would
+    /// let a peer aim the PC's file bytes at a local service, so the app leaves this false.
+    /// </summary>
+    public bool AllowLoopbackDataPlane { get; init; }
+
+    /// <summary>
+    /// Sends over the peer's live session if <paramref name="sessions"/> has one, otherwise dials
+    /// <paramref name="discovered"/> (untrusted endpoint; the session secret authenticates it).
+    /// </summary>
     public async Task<Vtc1TransferResult> SendFilesAsync(
-        PeerDevice peer,
+        IPeerSessionRegistry sessions,
+        PeerDevice? discovered,
         TrustedPeer trustedPeer,
         IReadOnlyList<string> filePaths,
         IProgress<long>? progress = null,
         CancellationToken ct = default)
     {
-        if (filePaths.Count == 0) throw new ArgumentException("At least one file is required.", nameof(filePaths));
+        TransferPlan plan = BuildPlan(filePaths);
+        IOutboundTransferChannel? channel = null;
+        if (sessions.IsConnected(trustedPeer.DeviceId))
+        {
+            // The session can close between the check and the registration; then dial instead.
+            try { channel = sessions.OpenOutboundTransfer(trustedPeer.DeviceId, plan.TransferId); }
+            catch (InvalidOperationException) { channel = null; }
+        }
+        if (channel is not null)
+        {
+            using (channel)
+            {
+                VeyroTrace.Info($"Outbound transfer over the live session: items={plan.Items.Count}");
+                return await SendOverChannelAsync(channel, plan, progress, ct).ConfigureAwait(false);
+            }
+        }
+        if (discovered is null)
+            throw new InvalidOperationException("The phone is not connected and not visible on the network.");
+        VeyroTrace.Info($"Outbound transfer over a new connection: items={plan.Items.Count}");
+        return await SendOverNewConnectionAsync(discovered, trustedPeer, plan, progress, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Fallback: a separate authenticated connection that carries one transfer.</summary>
+    public Task<Vtc1TransferResult> SendFilesAsync(
+        PeerDevice peer,
+        TrustedPeer trustedPeer,
+        IReadOnlyList<string> filePaths,
+        IProgress<long>? progress = null,
+        CancellationToken ct = default)
+        => SendOverNewConnectionAsync(peer, trustedPeer, BuildPlan(filePaths), progress, ct);
+
+    private async Task<Vtc1TransferResult> SendOverNewConnectionAsync(
+        PeerDevice peer,
+        TrustedPeer trustedPeer,
+        TransferPlan plan,
+        IProgress<long>? progress,
+        CancellationToken ct)
+    {
         if (!string.Equals(peer.DeviceId, trustedPeer.DeviceId, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Trusted identity does not match the selected peer.");
 
@@ -54,52 +110,125 @@ public sealed class VeyroLinkClient
 
         await using var session = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, peer.DeviceId);
         // This outbound connection only carries one transfer, so it does not advertise
-        // NotificationMirror. It does advertise the ADR-026/027 families so the phone knows the
+        // NotificationMirror. It does advertise the companion families so the phone knows the
         // PC speaks them; any companion frame the phone sends here is skipped while waiting for
         // the decision, the phone's persistent session is where that state is handled.
         await session.SendAsync(new LinkMessage.Hello(
             _localDeviceId, _localName, "windows",
             Capabilities: LinkCapabilities.FileTransfer | LinkCapabilities.Resume |
                           LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
-                          LinkCapabilities.Messaging | LinkCapabilities.Calls), ct).ConfigureAwait(false);
+                          LinkCapabilities.Messaging | LinkCapabilities.Calls |
+                          LinkCapabilities.Photos), ct).ConfigureAwait(false);
 
+        await session.SendAsync(plan.Offer, ct).ConfigureAwait(false);
+
+        LinkMessage.TransferDecision decision = await ReceiveDecisionAsync(session, plan.TransferId, ct).ConfigureAwait(false);
+        return await RunDataPlaneAsync(plan, decision, progress, ct).ConfigureAwait(false);
+    }
+
+    private async Task<Vtc1TransferResult> SendOverChannelAsync(
+        IOutboundTransferChannel channel,
+        TransferPlan plan,
+        IProgress<long>? progress,
+        CancellationToken ct)
+    {
+        await channel.SendAsync(plan.Offer, ct).ConfigureAwait(false);
+        LinkMessage.TransferDecision decision;
+        try
+        {
+            decision = await channel.WaitForDecisionAsync(DecisionTimeout, ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            await TryCancelAsync(channel, "timeout").ConfigureAwait(false);
+            throw new TimeoutException("The phone did not accept the transfer in time.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelAsync(channel, "cancelled").ConfigureAwait(false);
+            throw;
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, channel.PeerAborted);
+        try
+        {
+            return await RunDataPlaneAsync(plan, decision, progress, linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is OperationCanceledException or IOException or System.Net.Sockets.SocketException &&
+                                      channel.PeerAborted.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new IOException("The phone stopped the transfer.", error);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelAsync(channel, "cancelled").ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task TryCancelAsync(IOutboundTransferChannel channel, string reason)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await channel.SendAsync(new LinkMessage.Cancel(channel.TransferId, reason), timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            VeyroTrace.Warn($"Sending cancel failed: {error.GetType().Name}");
+        }
+    }
+
+    private sealed record PlannedItem(int Index, string Path, string RelativePath, long Size);
+
+    private sealed record TransferPlan(string TransferId, IReadOnlyList<PlannedItem> Items, LinkMessage.TransferOffer Offer);
+
+    private TransferPlan BuildPlan(IReadOnlyList<string> filePaths)
+    {
+        if (filePaths.Count == 0) throw new ArgumentException("At least one file is required.", nameof(filePaths));
         var items = filePaths
             .Where(File.Exists)
-            .Select((path, index) => new
-            {
-                Index = index,
-                Path = path,
-                RelativePath = RelativePath.SanitizeOutgoingSegment(Path.GetFileName(path)),
-                Size = new FileInfo(path).Length
-            })
+            .Select((path, index) => new PlannedItem(
+                index,
+                path,
+                RelativePath.SanitizeOutgoingSegment(Path.GetFileName(path)),
+                new FileInfo(path).Length))
             .ToList();
         if (items.Count == 0) throw new FileNotFoundException("No selected file exists.");
         string transferId = Guid.NewGuid().ToString("N");
-        long totalBytes = items.Sum(item => item.Size);
-        await session.SendAsync(new LinkMessage.TransferOffer(
+        var offer = new LinkMessage.TransferOffer(
             transferId,
             items.Select(item => new LinkItem(item.Index, item.RelativePath, item.Size, File.GetLastWriteTimeUtc(item.Path).Ticks, false)).ToList(),
-            totalBytes,
+            items.Sum(item => item.Size),
             _localName,
-            [TransferRoute.LanTcp.ToString().ToUpperInvariant()]), ct).ConfigureAwait(false);
+            [TransferRoute.LanTcp.ToString().ToUpperInvariant()]);
+        return new TransferPlan(transferId, items, offer);
+    }
 
-        LinkMessage.TransferDecision decision = await ReceiveDecisionAsync(session, transferId, ct).ConfigureAwait(false);
+    /// <summary>Validates the decision and runs VTC1 to the endpoint it names.</summary>
+    private async Task<Vtc1TransferResult> RunDataPlaneAsync(
+        TransferPlan plan,
+        LinkMessage.TransferDecision decision,
+        IProgress<long>? progress,
+        CancellationToken ct)
+    {
         if (!decision.Accept) throw new UnauthorizedAccessException($"Peer declined transfer: {decision.Reason ?? "no reason"}");
         if (!string.Equals(decision.Route, "LAN_TCP", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(decision.Route, TransferRoute.LanTcp.ToString(), StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("Windows currently supports LAN_TCP for the VTC1 data plane.");
         if (decision.TcpPort is null || string.IsNullOrWhiteSpace(decision.TcpHost) || string.IsNullOrWhiteSpace(decision.AuthToken))
             throw new InvalidDataException("Peer accepted without a complete VTC1 endpoint.");
-        if (decision.TcpHost is "0.0.0.0" or "127.0.0.1" || decision.TcpPort is < 1 or > 65535)
+        if (decision.TcpHost is "0.0.0.0" || (decision.TcpHost is "127.0.0.1" && !AllowLoopbackDataPlane) ||
+            decision.TcpPort is < 1 or > 65535)
             throw new InvalidDataException("Peer advertised an invalid VTC1 endpoint.");
 
         return await Vtc1BulkTransfer.SendAsync(
             decision.TcpHost,
             decision.TcpPort.Value,
-            transferId,
+            plan.TransferId,
             decision.AuthToken,
             _localDeviceId,
-            items.Select(item => new OutboundTransferItem(item.Index, item.Path, item.RelativePath)).ToList(),
+            plan.Items.Select(item => new OutboundTransferItem(item.Index, item.Path, item.RelativePath)).ToList(),
             resume: decision.Resume,
             progress: progress,
             ct: ct).ConfigureAwait(false);

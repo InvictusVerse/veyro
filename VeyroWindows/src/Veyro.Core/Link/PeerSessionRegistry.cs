@@ -35,6 +35,9 @@ public interface IPeerSessionRegistry
     event Action<string, LinkMessage.CallState>? CallStateReceived;
     event Action<string, LinkMessage.CallLog>? CallLogReceived;
 
+    /// <summary>ADR-034 phone-to-PC photo messages: photos, photoThumb, photoNew, photoRemoved. User data.</summary>
+    event Action<string, LinkMessage>? PhotosMessageReceived;
+
     bool IsConnected(string peerId);
 
     /// <summary>Peers with a live session right now.</summary>
@@ -45,6 +48,13 @@ public interface IPeerSessionRegistry
 
     /// <summary>Sends over the peer's live session. Throws if the peer has no session.</summary>
     Task SendAsync(string peerId, LinkMessage message, CancellationToken ct = default);
+
+    /// <summary>
+    /// Routes the transfer-scoped replies for <paramref name="transferId"/> on the peer's live
+    /// session to the returned channel (ADR-034), so a PC-to-phone transfer does not need a second
+    /// connection. Throws <see cref="InvalidOperationException"/> if the peer has no session.
+    /// </summary>
+    IOutboundTransferChannel OpenOutboundTransfer(string peerId, string transferId);
 }
 
 public sealed class PeerSessionRegistry : IPeerSessionRegistry
@@ -66,6 +76,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
     public event Action<string, LinkMessage.CallState>? CallStateReceived;
     public event Action<string, LinkMessage.CallLog>? CallLogReceived;
+    public event Action<string, LinkMessage>? PhotosMessageReceived;
 
     public bool IsConnected(string peerId)
     {
@@ -88,6 +99,14 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         lock (_gate) _sessions.TryGetValue(peerId, out registration);
         if (registration is null) throw new InvalidOperationException("The peer has no live session.");
         await registration.Send(message, ct).ConfigureAwait(false);
+    }
+
+    public IOutboundTransferChannel OpenOutboundTransfer(string peerId, string transferId)
+    {
+        Registration? registration;
+        lock (_gate) _sessions.TryGetValue(peerId, out registration);
+        if (registration is null) throw new InvalidOperationException("The peer has no live session.");
+        return registration.Transfers.Register(transferId, registration.Send);
     }
 
     /// <summary>
@@ -136,6 +155,15 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
             case LinkMessage.CallLog m: Publish(CallLogReceived, peerId, m, nameof(CallLogReceived)); return true;
             default: return false;
         }
+    }
+
+    /// <summary>Routes an ADR-034 phone-to-PC photo message. Returns false for any other type.</summary>
+    internal bool PublishPhotos(string peerId, LinkMessage message)
+    {
+        if (message is not (LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved))
+            return false;
+        Publish(PhotosMessageReceived, peerId, message, nameof(PhotosMessageReceived));
+        return true;
     }
 
     private static void Publish<T>(Action<string, T>? handlers, string peerId, T message, string name)
@@ -193,6 +221,9 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         public string PeerId { get; }
         public Func<LinkMessage, CancellationToken, Task> Send { get; }
 
+        /// <summary>Outbound transfers waiting on this session's replies (ADR-034).</summary>
+        public TransferMailbox Transfers { get; } = new();
+
         /// <summary>Written only by the session's receive loop; a change raises CapabilitiesChanged.</summary>
         public int Capabilities
         {
@@ -206,7 +237,9 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0) _owner.Close(this);
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            Transfers.Close();
+            _owner.Close(this);
         }
     }
 }

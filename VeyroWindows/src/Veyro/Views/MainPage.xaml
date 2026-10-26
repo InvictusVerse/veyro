@@ -327,12 +327,12 @@
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
                         <NavigationViewItem
-                            x:Name="AppsNavigationItem"
-                            Content="Apps"
-                            Tag="Apps"
+                            x:Name="PhotosNavigationItem"
+                            Content="Photos"
+                            Tag="Photos"
                             Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <NavigationViewItem.Icon>
-                                <FontIcon Glyph="&#xED35;" />
+                                <FontIcon Glyph="&#xE91B;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
                     </NavigationView.MenuItems>

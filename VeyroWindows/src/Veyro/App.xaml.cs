@@ -160,8 +160,10 @@ public partial class App : Application
             return;
         }
 
-        // Really closing: take the notification-area icon away with the window.
+        // Really closing: take the notification-area icon away with the window, and the fetched
+        // photo originals with the app (ADR-034).
         VeyroContainer.Instance.SystemTrayService.Dispose();
+        VeyroContainer.Instance.Photos.Dispose();
     }
 
     public static void ShowMainWindow()
@@ -180,6 +182,7 @@ public partial class App : Application
     {
         HandleClosedEvents = false;
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
+        VeyroContainer.Instance.Photos.Dispose();
         VeyroContainer.Instance.NotificationToastService.Dispose();
         VeyroContainer.Instance.CallWindowService.Dispose();
         VeyroContainer.Instance.BluetoothCalling.Dispose();

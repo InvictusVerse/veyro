@@ -27,11 +27,15 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
     public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
     public event Action<string, LinkMessage.CallState>? CallStateReceived;
     public event Action<string, LinkMessage.CallLog>? CallLogReceived;
+    public event Action<string, LinkMessage>? PhotosMessageReceived;
 
     public void Receive(string peerId, LinkMessage message)
     {
         switch (message)
         {
+            case LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved:
+                PhotosMessageReceived?.Invoke(peerId, message);
+                break;
             case LinkMessage.SimList m: SimListReceived?.Invoke(peerId, m); break;
             case LinkMessage.SmsThreads m: SmsThreadsReceived?.Invoke(peerId, m); break;
             case LinkMessage.SmsMessages m: SmsMessagesReceived?.Invoke(peerId, m); break;
@@ -53,6 +57,9 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
         Sent.Add((peerId, message));
         return Task.CompletedTask;
     }
+
+    public IOutboundTransferChannel OpenOutboundTransfer(string peerId, string transferId)
+        => throw new NotSupportedException("Outbound transfers are tested against the real registry.");
 
     public void Connect(string peerId, int capabilities)
     {

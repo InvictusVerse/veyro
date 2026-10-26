@@ -26,6 +26,7 @@ global using Veyro.Core.Media;
 global using Veyro.Core.Messaging;
 global using Veyro.Core.Models;
 global using Veyro.Core.Notifications;
+global using Veyro.Core.Photos;
 global using Veyro.Core.Protocol;
 global using Veyro.Core.Status;
 global using Veyro.Core.Transfer;

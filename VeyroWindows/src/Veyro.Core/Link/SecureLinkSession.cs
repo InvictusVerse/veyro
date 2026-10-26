@@ -194,8 +194,13 @@ public sealed class SecureLinkSession : IAsyncDisposable
     {
         _sendGate.Dispose();
         CryptographicOperations.ZeroMemory(_key);
+        // The peer may close or drop the socket first (Android does right after a transfer). A
+        // failed close handshake must not turn a finished transfer into a failure.
         if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-            await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false);
+        {
+            try { await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false); }
+            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException) { }
+        }
         _socket.Dispose();
     }
 

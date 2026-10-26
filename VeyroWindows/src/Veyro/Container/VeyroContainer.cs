@@ -30,6 +30,7 @@ public sealed class VeyroContainer
     public DeviceStatusService DeviceStatus { get; }
     public MessagingService Messaging { get; }
     public CallService Calls { get; }
+    public PhotoService Photos { get; }
     public string? StartupError { get; set; }
 
     public ISystemTrayService SystemTrayService { get; }
@@ -43,6 +44,7 @@ public sealed class VeyroContainer
     public CallWindowService CallWindowService { get; }
     public INetworkDiagnosticsService NetworkDiagnostics { get; }
     public IQrCodeRenderer QrCodeRenderer { get; }
+    public IPhotoActions PhotoActions { get; }
 
     // ViewModels
     public NotificationsViewModel NotificationsViewModel { get; }
@@ -52,7 +54,7 @@ public sealed class VeyroContainer
     public TransfersPageViewModel TransfersPageViewModel { get; }
     public MessagesViewModel MessagesViewModel { get; }
     public CallsPageViewModel CallsPageViewModel { get; }
-    public AppsViewModel AppsViewModel { get; }
+    public PhotosViewModel PhotosViewModel { get; }
     public GeneralViewModel GeneralViewModel { get; }
     public DevicesViewModel DevicesViewModel { get; }
     public BluetoothCallingViewModel BluetoothCallingViewModel { get; }
@@ -89,6 +91,11 @@ public sealed class VeyroContainer
         // ADR-027: in-memory only, cleared when the phone's session closes.
         Messaging = new MessagingService(PeerSessions);
         Calls = new CallService(PeerSessions);
+        // ADR-034: metadata and thumbnails in memory; fetched originals in LocalCache, deleted
+        // with the session. Offers answering our photoFetch are accepted without a prompt.
+        Photos = new PhotoService(PeerSessions, Constants.LocalCacheDirectory);
+        LinkServer.RequestedOffers = Photos;
+        PhotoActions = new WindowsPhotoActions(() => App.WindowHandle);
         DiscoveryService = new UdpDiscoveryService(
             IdentityManager.DeviceId.Value,
             SettingsStore.Current.DeviceName,
@@ -102,7 +109,8 @@ public sealed class VeyroContainer
         ThemeModeService = new AppThemeModeService();
         // Paired phones from the trust store, connected state from the live sessions.
         DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService, PeerSessions);
-        FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager);
+        // ADR-034: sends over the phone's live session; dials only when there is none.
+        FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
         // ADR-029: Bluetooth hands-free call audio (Windows 11); answers route through CallRouter.
         BluetoothCalling = new BluetoothCallingService(SettingsStore);
         CallRouter = new CallRouter(Calls, BluetoothCalling);
@@ -122,7 +130,7 @@ public sealed class VeyroContainer
         MessagesViewModel = new MessagesViewModel(Messaging, DeviceManager);
         CallsPageViewModel = new CallsPageViewModel(Calls, CallRouter, DeviceManager);
         BluetoothCallingViewModel = new BluetoothCallingViewModel(BluetoothCalling, DeviceManager);
-        AppsViewModel = new AppsViewModel();
+        PhotosViewModel = new PhotosViewModel(Photos, DeviceManager);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);
 

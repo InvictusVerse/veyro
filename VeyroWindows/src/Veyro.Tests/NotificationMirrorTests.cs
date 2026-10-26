@@ -81,6 +81,7 @@ public sealed class NotificationMirrorServiceTests
         public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
         public event Action<string, LinkMessage.CallState>? CallStateReceived;
         public event Action<string, LinkMessage.CallLog>? CallLogReceived;
+        public event Action<string, LinkMessage>? PhotosMessageReceived;
 #pragma warning restore CS0067
 
         public bool IsConnected(string peerId) => Connected;
@@ -92,6 +93,9 @@ public sealed class NotificationMirrorServiceTests
             Sent.Add(message);
             return Task.CompletedTask;
         }
+
+        public IOutboundTransferChannel OpenOutboundTransfer(string peerId, string transferId)
+            => throw new NotSupportedException();
 
         public void Receive(LinkMessage.Notification notification) => NotificationReceived?.Invoke(Peer, notification);
         public void Open() => SessionOpened?.Invoke(Peer);

@@ -60,7 +60,14 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     public const int LocalCapabilities =
         LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror |
         LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
-        LinkCapabilities.Messaging | LinkCapabilities.Calls;
+        LinkCapabilities.Messaging | LinkCapabilities.Calls | LinkCapabilities.Photos;
+
+    /// <summary>
+    /// Claims offers that answer a request this PC made (photoFetch, ADR-034). Those are accepted
+    /// without a prompt into the claim's folder and do not count against the one-offer-at-a-time
+    /// rule, so opening photos one after another never meets "busy".
+    /// </summary>
+    public IRequestedOfferHandler? RequestedOffers { get; set; }
 
     /// <summary>
     /// The Accept / Decline prompt. Confirm pairing always asks (with the code both screens show);
@@ -528,6 +535,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         Task? activeTransfer = null;
         string? activeTransferId = null;
         CancellationTokenSource? transferCancellation = null;
+        // ADR-034: offers answering our own requests, keyed by transferId.
+        var requested = new Dictionary<string, (Task Task, CancellationTokenSource Cancellation)>(StringComparer.Ordinal);
         try
         {
             while (true)
@@ -549,6 +558,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 }
                 if (message is null) break;
 
+                // ADR-034: replies to a PC-to-phone transfer sent over this session go to its sender.
+                if (registration.Transfers.TryDeliver(message.Envelope.Payload)) continue;
+
                 switch (message.Envelope.Payload)
                 {
                     case LinkMessage.Hello hello:
@@ -566,6 +578,25 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         break;
                     case LinkMessage.Pong:
                         break;
+                    case LinkMessage.TransferOffer offer when ClaimRequested(peer.DeviceId, offer) is { } claim:
+                    {
+                        foreach (string done in requested.Where(entry => entry.Value.Task.IsCompleted).Select(entry => entry.Key).ToList())
+                        {
+                            requested[done].Cancellation.Dispose();
+                            requested.Remove(done);
+                        }
+                        if (requested.ContainsKey(offer.TransferId))
+                        {
+                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "busy"), ct).ConfigureAwait(false);
+                            RequestedOffers?.OnFailed(peer.DeviceId, offer.RequestId!, new InvalidDataException("Duplicate transfer id."));
+                            break;
+                        }
+                        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        requested[offer.TransferId] = (
+                            HandleOfferAsync(secure, peer, offer, remoteAddress, claim, cancellation.Token),
+                            cancellation);
+                        break;
+                    }
                     case LinkMessage.TransferOffer offer:
                         if (activeTransfer is { IsCompleted: false })
                         {
@@ -575,11 +606,18 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         transferCancellation?.Dispose();
                         transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         activeTransferId = offer.TransferId;
-                        activeTransfer = HandleOfferAsync(secure, peer, offer, remoteAddress, transferCancellation.Token);
+                        activeTransfer = HandleOfferAsync(secure, peer, offer, remoteAddress, claim: null, transferCancellation.Token);
                         break;
                     case LinkMessage.Cancel cancel:
                         if (activeTransfer is { IsCompleted: false } && cancel.TransferId == activeTransferId)
                             transferCancellation!.Cancel();
+                        else if (requested.TryGetValue(cancel.TransferId, out var running) && !running.Task.IsCompleted)
+                            running.Cancellation.Cancel();
+                        break;
+                    // ADR-034. File names and images are user data: never logged.
+                    case LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved:
+                        registration.Capabilities |= LinkCapabilities.Photos;
+                        _sessions.PublishPhotos(peer.DeviceId, message.Envelope.Payload);
                         break;
                     case LinkMessage.Notification notification:
                         // A peer that sends notif speaks the notification family even if this
@@ -626,6 +664,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 try { await activeTransfer.ConfigureAwait(false); } catch { }
             }
             transferCancellation?.Dispose();
+            foreach ((Task task, CancellationTokenSource cancellation) in requested.Values)
+            {
+                cancellation.Cancel();
+                try { await task.ConfigureAwait(false); } catch { }
+                cancellation.Dispose();
+            }
             VeyroTrace.Info($"Session ended for peer {peer.DeviceId}");
         }
     }
@@ -635,20 +679,25 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         TrustedPeer sessionPeer,
         LinkMessage.TransferOffer offer,
         IPAddress? remoteAddress,
+        RequestedOfferClaim? claim,
         CancellationToken ct)
     {
         bool decided = false;
+        string destinationRoot = claim?.DestinationDirectory ?? _destinationRoot;
         try
         {
             // Re-read trust per offer: the user may have revoked the peer or changed auto-accept
-            // since the session was opened.
+            // since the session was opened. A claimed offer answers our own request (ADR-034): the
+            // user already asked for it, so there is no prompt.
             TrustedPeer? peer = _trustStore.GetPeer(sessionPeer.DeviceId);
             bool allowed = peer is not null &&
-                (peer.AutoAcceptTransfers || await OfferAuthorizer(new InboundOfferRequest(peer, offer)).ConfigureAwait(false));
+                (claim is not null || peer.AutoAcceptTransfers ||
+                 await OfferAuthorizer(new InboundOfferRequest(peer, offer)).ConfigureAwait(false));
             if (!allowed)
             {
                 decided = true;
                 await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "declined"), ct).ConfigureAwait(false);
+                if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, new UnauthorizedAccessException("The peer is no longer trusted."));
                 return;
             }
 
@@ -656,8 +705,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 .Where(item => !item.IsDir)
                 .Select(item => new InboundTransferItem(item.Index, item.RelPath, item.Size))
                 .ToList();
-            Directory.CreateDirectory(_destinationRoot);
-            var resume = Vtc1BulkTransfer.BuildResume(_destinationRoot, inboundItems);
+            Directory.CreateDirectory(destinationRoot);
+            var resume = Vtc1BulkTransfer.BuildResume(destinationRoot, inboundItems);
+            Vtc1TransferResult result;
 
             using var tcp = new TcpListener(IPAddress.Any, FindFreePort(Port));
             tcp.Start();
@@ -675,12 +725,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     FallbackHost: host,
                     AuthToken: token,
                     Resume: resume), ct).ConfigureAwait(false);
-                await Vtc1BulkTransfer.ReceiveAsync(
+                result = await Vtc1BulkTransfer.ReceiveAsync(
                     tcp,
                     offer.TransferId,
                     token,
                     sessionPeer.DeviceId,
-                    _destinationRoot,
+                    destinationRoot,
                     inboundItems,
                     ct: ct).ConfigureAwait(false);
             }
@@ -689,14 +739,25 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 tcp.Stop();
             }
             await secure.SendAsync(new LinkMessage.TransferEnd(offer.TransferId, true), ct).ConfigureAwait(false);
+            if (claim is not null)
+            {
+                // Vtc1BulkTransfer validated every path against the root before writing it.
+                var paths = result.CompletedPaths
+                    .Select(relative => Path.GetFullPath(Path.Combine(destinationRoot, relative.Replace('/', Path.DirectorySeparatorChar))))
+                    .ToList();
+                RequestedOffers?.OnCompleted(sessionPeer.DeviceId, offer.RequestId!, paths);
+            }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException error) when (ct.IsCancellationRequested)
         {
             VeyroTrace.Info("Inbound transfer cancelled");
+            if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, error);
         }
         catch (Exception error)
         {
-            VeyroTrace.Error("Inbound transfer failed", error);
+            // Type only: exception messages can name the user's files.
+            VeyroTrace.Warn($"Inbound transfer failed: {error.GetType().Name}");
+            if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, error);
             try
             {
                 LinkMessage failure = decided
@@ -705,6 +766,18 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 await secure.SendAsync(failure, CancellationToken.None).ConfigureAwait(false);
             }
             catch { }
+        }
+    }
+
+    /// <summary>ADR-034: an offer carrying a requestId the handler issued. Others take the consent path.</summary>
+    private RequestedOfferClaim? ClaimRequested(string peerId, LinkMessage.TransferOffer offer)
+    {
+        if (offer.RequestId is null || RequestedOffers is not { } handler) return null;
+        try { return handler.TryClaim(peerId, offer); }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Requested offer claim failed: {error.GetType().Name}");
+            return null;
         }
     }
 
