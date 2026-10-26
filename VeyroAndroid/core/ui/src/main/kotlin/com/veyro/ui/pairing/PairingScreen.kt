@@ -1,6 +1,9 @@
 package com.veyro.ui.pairing
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -8,17 +11,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,23 +32,27 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.veyro.core.designsystem.components.VeyroButton
-import com.veyro.core.designsystem.components.VeyroCard
-import com.veyro.core.designsystem.components.VeyroOutlineButton
-import com.veyro.core.designsystem.components.VeyroSectionHeader
-import com.veyro.core.designsystem.theme.VeyroCyan
-import com.veyro.core.designsystem.theme.VeyroRed
-import com.veyro.core.designsystem.theme.VeyroTeal
+import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.core.model.Platform
+import com.veyro.core.model.fingerprint
+import kotlinx.coroutines.delay
 
 /**
- * Pairing screen (Devices > Pair new device).
+ * Pairing screen (Devices > Pair new device), in the shape of Phone Link's "Link to Windows":
+ * one illustration, one sentence of instructions, one primary action, and the nearby PCs as a
+ * single list you tap. Rebuilt after the hardware test called the previous one unusable.
  *
- * Scan-to-pair is the primary path (ADR-030): one large button at the top. Below it the live
- * nearby list: tapping a device shows the same 6-digit code on both screens and the user accepts
- * on the other device (ADR-031). Discovery starts when the screen opens so the list is live.
+ * - Scan QR (ADR-030) is the primary button; the nearby list pairs by comparing a code (ADR-031).
+ * - Discovery runs for as long as the screen is open: when a bounded window ends it restarts
+ *   itself, so there is no countdown and no Find / Stop to manage.
+ * - Status and errors are a single inline line under the list, not stacked cards.
  */
 @Composable
 public fun PairingScreen(
@@ -53,74 +63,69 @@ public fun PairingScreen(
     val scan = rememberQrScanAction(viewModel)
 
     LaunchedEffect(Unit) { viewModel.startSearching() }
+    // Keep looking while the screen is open; pause while a pairing is in progress.
+    LaunchedEffect(state.isSearching, state.pairingBusy) {
+        if (!state.isSearching && !state.pairingBusy) {
+            delay(1_500)
+            viewModel.startSearching()
+        }
+    }
+
+    val pcs = state.candidates.filter { it.platform != Platform.ANDROID }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        item {
-            Text(
-                text = "Pair a device",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
+        item(key = "hero") { Hero() }
 
-        item {
-            ScanQrCard(
-                busy = state.pairingBusy,
-                onScan = scan,
-                onEnterCode = viewModel::showCodeEntry,
-            )
-        }
-
-        if (state.qr != QrPairingState.Idle) {
-            item {
-                QrStatusCard(
-                    state = state.qr,
-                    onDismiss = viewModel::dismissQrStatus,
-                    onRetry = scan,
+        item(key = "scan") {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Button(
+                    onClick = scan,
+                    enabled = !state.pairingBusy,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                ) {
+                    Icon(VeyroIcons.QrCodeScanner, contentDescription = null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Scan the QR code on your PC", style = MaterialTheme.typography.titleMedium)
+                }
+                Text(
+                    text = "On the PC: Veyro > Settings > Pair a new phone",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }
 
-        if (state.showCodeEntryHint) {
-            item { CodeEntryHint() }
-        }
-
-        state.status?.let { msg ->
-            item { StatusCard(message = msg, isError = false, onDismiss = viewModel::clearStatus) }
-        }
-        state.error?.let { msg ->
-            item { StatusCard(message = msg, isError = true, onDismiss = viewModel::clearStatus) }
-        }
-
-        item {
-            NearbyHeader(
-                isSearching = state.isSearching,
-                secondsRemaining = state.secondsRemaining,
-                onFindDevices = viewModel::startSearching,
-                onStop = viewModel::stopSearching,
-            )
-        }
-
-        if (state.isSearching) {
-            if (state.candidates.isNotEmpty()) {
-                items(state.candidates, key = { it.deviceId.value }) { candidate ->
-                    CandidateCard(
-                        candidate = candidate,
-                        onPair = { viewModel.pairWith(candidate) },
-                        enabled = !state.pairingBusy,
-                    )
-                }
-            } else {
-                item { SearchingCard() }
+        if (state.qr != QrPairingState.Idle) {
+            item(key = "qr") {
+                QrStatusCard(state = state.qr, onDismiss = viewModel::dismissQrStatus, onRetry = scan)
             }
         }
 
-        item { Spacer(modifier = Modifier.height(80.dp)) }
+        item(key = "nearby") {
+            NearbyList(
+                pcs = pcs,
+                searching = state.isSearching,
+                busy = state.pairingBusy,
+                onPair = viewModel::pairWith,
+            )
+        }
+
+        val message = state.error ?: state.status
+        if (message != null) {
+            item(key = "message") {
+                InlineMessage(text = message, isError = state.error != null, onDismiss = viewModel::clearStatus)
+            }
+        }
+
+        item(key = "help") { Troubleshooting() }
     }
 
     ConfirmPairingDialog(
@@ -131,64 +136,156 @@ public fun PairingScreen(
     )
 }
 
+/** A laptop and a phone with a link between them; the only illustration on the screen. */
 @Composable
-private fun NearbyHeader(
-    isSearching: Boolean,
-    secondsRemaining: Int,
-    onFindDevices: () -> Unit,
-    onStop: () -> Unit,
+private fun Hero() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DeviceBadge { Icon(VeyroIcons.Desktop, contentDescription = null, modifier = Modifier.size(34.dp)) }
+            Box(
+                Modifier
+                    .padding(horizontal = 12.dp)
+                    .width(40.dp)
+                    .height(2.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+            )
+            DeviceBadge { Icon(VeyroIcons.Mobile, contentDescription = null, modifier = Modifier.size(30.dp)) }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(
+            text = "Connect to your PC",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "Open Veyro on your PC and keep both on the same Wi-Fi. Then scan its QR code, or pick it below.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun DeviceBadge(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center,
+    ) { content() }
+}
+
+@Composable
+private fun NearbyList(
+    pcs: List<PairingViewModel.Candidate>,
+    searching: Boolean,
+    busy: Boolean,
+    onPair: (PairingViewModel.Candidate) -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
-            VeyroSectionHeader("Nearby devices")
-            if (isSearching) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = null,
-                        tint = VeyroCyan,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Visible for ${secondsRemaining}s",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VeyroCyan,
-                    )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "PCs nearby",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+        )
+        OutlinedCard(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            // A thin bar instead of a countdown: it is always looking while this screen is open.
+            if (searching) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+            if (pcs.isEmpty()) {
+                Text(
+                    text = if (searching) "Looking for PCs running Veyro..." else "No PC found yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+                )
+            } else {
+                pcs.forEachIndexed { index, pc ->
+                    if (index > 0) HorizontalDivider(modifier = Modifier.padding(start = 76.dp))
+                    PcRow(pc = pc, enabled = !busy && !pc.isAlreadyPaired && pc.endpoints.isNotEmpty(), onPair = { onPair(pc) })
                 }
             }
-        }
-        if (isSearching) {
-            VeyroOutlineButton(text = "Stop", onClick = onStop, height = 36.dp)
-        } else {
-            VeyroButton(text = "Find devices", onClick = onFindDevices, height = 36.dp)
         }
     }
 }
 
 @Composable
-private fun StatusCard(
-    message: String,
-    isError: Boolean,
-    onDismiss: () -> Unit,
-) {
-    VeyroCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
-                contentDescription = null,
-                tint = if (isError) VeyroRed else VeyroTeal,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(modifier = Modifier.width(12.dp))
+private fun PcRow(pc: PairingViewModel.Candidate, enabled: Boolean, onPair: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, role = Role.Button, onClick = onPair)
+            .heightIn(min = 72.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) { Icon(VeyroIcons.Desktop, contentDescription = null, modifier = Modifier.size(22.dp)) }
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
+                text = pc.name,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            TextButton(onClick = onDismiss) {
-                Text("OK", color = VeyroCyan)
+            Text(
+                text = if (pc.isAlreadyPaired) "Already paired" else "Code ${pc.deviceId.fingerprint()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (pc.isAlreadyPaired) {
+            Icon(VeyroIcons.Check, contentDescription = "Already paired", tint = MaterialTheme.colorScheme.primary)
+        } else {
+            TextButton(onClick = onPair, enabled = enabled) { Text("Connect") }
+        }
+    }
+}
+
+@Composable
+private fun InlineMessage(text: String, isError: Boolean, onDismiss: () -> Unit) {
+    val color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Icon(if (isError) VeyroIcons.Warning else VeyroIcons.Info, contentDescription = null, tint = color)
+        Spacer(Modifier.width(12.dp))
+        Text(text = text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        TextButton(onClick = onDismiss) { Text("OK") }
+    }
+}
+
+@Composable
+private fun Troubleshooting() {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Text(
+            text = "Can't see your PC?",
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+        listOf(
+            "Veyro is open on the PC.",
+            "Both devices are on the same Wi-Fi or hotspot.",
+            "On the PC the network is set to Private, and Veyro was allowed through the firewall.",
+        ).forEach { line ->
+            Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                Text("\u2022", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
