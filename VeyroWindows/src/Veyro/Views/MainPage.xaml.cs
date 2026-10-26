@@ -12,6 +12,17 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         InitializeComponent();
+        // A toast asked for a conversation: switch to the Messages tab (the view model selects the thread).
+        VeyroContainer.Instance.MessagesViewModel.OpenRequested += SelectMessagesTab;
+    }
+
+    private void SelectMessagesTab()
+    {
+        NavigationViewItem? messages = MainNavigationView.MenuItems
+            .OfType<NavigationViewItem>()
+            .FirstOrDefault(item => item.Tag as string == "Messages");
+        if (messages is not null && !ReferenceEquals(MainNavigationView.SelectedItem, messages))
+            MainNavigationView.SelectedItem = messages;
     }
 
     private void MainNavigationView_Loaded(object sender, RoutedEventArgs e)

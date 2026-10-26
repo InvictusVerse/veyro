@@ -27,6 +27,8 @@ public sealed class VeyroContainer
     public PcMediaPublisher PcMediaPublisher { get; }
     public IWindowsBatterySource PcBatterySource { get; }
     public DeviceStatusService DeviceStatus { get; }
+    public MessagingService Messaging { get; }
+    public CallService Calls { get; }
     public string? StartupError { get; set; }
 
     public ISystemTrayService SystemTrayService { get; }
@@ -73,6 +75,9 @@ public sealed class VeyroContainer
         PcMediaPublisher = new PcMediaPublisher(PeerSessions, PcMediaSource);
         PcBatterySource = new WindowsBatterySource();
         DeviceStatus = new DeviceStatusService(PeerSessions, PcBatterySource);
+        // ADR-027: in-memory only, cleared when the phone's session closes.
+        Messaging = new MessagingService(PeerSessions);
+        Calls = new CallService(PeerSessions);
         DiscoveryService = new UdpDiscoveryService(
             IdentityManager.DeviceId.Value,
             SettingsStore.Current.DeviceName,
@@ -85,7 +90,11 @@ public sealed class VeyroContainer
         DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService);
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager);
         ScreenMirrorService = new ScreenMirrorService();
-        NotificationToastService = new NotificationToastService(NotificationMirror, DataDirectory);
+        NotificationToastService = new NotificationToastService(
+            NotificationMirror, Messaging, Calls,
+            // Invoked on toast activation, long after construction has assigned the view model.
+            openThread: (peerId, threadId) => MessagesViewModel!.RequestOpenThread(peerId, threadId),
+            DataDirectory);
 
         NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager);
         PhoneMediaViewModel = new PhoneMediaViewModel(PhoneMedia, DeviceManager);
@@ -93,8 +102,8 @@ public sealed class VeyroContainer
 
         MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService, ScreenMirrorService);
         TransfersPageViewModel = new TransfersPageViewModel(DeviceManager, FileTransferService, SettingsStore);
-        MessagesViewModel = new MessagesViewModel(DeviceManager);
-        CallsPageViewModel = new CallsPageViewModel(DeviceManager);
+        MessagesViewModel = new MessagesViewModel(Messaging, DeviceManager);
+        CallsPageViewModel = new CallsPageViewModel(Calls, DeviceManager);
         AppsViewModel = new AppsViewModel(DeviceManager);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);

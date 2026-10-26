@@ -10,11 +10,16 @@ namespace Veyro.Platforms.Windows.Services;
 /// <summary>
 /// Mirrors newly posted phone notifications as Windows App SDK app notifications (toasts) and
 /// routes toast buttons and the inline reply back to <see cref="INotificationMirrorService"/>.
-/// Notification contents are user data: never logged here.
+/// Also raises toasts for incoming SMS and ringing calls (ADR-027) and routes their reply and
+/// call buttons to <see cref="IMessagingService"/> and <see cref="ICallService"/>.
+/// Notification, message and call contents are user data: never logged here. SMS and call toasts
+/// expire on reboot and are removed when the phone's session closes; toast arguments carry ids
+/// only, never numbers or text.
 /// </summary>
 public sealed class NotificationToastService : INotificationToastService
 {
     private const string ReplyInputId = "reply";
+    private const string SmsReplyInputId = "smsReply";
     private const int MaxActionButtons = 3;
     private const int MaxTitleLength = 200;
     private const int MaxBodyLength = 1000;
@@ -22,13 +27,26 @@ public sealed class NotificationToastService : INotificationToastService
     private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
     private readonly INotificationMirrorService _mirror;
+    private readonly IMessagingService _messaging;
+    private readonly ICallService _calls;
+    private readonly Action<string, long> _openThread;
     private readonly string _fallbackDataDirectory;
+    private readonly object _ringingGate = new();
+    private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
     private (string Directory, string? UriPrefix)? _iconLocation;
     private bool _registered;
 
-    public NotificationToastService(INotificationMirrorService mirror, string fallbackDataDirectory)
+    public NotificationToastService(
+        INotificationMirrorService mirror,
+        IMessagingService messaging,
+        ICallService calls,
+        Action<string, long> openThread,
+        string fallbackDataDirectory)
     {
         _mirror = mirror;
+        _messaging = messaging;
+        _calls = calls;
+        _openThread = openThread;
         _fallbackDataDirectory = fallbackDataDirectory;
     }
 
@@ -42,6 +60,8 @@ public sealed class NotificationToastService : INotificationToastService
             AppNotificationManager.Default.Register();
             _registered = true;
             _mirror.Changed += OnMirrorChanged;
+            _messaging.Changed += OnMessagingChanged;
+            _calls.Changed += OnCallChanged;
             VeyroTrace.Info("App notifications registered");
         }
         catch (Exception error)
@@ -56,6 +76,8 @@ public sealed class NotificationToastService : INotificationToastService
         if (!_registered) return;
         _registered = false;
         _mirror.Changed -= OnMirrorChanged;
+        _messaging.Changed -= OnMessagingChanged;
+        _calls.Changed -= OnCallChanged;
         AppNotificationManager.Default.NotificationInvoked -= OnNotificationInvoked;
         try { AppNotificationManager.Default.Unregister(); }
         catch (Exception error) { VeyroTrace.Error("App notification unregistration failed", error); }
@@ -123,6 +145,148 @@ public sealed class NotificationToastService : INotificationToastService
         }
     }
 
+    // ── SMS and calls (ADR-027) ──────────────────────────────────────────────────────
+
+    private void OnMessagingChanged(MessagingChange change)
+    {
+        switch (change.Kind)
+        {
+            case MessagingChangeKind.Incoming when change.Message is not null && change.ThreadId is { } threadId:
+                ShowSms(change.PeerId, threadId, change.Message);
+                break;
+            case MessagingChangeKind.Cleared:
+                _ = RemoveGroupAsync(SmsGroupFor(change.PeerId));
+                break;
+        }
+    }
+
+    private void ShowSms(string peerId, long threadId, SmsMessage message)
+    {
+        try
+        {
+            SmsThread? thread = _messaging.GetThread(peerId, threadId);
+            string sender = thread is not null ? SmsThreadItemViewModel.TitleOf(thread) : message.Address;
+            string thread64 = threadId.ToString(CultureInfo.InvariantCulture);
+            var builder = new AppNotificationBuilder()
+                .AddArgument("action", "sms-open")
+                .AddArgument("peer", peerId)
+                .AddArgument("thread", thread64)
+                .SetTag(Hash("t|" + thread64))
+                .SetGroup(SmsGroupFor(peerId))
+                .AddText(Clip(sender, MaxTitleLength))
+                .AddText(Clip(message.Body, MaxBodyLength))
+                .AddTextBox(SmsReplyInputId, "Type a reply", "Reply")
+                .AddButton(new AppNotificationButton("Send")
+                    .AddArgument("action", "sms-reply")
+                    .AddArgument("peer", peerId)
+                    .AddArgument("thread", thread64)
+                    .SetInputId(SmsReplyInputId));
+            AppNotification notification = builder.BuildNotification();
+            notification.ExpiresOnReboot = true;
+            AppNotificationManager.Default.Show(notification);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Showing SMS toast failed", error);
+        }
+    }
+
+    private void OnCallChanged(CallChange change)
+    {
+        switch (change.Kind)
+        {
+            case CallChangeKind.State when change.Call is { } call:
+                string key = change.PeerId + "|" + call.CallId;
+                if (call.IsIncomingRinging)
+                {
+                    bool fresh;
+                    lock (_ringingGate) fresh = _ringingShown.Add(key);
+                    if (fresh) ShowIncomingCall(call);
+                }
+                else
+                {
+                    bool shown;
+                    lock (_ringingGate) shown = _ringingShown.Remove(key);
+                    if (shown) _ = RemoveTagAsync(CallTagFor(call.CallId), CallGroupFor(change.PeerId));
+                }
+                break;
+            case CallChangeKind.Cleared:
+                lock (_ringingGate) _ringingShown.RemoveWhere(k => k.StartsWith(change.PeerId + "|", StringComparison.Ordinal));
+                _ = RemoveGroupAsync(CallGroupFor(change.PeerId));
+                break;
+        }
+    }
+
+    private void ShowIncomingCall(PhoneCall call)
+    {
+        try
+        {
+            string title = call.Name ?? call.Number ?? "Unknown caller";
+            var builder = new AppNotificationBuilder()
+                .SetScenario(AppNotificationScenario.IncomingCall)
+                .AddArgument("action", "call-open")
+                .AddArgument("peer", call.PeerId)
+                .SetTag(CallTagFor(call.CallId))
+                .SetGroup(CallGroupFor(call.PeerId))
+                .AddText(Clip(title, MaxTitleLength))
+                .AddText(call.Name is not null && call.Number is not null ? Clip(call.Number, MaxTitleLength) : "Incoming call")
+                .AddText("Audio stays on the phone")
+                .AddButton(CallButton("Answer (on phone)", "call-answer", call, AppNotificationButtonStyle.Success))
+                .AddButton(CallButton("Decline", "call-decline", call, AppNotificationButtonStyle.Critical))
+                .AddButton(CallButton("Silence", "call-silence", call, null));
+            AppNotification notification = builder.BuildNotification();
+            notification.ExpiresOnReboot = true;
+            AppNotificationManager.Default.Show(notification);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Showing call toast failed", error);
+        }
+    }
+
+    private static AppNotificationButton CallButton(string label, string action, PhoneCall call, AppNotificationButtonStyle? style)
+    {
+        var button = new AppNotificationButton(label)
+            .AddArgument("action", action)
+            .AddArgument("peer", call.PeerId)
+            .AddArgument("call", EncodeArgument(call.CallId));
+        if (style is { } s && AppNotificationButton.IsButtonStyleSupported()) button.SetButtonStyle(s);
+        return button;
+    }
+
+    /// <summary>Applies a toast call button only if that call is still the phone's current call.</summary>
+    private void RunCallAction(string peerId, string? encodedCallId, string action)
+    {
+        if (encodedCallId is null || DecodeArgument(encodedCallId) is not { } callId) return;
+        if (_calls.GetCurrentCall(peerId)?.CallId != callId) return;
+        _ = RunAsync(() => _calls.SendActionAsync(peerId, action), "call " + action);
+    }
+
+    private void ReplyToThread(string peerId, string? rawThread, string text)
+    {
+        if (!long.TryParse(rawThread, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long threadId)) return;
+        if (_messaging.GetThread(peerId, threadId) is not { Addresses.Count: > 0 } thread) return;
+        _ = RunAsync(() => _messaging.SendAsync(peerId, thread.Addresses, text), "SMS reply");
+    }
+
+    private static string SmsGroupFor(string peerId) => Hash("s|" + peerId);
+
+    private static string CallGroupFor(string peerId) => Hash("c|" + peerId);
+
+    private static string CallTagFor(string callId) => Hash("call|" + callId);
+
+    private static async Task RemoveTagAsync(string tag, string group)
+    {
+        try { await AppNotificationManager.Default.RemoveByTagAndGroupAsync(tag, group); }
+        catch (Exception error) { VeyroTrace.Error("Removing toast failed", error); }
+    }
+
+    private static async Task RemoveGroupAsync(string group)
+    {
+        try { await AppNotificationManager.Default.RemoveByGroupAsync(group); }
+        catch (Exception error) { VeyroTrace.Error("Removing toasts failed", error); }
+    }
+
     private static async Task RemoveAsync(string peerId, string key)
     {
         try
@@ -139,9 +303,39 @@ public sealed class NotificationToastService : INotificationToastService
     {
         IDictionary<string, string> arguments = args.Arguments;
         if (!arguments.TryGetValue("action", out string? action)) return;
-        if (action == "open")
+        if (action is "open" or "call-open")
         {
             App.MainWindow?.DispatcherQueue.TryEnqueue(App.ShowMainWindow);
+            return;
+        }
+
+        if (action.StartsWith("sms-", StringComparison.Ordinal) || action.StartsWith("call-", StringComparison.Ordinal))
+        {
+            if (!arguments.TryGetValue("peer", out string? phone)) return;
+            arguments.TryGetValue("thread", out string? rawThread);
+            arguments.TryGetValue("call", out string? rawCall);
+            switch (action)
+            {
+                case "sms-open" when long.TryParse(rawThread, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long threadId):
+                    App.MainWindow?.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        App.ShowMainWindow();
+                        _openThread(phone, threadId);
+                    });
+                    break;
+                case "sms-reply" when args.UserInput.TryGetValue(SmsReplyInputId, out string? reply) && PhoneAddress.IsValidBody(reply):
+                    ReplyToThread(phone, rawThread, reply);
+                    break;
+                case "call-answer":
+                    RunCallAction(phone, rawCall, CallService.ActionAnswer);
+                    break;
+                case "call-decline":
+                    RunCallAction(phone, rawCall, CallService.ActionDecline);
+                    break;
+                case "call-silence":
+                    RunCallAction(phone, rawCall, CallService.ActionSilence);
+                    break;
+            }
             return;
         }
 

@@ -20,6 +20,28 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
     public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
     public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
     public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
+    public event Action<string, LinkMessage.SimList>? SimListReceived;
+    public event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
+    public event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
+    public event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
+    public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
+    public event Action<string, LinkMessage.CallState>? CallStateReceived;
+    public event Action<string, LinkMessage.CallLog>? CallLogReceived;
+
+    public void Receive(string peerId, LinkMessage message)
+    {
+        switch (message)
+        {
+            case LinkMessage.SimList m: SimListReceived?.Invoke(peerId, m); break;
+            case LinkMessage.SmsThreads m: SmsThreadsReceived?.Invoke(peerId, m); break;
+            case LinkMessage.SmsMessages m: SmsMessagesReceived?.Invoke(peerId, m); break;
+            case LinkMessage.SmsNew m: SmsNewReceived?.Invoke(peerId, m); break;
+            case LinkMessage.SmsSendResult m: SmsSendResultReceived?.Invoke(peerId, m); break;
+            case LinkMessage.CallState m: CallStateReceived?.Invoke(peerId, m); break;
+            case LinkMessage.CallLog m: CallLogReceived?.Invoke(peerId, m); break;
+            default: throw new ArgumentException("Unsupported fake message", nameof(message));
+        }
+    }
 
     public bool IsConnected(string peerId) => _peers.ContainsKey(peerId);
     public IReadOnlyList<string> GetConnectedPeers() => _peers.Keys.ToList();

@@ -74,6 +74,13 @@ public sealed class NotificationMirrorServiceTests
         public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
         public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
         public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
+        public event Action<string, LinkMessage.SimList>? SimListReceived;
+        public event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
+        public event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
+        public event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
+        public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
+        public event Action<string, LinkMessage.CallState>? CallStateReceived;
+        public event Action<string, LinkMessage.CallLog>? CallLogReceived;
 #pragma warning restore CS0067
 
         public bool IsConnected(string peerId) => Connected;

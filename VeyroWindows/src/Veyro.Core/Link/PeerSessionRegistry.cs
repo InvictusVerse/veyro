@@ -26,6 +26,15 @@ public interface IPeerSessionRegistry
     event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
     event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
 
+    // ADR-027 phone-to-PC messages. Bodies, numbers, names and SIM labels are user data.
+    event Action<string, LinkMessage.SimList>? SimListReceived;
+    event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
+    event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
+    event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
+    event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
+    event Action<string, LinkMessage.CallState>? CallStateReceived;
+    event Action<string, LinkMessage.CallLog>? CallLogReceived;
+
     bool IsConnected(string peerId);
 
     /// <summary>Peers with a live session right now.</summary>
@@ -50,6 +59,13 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
     public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
     public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
+    public event Action<string, LinkMessage.SimList>? SimListReceived;
+    public event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
+    public event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
+    public event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
+    public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
+    public event Action<string, LinkMessage.CallState>? CallStateReceived;
+    public event Action<string, LinkMessage.CallLog>? CallLogReceived;
 
     public bool IsConnected(string peerId)
     {
@@ -105,6 +121,22 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
 
     internal void PublishDeviceStatus(string peerId, LinkMessage.DeviceStatus status)
         => Publish(DeviceStatusReceived, peerId, status, nameof(DeviceStatusReceived));
+
+    /// <summary>Routes an ADR-027 phone-to-PC message. Returns false for any other type.</summary>
+    internal bool PublishMessagingOrCall(string peerId, LinkMessage message)
+    {
+        switch (message)
+        {
+            case LinkMessage.SimList m: Publish(SimListReceived, peerId, m, nameof(SimListReceived)); return true;
+            case LinkMessage.SmsThreads m: Publish(SmsThreadsReceived, peerId, m, nameof(SmsThreadsReceived)); return true;
+            case LinkMessage.SmsMessages m: Publish(SmsMessagesReceived, peerId, m, nameof(SmsMessagesReceived)); return true;
+            case LinkMessage.SmsNew m: Publish(SmsNewReceived, peerId, m, nameof(SmsNewReceived)); return true;
+            case LinkMessage.SmsSendResult m: Publish(SmsSendResultReceived, peerId, m, nameof(SmsSendResultReceived)); return true;
+            case LinkMessage.CallState m: Publish(CallStateReceived, peerId, m, nameof(CallStateReceived)); return true;
+            case LinkMessage.CallLog m: Publish(CallLogReceived, peerId, m, nameof(CallLogReceived)); return true;
+            default: return false;
+        }
+    }
 
     private static void Publish<T>(Action<string, T>? handlers, string peerId, T message, string name)
     {

@@ -52,13 +52,14 @@ public sealed class VeyroLinkClient
 
         await using var session = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, peer.DeviceId);
         // This outbound connection only carries one transfer, so it does not advertise
-        // NotificationMirror. It does advertise the ADR-026 families so the phone knows the PC
-        // speaks them; any companion frame the phone sends here is skipped while waiting for
+        // NotificationMirror. It does advertise the ADR-026/027 families so the phone knows the
+        // PC speaks them; any companion frame the phone sends here is skipped while waiting for
         // the decision, the phone's persistent session is where that state is handled.
         await session.SendAsync(new LinkMessage.Hello(
             _localDeviceId, _localName, "windows",
             Capabilities: LinkCapabilities.FileTransfer | LinkCapabilities.Resume |
-                          LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus), ct).ConfigureAwait(false);
+                          LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
+                          LinkCapabilities.Messaging | LinkCapabilities.Calls), ct).ConfigureAwait(false);
 
         var items = filePaths
             .Where(File.Exists)
@@ -120,6 +121,13 @@ public sealed class VeyroLinkClient
                 case LinkMessage.MediaCommand:
                 case LinkMessage.DeviceStatus:
                 case LinkMessage.Notification:
+                case LinkMessage.SimList:
+                case LinkMessage.SmsThreads:
+                case LinkMessage.SmsMessages:
+                case LinkMessage.SmsNew:
+                case LinkMessage.SmsSendResult:
+                case LinkMessage.CallState:
+                case LinkMessage.CallLog:
                     continue;
                 case LinkMessage.Ping ping:
                     await session.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);

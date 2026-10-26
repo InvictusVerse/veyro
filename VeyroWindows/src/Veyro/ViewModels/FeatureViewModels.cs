@@ -49,16 +49,6 @@ public sealed class TransfersPageViewModel : BaseViewModel
     public void CancelTransfer() => _transferService.CancelCurrentTransfer();
 }
 
-public sealed class MessagesViewModel(IDeviceManager deviceManager) : BaseViewModel
-{
-    public IDeviceManager DeviceManager { get; } = deviceManager;
-}
-
-public sealed class CallsPageViewModel(IDeviceManager deviceManager) : BaseViewModel
-{
-    public IDeviceManager DeviceManager { get; } = deviceManager;
-}
-
 public sealed class AppsViewModel(IDeviceManager deviceManager) : BaseViewModel
 {
     public IDeviceManager DeviceManager { get; } = deviceManager;

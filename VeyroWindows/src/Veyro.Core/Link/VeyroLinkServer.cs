@@ -44,7 +44,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     /// <summary>What this listener's sessions support, sent in HelloAck.</summary>
     public const int LocalCapabilities =
         LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror |
-        LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus;
+        LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
+        LinkCapabilities.Messaging | LinkCapabilities.Calls;
 
     public Func<InboundPairingRequest, Task<bool>> PairingAuthorizer { get; set; } = _ => Task.FromResult(false);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
@@ -317,6 +318,16 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     case LinkMessage.DeviceStatus deviceStatus:
                         registration.Capabilities |= LinkCapabilities.DeviceStatus;
                         _sessions.PublishDeviceStatus(peer.DeviceId, deviceStatus);
+                        break;
+                    // ADR-027, same inference. Bodies, numbers and names are never logged.
+                    case LinkMessage.SimList or LinkMessage.SmsThreads or LinkMessage.SmsMessages or
+                         LinkMessage.SmsNew or LinkMessage.SmsSendResult:
+                        registration.Capabilities |= LinkCapabilities.Messaging;
+                        _sessions.PublishMessagingOrCall(peer.DeviceId, message.Envelope.Payload);
+                        break;
+                    case LinkMessage.CallState or LinkMessage.CallLog:
+                        registration.Capabilities |= LinkCapabilities.Calls;
+                        _sessions.PublishMessagingOrCall(peer.DeviceId, message.Envelope.Payload);
                         break;
                     default:
                         VeyroTrace.Info($"Ignoring {message.Envelope.Payload.GetType().Name} in session");
