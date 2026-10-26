@@ -22,6 +22,11 @@ public sealed class VeyroContainer
     public VeyroLinkServer LinkServer { get; }
     public PeerSessionRegistry PeerSessions { get; }
     public NotificationMirrorService NotificationMirror { get; }
+    public PhoneMediaService PhoneMedia { get; }
+    public IWindowsMediaSource PcMediaSource { get; }
+    public PcMediaPublisher PcMediaPublisher { get; }
+    public IWindowsBatterySource PcBatterySource { get; }
+    public DeviceStatusService DeviceStatus { get; }
     public string? StartupError { get; set; }
 
     public ISystemTrayService SystemTrayService { get; }
@@ -33,6 +38,8 @@ public sealed class VeyroContainer
 
     // ViewModels
     public NotificationsViewModel NotificationsViewModel { get; }
+    public PhoneMediaViewModel PhoneMediaViewModel { get; }
+    public DeviceStatusViewModel DeviceStatusViewModel { get; }
     public MainPageViewModel MainPageViewModel { get; }
     public TransfersPageViewModel TransfersPageViewModel { get; }
     public MessagesViewModel MessagesViewModel { get; }
@@ -61,6 +68,11 @@ public sealed class VeyroContainer
             authorize: request => Task.FromResult(request.Peer.AutoAcceptTransfers),
             sessions: PeerSessions);
         NotificationMirror = new NotificationMirrorService(PeerSessions);
+        PhoneMedia = new PhoneMediaService(PeerSessions);
+        PcMediaSource = new WindowsMediaSource();
+        PcMediaPublisher = new PcMediaPublisher(PeerSessions, PcMediaSource);
+        PcBatterySource = new WindowsBatterySource();
+        DeviceStatus = new DeviceStatusService(PeerSessions, PcBatterySource);
         DiscoveryService = new UdpDiscoveryService(
             IdentityManager.DeviceId.Value,
             SettingsStore.Current.DeviceName,
@@ -76,6 +88,8 @@ public sealed class VeyroContainer
         NotificationToastService = new NotificationToastService(NotificationMirror, DataDirectory);
 
         NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager);
+        PhoneMediaViewModel = new PhoneMediaViewModel(PhoneMedia, DeviceManager);
+        DeviceStatusViewModel = new DeviceStatusViewModel(DeviceStatus, DeviceManager);
 
         MainPageViewModel = new MainPageViewModel(DeviceManager, FileTransferService, ScreenMirrorService);
         TransfersPageViewModel = new TransfersPageViewModel(DeviceManager, FileTransferService, SettingsStore);

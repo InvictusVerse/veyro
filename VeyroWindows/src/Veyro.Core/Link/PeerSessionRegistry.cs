@@ -13,9 +13,23 @@ public interface IPeerSessionRegistry
 {
     event Action<string>? SessionOpened;
     event Action<string>? SessionClosed;
+
+    /// <summary>
+    /// The peer's capability bits changed: its Hello/HelloAck arrived, or a companion message
+    /// implied a capability (04-PROTOCOL.md 6.2). Raised after HelloAck has been sent, so a
+    /// handler that reacts with a snapshot never overtakes it.
+    /// </summary>
+    event Action<string>? CapabilitiesChanged;
+
     event Action<string, LinkMessage.Notification>? NotificationReceived;
+    event Action<string, LinkMessage.MediaState>? MediaStateReceived;
+    event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
+    event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
 
     bool IsConnected(string peerId);
+
+    /// <summary>Peers with a live session right now.</summary>
+    IReadOnlyList<string> GetConnectedPeers();
 
     /// <summary>Capability bits from the peer's Hello/HelloAck, or 0 when unknown or not connected.</summary>
     int GetPeerCapabilities(string peerId);
@@ -31,11 +45,20 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
 
     public event Action<string>? SessionOpened;
     public event Action<string>? SessionClosed;
+    public event Action<string>? CapabilitiesChanged;
     public event Action<string, LinkMessage.Notification>? NotificationReceived;
+    public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
+    public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
+    public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
 
     public bool IsConnected(string peerId)
     {
         lock (_gate) return _sessions.ContainsKey(peerId);
+    }
+
+    public IReadOnlyList<string> GetConnectedPeers()
+    {
+        lock (_gate) return _sessions.Keys.ToList();
     }
 
     public int GetPeerCapabilities(string peerId)
@@ -70,16 +93,35 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         return registration;
     }
 
+    // Companion payloads are user data: handlers are isolated and nothing here logs them.
     internal void PublishNotification(string peerId, LinkMessage.Notification notification)
+        => Publish(NotificationReceived, peerId, notification, nameof(NotificationReceived));
+
+    internal void PublishMediaState(string peerId, LinkMessage.MediaState state)
+        => Publish(MediaStateReceived, peerId, state, nameof(MediaStateReceived));
+
+    internal void PublishMediaCommand(string peerId, LinkMessage.MediaCommand command)
+        => Publish(MediaCommandReceived, peerId, command, nameof(MediaCommandReceived));
+
+    internal void PublishDeviceStatus(string peerId, LinkMessage.DeviceStatus status)
+        => Publish(DeviceStatusReceived, peerId, status, nameof(DeviceStatusReceived));
+
+    private static void Publish<T>(Action<string, T>? handlers, string peerId, T message, string name)
     {
-        Action<string, LinkMessage.Notification>? handlers = NotificationReceived;
         if (handlers is null) return;
-        foreach (Action<string, LinkMessage.Notification> handler in handlers.GetInvocationList().Cast<Action<string, LinkMessage.Notification>>())
+        foreach (Action<string, T> handler in handlers.GetInvocationList().Cast<Action<string, T>>())
         {
-            // A faulty subscriber must not take the session down. Never log the notification.
-            try { handler(peerId, notification); }
-            catch (Exception error) { VeyroTrace.Error("NotificationReceived handler failed", error); }
+            // A faulty subscriber must not take the session down.
+            try { handler(peerId, message); }
+            catch (Exception error) { VeyroTrace.Error($"{name} handler failed", error); }
         }
+    }
+
+    private void OnCapabilitiesChanged(Registration registration)
+    {
+        bool current;
+        lock (_gate) current = _sessions.TryGetValue(registration.PeerId, out var live) && ReferenceEquals(live, registration);
+        if (current) Raise(CapabilitiesChanged, registration.PeerId, nameof(CapabilitiesChanged));
     }
 
     private void Close(Registration registration)
@@ -119,10 +161,15 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         public string PeerId { get; }
         public Func<LinkMessage, CancellationToken, Task> Send { get; }
 
+        /// <summary>Written only by the session's receive loop; a change raises CapabilitiesChanged.</summary>
         public int Capabilities
         {
             get => Volatile.Read(ref _capabilities);
-            set => Volatile.Write(ref _capabilities, value);
+            set
+            {
+                if (Interlocked.Exchange(ref _capabilities, value) != value && Volatile.Read(ref _disposed) == 0)
+                    _owner.OnCapabilitiesChanged(this);
+            }
         }
 
         public void Dispose()

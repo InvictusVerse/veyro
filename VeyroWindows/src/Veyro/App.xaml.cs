@@ -83,6 +83,16 @@ public partial class App : Application
 
     private static async Task StartNetworkServicesAsync()
     {
+        // Companion sources first, so the first phone session already gets real snapshots.
+        try
+        {
+            VeyroContainer.Instance.PcBatterySource.Start();
+            await VeyroContainer.Instance.PcMediaSource.StartAsync();
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("PC media/battery sources unavailable", error);
+        }
         try
         {
             await VeyroContainer.Instance.LinkServer.StartAsync();
@@ -178,6 +188,8 @@ public partial class App : Application
         HandleClosedEvents = false;
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
         VeyroContainer.Instance.NotificationToastService.Dispose();
+        VeyroContainer.Instance.PcMediaSource.Dispose();
+        VeyroContainer.Instance.PcBatterySource.Dispose();
         VeyroContainer.Instance.SystemTrayService.Dispose();
         MainWindow?.Close();
         Current.Exit();

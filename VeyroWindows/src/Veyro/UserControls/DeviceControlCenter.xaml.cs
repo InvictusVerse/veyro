@@ -6,10 +6,30 @@ namespace Veyro.UserControls;
 public sealed partial class DeviceControlCenter : UserControl
 {
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
+    public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
 
     public DeviceControlCenter()
     {
         InitializeComponent();
+    }
+
+    private async void Ring_Click(object sender, RoutedEventArgs e) => await StatusViewModel.ToggleRingAsync();
+
+    private async void RingerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        int requested = RingerCombo.SelectedIndex;
+        // Equal to the reported mode: this is the binding applying the phone's state.
+        if (requested < 0 || requested == StatusViewModel.RingerIndex) return;
+        // Show the reported mode until the phone confirms the change in its next devStatus.
+        DispatcherQueue.TryEnqueue(() => RingerCombo.SelectedIndex = StatusViewModel.RingerIndex);
+        await StatusViewModel.RequestRingerAsync(requested);
+    }
+
+    private async void Dnd_Click(object sender, RoutedEventArgs e)
+    {
+        bool requested = !StatusViewModel.IsDndOn;
+        DndToggle.IsChecked = StatusViewModel.IsDndOn;
+        await StatusViewModel.RequestDndAsync(requested);
     }
 
     private async void SendFilesButton_Click(object sender, RoutedEventArgs e)

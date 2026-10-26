@@ -69,8 +69,15 @@ public sealed class NotificationMirrorServiceTests
         public event Action<string>? SessionOpened;
         public event Action<string>? SessionClosed;
         public event Action<string, LinkMessage.Notification>? NotificationReceived;
+#pragma warning disable CS0067 // ADR-026 members, unused by notification tests
+        public event Action<string>? CapabilitiesChanged;
+        public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
+        public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
+        public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
+#pragma warning restore CS0067
 
         public bool IsConnected(string peerId) => Connected;
+        public IReadOnlyList<string> GetConnectedPeers() => Connected ? [Peer] : [];
         public int GetPeerCapabilities(string peerId) => Connected ? Capabilities : 0;
 
         public Task SendAsync(string peerId, LinkMessage message, CancellationToken ct = default)

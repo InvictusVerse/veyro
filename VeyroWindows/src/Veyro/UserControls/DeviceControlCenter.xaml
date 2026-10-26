@@ -2,10 +2,15 @@
     x:Class="Veyro.UserControls.DeviceControlCenter"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:Veyro.Converters"
     xmlns:models="using:Veyro.Core.Models">
+    <UserControl.Resources>
+        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </UserControl.Resources>
 
     <Grid RowSpacing="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -51,13 +56,28 @@
                     ItemsSource="{x:Bind ViewModel.PairedDevices, Mode=OneWay}"
                     SelectedItem="{x:Bind ViewModel.Device, Mode=TwoWay}" />
 
+                <!-- Phone-reported status (ADR-026) -->
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon FontSize="14" Glyph="&#xEA8F;" />
-                    <FontIcon FontSize="14" Glyph="&#xE83F;" />
+                    <FontIcon
+                        AutomationProperties.Name="{x:Bind StatusViewModel.RingerLabel, Mode=OneWay}"
+                        FontSize="14"
+                        Glyph="{x:Bind StatusViewModel.RingerGlyph, Mode=OneWay}"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.RingerLabel, Mode=OneWay}" />
+                    <FontIcon
+                        AutomationProperties.Name="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
+                        FontSize="14"
+                        Glyph="&#xE708;"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
+                        Visibility="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <FontIcon
+                        AutomationProperties.Name="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
+                        FontSize="14"
+                        Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}"
+                        ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}" />
                     <TextBlock
                         VerticalAlignment="Center"
                         FontWeight="SemiBold"
-                        Text="{x:Bind ViewModel.Device.BatteryText, Mode=OneWay, FallbackValue='--%'}" />
+                        Text="{x:Bind StatusViewModel.BatteryText, Mode=OneWay}" />
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -121,5 +141,53 @@
                 </StackPanel>
             </StackPanel>
         </Grid>
+
+        <!-- Phone controls (devControl). Selections show only what the phone reports back. -->
+        <StackPanel Grid.Row="1" Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button
+                    Height="32"
+                    Padding="10,0"
+                    Click="Ring_Click"
+                    IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                    ToolTipService.ToolTip="Ring the phone at full volume for up to 30 seconds">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xEA8F;" />
+                        <TextBlock Text="{x:Bind StatusViewModel.RingButtonText, Mode=OneWay}" />
+                    </StackPanel>
+                </Button>
+                <ComboBox
+                    x:Name="RingerCombo"
+                    Width="112"
+                    Height="32"
+                    AutomationProperties.Name="Phone ringer mode"
+                    IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                    PlaceholderText="Ringer"
+                    SelectedIndex="{x:Bind StatusViewModel.RingerIndex, Mode=OneWay}"
+                    SelectionChanged="RingerCombo_SelectionChanged">
+                    <ComboBoxItem Content="Normal" />
+                    <ComboBoxItem Content="Vibrate" />
+                    <ComboBoxItem Content="Silent" />
+                </ComboBox>
+                <ToggleButton
+                    x:Name="DndToggle"
+                    Width="36"
+                    Height="32"
+                    Padding="0"
+                    AutomationProperties.Name="Do not disturb"
+                    Click="Dnd_Click"
+                    IsChecked="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay}"
+                    IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                    ToolTipService.ToolTip="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}">
+                    <FontIcon FontSize="14" Glyph="&#xE708;" />
+                </ToggleButton>
+            </StackPanel>
+            <TextBlock
+                FontSize="12"
+                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                Text="{x:Bind StatusViewModel.StatusText, Mode=OneWay}"
+                TextWrapping="Wrap"
+                Visibility="{x:Bind StatusViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+        </StackPanel>
     </Grid>
 </UserControl>

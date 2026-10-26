@@ -43,7 +43,8 @@ public sealed class VeyroLinkServer : IAsyncDisposable
 
     /// <summary>What this listener's sessions support, sent in HelloAck.</summary>
     public const int LocalCapabilities =
-        LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror;
+        LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror |
+        LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus;
 
     public Func<InboundPairingRequest, Task<bool>> PairingAuthorizer { get; set; } = _ => Task.FromResult(false);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
@@ -267,9 +268,11 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 switch (message.Envelope.Payload)
                 {
                     case LinkMessage.Hello hello:
-                        registration.Capabilities = hello.Capabilities;
+                        // Answer first: setting the capabilities lets companion services send
+                        // their on-connect snapshots, which must not overtake the HelloAck.
                         await secure.SendAsync(new LinkMessage.HelloAck(
                             _localDeviceId, _localName, "windows", LocalCapabilities), ct).ConfigureAwait(false);
+                        registration.Capabilities = hello.Capabilities;
                         break;
                     case LinkMessage.HelloAck helloAck:
                         registration.Capabilities = helloAck.Capabilities;
@@ -300,6 +303,20 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         // user data: never logged (04-PROTOCOL.md 6.1).
                         registration.Capabilities |= LinkCapabilities.NotificationMirror;
                         _sessions.PublishNotification(peer.DeviceId, notification);
+                        break;
+                    // ADR-026. Same inference as notif: a peer that sends the family speaks it.
+                    // Media metadata is user data: never logged (04-PROTOCOL.md 6.2).
+                    case LinkMessage.MediaState mediaState:
+                        registration.Capabilities |= LinkCapabilities.MediaControl;
+                        _sessions.PublishMediaState(peer.DeviceId, mediaState);
+                        break;
+                    case LinkMessage.MediaCommand mediaCommand:
+                        registration.Capabilities |= LinkCapabilities.MediaControl;
+                        _sessions.PublishMediaCommand(peer.DeviceId, mediaCommand);
+                        break;
+                    case LinkMessage.DeviceStatus deviceStatus:
+                        registration.Capabilities |= LinkCapabilities.DeviceStatus;
+                        _sessions.PublishDeviceStatus(peer.DeviceId, deviceStatus);
                         break;
                     default:
                         VeyroTrace.Info($"Ignoring {message.Envelope.Payload.GetType().Name} in session");
