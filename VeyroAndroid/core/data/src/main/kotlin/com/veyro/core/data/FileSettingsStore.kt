@@ -48,7 +48,9 @@ public class FileSettingsStore(
         // ADR-027, same rule.
         val messagesAndCallsEnabled: Boolean = false,
         // ADR-034, same rule.
-        val photosEnabled: Boolean = false,
+        // On by default (user request after the hardware test); onboarding asks for photo
+        // access up front, and nothing is served without the grant.
+        val photosEnabled: Boolean = true,
         // ADR-030. Defaulted false so a pre-onboarding file decodes; existing installs with a
         // trusted peer are migrated to true by the onboarding gate, not here.
         val onboardingComplete: Boolean = false,

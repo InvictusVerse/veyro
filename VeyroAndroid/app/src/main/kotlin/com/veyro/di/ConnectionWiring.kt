@@ -43,6 +43,10 @@ internal object ConnectionWiring {
         },
         // Confirm pairing (ADR-031): DH plus HKDF inside the identity; the private key stays there.
         deriveSharedKey = { peerPk, salt, info -> identityManager.deriveSharedKey(peerPk, salt, info) },
+        // ADR-042: removing a device on either side removes it on both.
+        forgetTrustedPeer = { raw ->
+            com.veyro.core.model.DeviceId.parseOrNull(raw)?.let { trustStore.remove(it) }
+        },
     )
 }
 

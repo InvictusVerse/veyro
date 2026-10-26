@@ -138,14 +138,6 @@ public fun HomeScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                item(key = "top") {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalIconButton(onClick = onOpenSettings, modifier = Modifier.size(44.dp)) {
-                            Icon(Icons.Default.Person, contentDescription = "Settings")
-                        }
-                    }
-                }
-
                 if (networkNoticeNeeded(state)) {
                     item(key = "network") { NetworkNotice(state) }
                 }

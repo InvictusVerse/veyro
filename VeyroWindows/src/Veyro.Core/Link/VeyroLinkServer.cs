@@ -173,6 +173,9 @@ public sealed class VeyroLinkServer : IAsyncDisposable, ILinkSessionRunner
     /// <summary>A new device was paired (either path). Raised on a server thread.</summary>
     public event Action<TrustedPeer>? PairingCompleted;
 
+    /// <summary>A phone removed this PC (ADR-042); its trust record is already gone. Server thread.</summary>
+    public event Action<string>? PeerUnpaired;
+
     /// <summary>Live authenticated sessions, for companion features (ADR-025).</summary>
     public IPeerSessionRegistry Sessions => _sessions;
 
@@ -759,6 +762,13 @@ public sealed class VeyroLinkServer : IAsyncDisposable, ILinkSessionRunner
                         VeyroTrace.Info("PC lock requested");
                         _sessions.PublishDeviceMessage(peer.DeviceId, message.Envelope.Payload);
                         break;
+                    // ADR-042: the phone removed this PC. Forget it here too and end the session.
+                    case LinkMessage.Unpair:
+                        VeyroTrace.Info("Peer removed this PC; forgetting it");
+                        await _trustStore.RemoveAsync(peer.DeviceId).ConfigureAwait(false);
+                        try { PeerUnpaired?.Invoke(peer.DeviceId); }
+                        catch (Exception error) { VeyroTrace.Error("PeerUnpaired handler failed", error); }
+                        return;
                     // Wallpaper bytes are user data: never logged.
                     case LinkMessage.Wallpaper:
                         registration.Capabilities |= LinkCapabilities.Wallpaper;

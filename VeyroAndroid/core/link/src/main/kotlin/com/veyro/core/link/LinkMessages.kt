@@ -422,6 +422,15 @@ public sealed interface LinkMessage {
         val mobileData: Boolean? = null,
     ) : LinkMessage
 
+    /**
+     * Either direction: "I removed you". The receiver deletes its trust record for the sender and
+     * closes the session, so removing a device on one side removes it on both (ADR-042). Older
+     * peers drop the unknown type, which is harmless: they simply fail to authenticate next time.
+     */
+    @Serializable
+    @SerialName("unpair")
+    public data object Unpair : LinkMessage
+
     /** Phone to PC: lock the PC (Phone Link "Lock PC"). Gated by DEVICE_STATUS (ADR-038). */
     @Serializable
     @SerialName("pcLock")

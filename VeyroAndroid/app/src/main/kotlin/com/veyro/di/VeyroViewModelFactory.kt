@@ -55,6 +55,7 @@ public class VeyroViewModelFactory(
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) -> DevicesViewModel(
             trustStore = container.trustStore,
+            unpair = { id -> container.connectionManager.unpair(id.value) },
         ) as T
 
         modelClass.isAssignableFrom(PairingViewModel::class.java) -> PairingViewModel(

@@ -312,11 +312,13 @@ public sealed class DevicesViewModel : BaseViewModel
 {
     private readonly IDeviceManager deviceManager;
     private readonly ITrustStore trustStore;
+    private readonly Veyro.Core.Link.PeerSessionRegistry? sessions;
 
-    public DevicesViewModel(IDeviceManager deviceManager, ITrustStore trustStore)
+    public DevicesViewModel(IDeviceManager deviceManager, ITrustStore trustStore, Veyro.Core.Link.PeerSessionRegistry? sessions = null)
     {
         this.deviceManager = deviceManager;
         this.trustStore = trustStore;
+        this.sessions = sessions;
         deviceManager.PairedDevices.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoPairedDevices));
     }
 
@@ -325,11 +327,16 @@ public sealed class DevicesViewModel : BaseViewModel
     public bool HasNoPairedDevices => PairedDevices.Count == 0;
 
     /// <summary>
-    /// Forgets the phone: it can no longer authenticate and must pair again. A session that is
-    /// open right now stays until it drops (the link layer owns it).
+    /// Forgets the phone and, when it is connected, tells it to forget this PC too (ADR-042), so
+    /// removing a device on one side removes it on both. The phone closes the session on receipt.
     /// </summary>
     public async Task RevokeDeviceAsync(string deviceId)
     {
+        if (sessions?.IsConnected(deviceId) == true)
+        {
+            try { await sessions.SendAsync(deviceId, new Veyro.Core.Link.LinkMessage.Unpair()); }
+            catch (Exception error) { Veyro.Core.Diagnostics.VeyroTrace.Warn($"Unpair notice not sent: {error.GetType().Name}"); }
+        }
         await trustStore.RemoveAsync(deviceId);
         deviceManager.ReloadPairedDevices();
     }

@@ -261,6 +261,7 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(PhotoNew), "photoNew")]
 [JsonDerivedType(typeof(PhotoRemoved), "photoRemoved")]
 [JsonDerivedType(typeof(PcLock), "pcLock")]
+[JsonDerivedType(typeof(Unpair), "unpair")]
 [JsonDerivedType(typeof(Wallpaper), "wallpaper")]
 public abstract record LinkMessage
 {
@@ -353,6 +354,9 @@ public abstract record LinkMessage
 
     /// <summary>Phone to PC: lock this PC (Phone Link "Lock PC").</summary>
     public sealed record PcLock : LinkMessage;
+
+    /// <summary>Either direction: the sender removed us. Delete the trust record and close (ADR-042).</summary>
+    public sealed record Unpair : LinkMessage;
 
     /// <summary>Either direction: sender's wallpaper, JPEG &lt;= 720 px, &lt;= 96 KiB, base64.</summary>
     public sealed record Wallpaper(

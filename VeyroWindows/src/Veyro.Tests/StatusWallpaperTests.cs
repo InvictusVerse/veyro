@@ -73,7 +73,9 @@ public sealed class WallpaperEncodingTests
         => (w, h, q, _) =>
         {
             calls.Add((w, h, q));
-            int size = (int)(w * h * bytesPerPixelAtFullQuality * q / 100.0);
+            // Capped at one byte over the limit: the encoder only compares the length, and the
+            // uncapped size (hundreds of MB) ran this machine out of memory.
+            long size = Math.Min((long)(w * h * bytesPerPixelAtFullQuality * q / 100.0), WallpaperEncoding.MaxBytes + 1L);
             byte[] jpeg = new byte[Math.Max(size, 3)];
             jpeg[0] = 0xFF;
             jpeg[1] = 0xD8;

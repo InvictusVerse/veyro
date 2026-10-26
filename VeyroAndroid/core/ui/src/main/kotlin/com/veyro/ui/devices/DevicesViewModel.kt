@@ -32,6 +32,8 @@ public data class DevicesUiState(
  */
 public class DevicesViewModel(
     private val trustStore: TrustStore,
+    /** Tells the PC and forgets it (ADR-042). Defaults to a local-only removal for tests. */
+    private val unpair: suspend (DeviceId) -> Unit = { trustStore.remove(it) },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DevicesUiState())
@@ -78,7 +80,7 @@ public class DevicesViewModel(
      * want to keep. Re-pairing regenerates everything.
      */
     public fun revoke(deviceId: DeviceId) {
-        viewModelScope.launch { trustStore.remove(deviceId) }
+        viewModelScope.launch { runCatching { unpair(deviceId) } }
     }
 
     /** The 8-byte comparable fingerprint, for display next to the name. */

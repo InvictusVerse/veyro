@@ -18,6 +18,24 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+        // Hardware test: the window went black and pairing stalled with no visible error. An
+        // unhandled UI-thread exception freezes the window under the debugger and kills it
+        // otherwise. Log every one (type + stack, never messages) and keep the app alive.
+        UnhandledException += (_, e) =>
+        {
+            VeyroTrace.Crash("UI thread", e.Exception);
+            e.Handled = true;
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            VeyroTrace.Crash("Unobserved task", e.Exception);
+            e.SetObserved();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            if (e.ExceptionObject is Exception error) VeyroTrace.Crash("Background thread", error);
+        };
+        VeyroTrace.Info($"Veyro starting, log file {VeyroTrace.FilePath ?? "unavailable"}");
         VeyroContainer.Initialize();
         // Toast activation must be registered before any mirrored notification can arrive.
         VeyroContainer.Instance.NotificationToastService.Initialize();
@@ -49,14 +67,41 @@ public partial class App : Application
 
         var rootFrame = new Frame();
         MainWindow.Content = rootFrame;
-        rootFrame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
+        try
+        {
+            rootFrame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
+        }
+        catch (Exception error)
+        {
+            // Never leave an empty black window: say what happened and where the log is.
+            VeyroTrace.Crash("Opening the main page", error);
+            MainWindow.Content = new TextBlock
+            {
+                Margin = new Thickness(32),
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"Veyro could not open its main page ({error.GetType().Name}). " +
+                       $"Details are in {VeyroTrace.FilePath ?? "the debug output"}."
+            };
+        }
 
         MainWindow.Activate();
         // Incoming files are asked about by the container's TransferConsentCoordinator (ADR-036).
         container.LinkServer.PairingAuthorizer = AuthorizePairingAsync;
         // A newly paired phone shows up in the device list and sidebar without a restart.
-        container.LinkServer.PairingCompleted += _ =>
-            MainWindow.DispatcherQueue.TryEnqueue(() => container.DeviceManager.ReloadPairedDevices());
+        // ADR-042: the phone removed this PC; drop it from the list right away.
+        container.LinkServer.PeerUnpaired += _ =>
+            MainWindow.DispatcherQueue.TryEnqueue(() =>
+            {
+                try { container.DeviceManager.ReloadPairedDevices(); }
+                catch (Exception error) { VeyroTrace.Crash("Reloading devices after unpair", error); }
+            });
+        container.LinkServer.PairingCompleted += peer =>
+            MainWindow.DispatcherQueue.TryEnqueue(() =>
+            {
+                VeyroTrace.Info("Pairing completed; reloading the device list");
+                try { container.DeviceManager.ReloadPairedDevices(); }
+                catch (Exception error) { VeyroTrace.Crash("Reloading devices after pairing", error); }
+            });
         // ADR-029: on the UI thread, since reconnecting may show the Windows access prompt.
         _ = container.BluetoothCalling.InitializeAsync();
         _ = container.NetworkDiagnostics.RequestFirewallRuleAsync();

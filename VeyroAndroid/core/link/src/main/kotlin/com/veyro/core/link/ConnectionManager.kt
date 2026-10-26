@@ -28,7 +28,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
@@ -96,6 +99,8 @@ public class ConnectionManager(
      */
     private val deriveSharedKey: suspend (peerPublicKey: ByteArray, salt: ByteArray, info: ByteArray) -> ByteArray =
         { _, _, _ -> throw IllegalStateException("confirm pairing is not configured") },
+    /** Deletes the trust record for a device id (ADR-042: the peer removed us, or we removed it). */
+    private val forgetTrustedPeer: suspend (peerDeviceId: String) -> Unit = {},
 ) {
 
     /**
@@ -1535,6 +1540,43 @@ public class ConnectionManager(
         _events.value = null
     }
 
+    // ── Unpair both ways (ADR-042) ─────────────────────────────────────────────────────────
+
+    /**
+     * Removes [peerDeviceId] here and tells it to remove this phone too. The message goes over the
+     * live session if there is one; otherwise the other side keeps its record until it next fails
+     * to authenticate. Trust is deleted even if sending fails.
+     */
+    public suspend fun unpair(peerDeviceId: String) {
+        val session = connectionFor(peerDeviceId)
+        if (session != null) {
+            runCatching {
+                session.send(LinkMessage.Unpair)
+                session.flush()
+            }.onFailure { VeyroLog.w(TAG) { "Could not tell the peer about the unpair: ${it.javaClass.simpleName}" } }
+        }
+        forgetTrustedPeer(peerDeviceId)
+        disconnect(peerDeviceId)
+        VeyroLog.i(TAG) { "Unpaired $peerDeviceId" }
+    }
+
+    /** Waits for an `unpair` from this session's peer, or the session closing, whichever is first. */
+    private fun watchForUnpair(session: PeerConnection, peerDeviceId: String) {
+        scope.launch {
+            val unpaired = merge(
+                session.incoming
+                    .filter { it.payload is LinkMessage.Unpair && it.from == peerDeviceId }
+                    .map { true },
+                session.closed.map { false },
+            ).first()
+            if (!unpaired) return@launch
+            VeyroLog.i(TAG) { "Peer $peerDeviceId removed this device; forgetting it" }
+            runCatching { forgetTrustedPeer(peerDeviceId) }
+                .onFailure { VeyroLog.w(TAG) { "Forgetting the peer failed: ${it.javaClass.simpleName}" } }
+            disconnect(peerDeviceId)
+        }
+    }
+
     // ── Session ────────────────────────────────────────────────────────────────────────────
 
     private suspend fun runConnection(
@@ -1592,6 +1634,7 @@ public class ConnectionManager(
      */
     private fun claimSlot(session: PeerConnection): Boolean = synchronized(slotLock) {
         val id = session.peerDeviceId ?: return@synchronized false
+        watchForUnpair(session, id)
         val current = _connections.value[id]
         if (current != null && current !== session && current.isConnected) {
             sideSessions += session

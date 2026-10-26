@@ -174,7 +174,7 @@ public sealed class VeyroContainer
         BluetoothCallingViewModel = new BluetoothCallingViewModel(BluetoothCalling, DeviceManager);
         PhotosViewModel = new PhotosViewModel(Photos, DeviceManager);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
-        DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore);
+        DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore, PeerSessions);
         TransferConsent.AutoAcceptEnabled += _ => App.MainWindow?.DispatcherQueue.TryEnqueue(DevicesViewModel.RefreshAutoAccept);
 
         // ADR-030: QR pairing screen (shared by onboarding and Settings) and first-run flow.

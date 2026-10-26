@@ -28,6 +28,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,6 +82,18 @@ internal fun FeaturesPage(
             permissionLauncher.launch(access.missingPermissions.toTypedArray())
         } else if (special != null) {
             openSpecialAccess(context, special)
+        }
+    }
+
+    // Photos on PC is on by default: ask for photo access once, when this page first shows, so
+    // the default actually works. Other features are still asked for only when switched on.
+    var askedForDefaults by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(features) {
+        if (askedForDefaults) return@LaunchedEffect
+        val photos = features.firstOrNull { it.feature == OnboardingFeature.PHOTOS } ?: return@LaunchedEffect
+        askedForDefaults = true
+        if (photos.enabled && photos.access.missingPermissions.isNotEmpty()) {
+            permissionLauncher.launch(photos.access.missingPermissions.toTypedArray())
         }
     }
 

@@ -32,7 +32,7 @@ public interface SettingsStore {
 
     public suspend fun setMessagesAndCallsEnabled(enabled: Boolean)
 
-    /** Serve recent camera photos and screenshots to a connected PC (ADR-034). Off by default. */
+    /** Serve recent camera photos and screenshots to a connected PC (ADR-034). On by default. */
     public val photosEnabled: Flow<Boolean>
 
     public suspend fun setPhotosEnabled(enabled: Boolean)
