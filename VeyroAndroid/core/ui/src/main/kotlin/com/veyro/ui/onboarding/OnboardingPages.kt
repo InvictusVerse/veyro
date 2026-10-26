@@ -33,6 +33,7 @@ import com.veyro.core.designsystem.theme.VeyroTextSecondary
 import com.veyro.ui.pairing.CandidateCard
 import com.veyro.ui.pairing.CodeEntryHint
 import com.veyro.ui.pairing.ConfirmPairingDialog
+import com.veyro.ui.pairing.PairingScreen
 import com.veyro.ui.pairing.PairingViewModel
 import com.veyro.ui.pairing.QrPairingState
 import com.veyro.ui.pairing.QrStatusCard
@@ -80,48 +81,9 @@ internal fun DeviceNamePage(
 @Composable
 internal fun PairPage(viewModelFactory: ViewModelProvider.Factory) {
     val pairing = viewModel<PairingViewModel>(factory = viewModelFactory, key = "onboarding-pairing")
-    val state by pairing.state.collectAsStateWithLifecycle()
-    val scan = rememberQrScanAction(pairing)
-
-    LaunchedEffect(Unit) { pairing.startSearching() }
-
-    OnboardingPage(
-        icon = Icons.Default.Lock,
-        title = "Pair with your PC",
-    ) {
-        ScanQrCard(busy = state.pairingBusy, onScan = scan, onEnterCode = pairing::showCodeEntry)
-
-        if (state.qr != QrPairingState.Idle) {
-            QrStatusCard(state = state.qr, onDismiss = pairing::dismissQrStatus, onRetry = scan)
-        }
-        if (state.showCodeEntryHint) CodeEntryHint()
-        state.error?.let { message ->
-            Text(text = message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-
-        VeyroSectionHeader("Nearby PCs")
-        if (state.candidates.isEmpty()) {
-            SearchingCard()
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                state.candidates.forEach { candidate ->
-                    CandidateCard(
-                        candidate = candidate,
-                        onPair = { pairing.pairWith(candidate) },
-                        enabled = !state.pairingBusy,
-                    )
-                }
-            }
-        }
-    }
-
-    // ADR-031: tapping a PC shows the code both screens display; the user accepts on the PC.
-    ConfirmPairingDialog(
-        state = state.confirm,
-        onCancel = pairing::cancelConfirm,
-        onDismiss = pairing::dismissConfirm,
-        onRetry = pairing::retryConfirm,
-    )
+    // Exactly the Pairing screen (hardware test: the old onboarding page looked different and
+    // worse). It brings its own scan button, nearby list, code prompt and help.
+    PairingScreen(viewModel = pairing)
 }
 
 /** Page (e): what was paired, with the fingerprint to compare against the PC. */

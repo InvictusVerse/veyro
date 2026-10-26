@@ -614,6 +614,10 @@ public class ConnectionManager(
         VeyroLog.i(TAG) { "[$connId] Session established with ${hello.deviceName}" }
         _events.value = ConnectionEvent.Paired(peer)
         claimSlot(session)
+        // Hardware test: without a Hello after pairing neither side learnt the other's
+        // capabilities, so every companion feature stayed off until the app was restarted.
+        runCatching { sendHello(session, localDeviceId()) }
+            .onFailure { VeyroLog.w(TAG) { "[$connId] Hello after pairing failed: ${it.javaClass.simpleName}" } }
 
         // Launch the session driver so the receiver can handle file transfers over this session
         val driverJob = sessionDriver?.let { driver ->
@@ -960,6 +964,9 @@ public class ConnectionManager(
                 VeyroLog.i(TAG) { "[$connId] Session established with ${payload.deviceName}" }
                 _events.value = ConnectionEvent.Paired(peer)
                 claimSlot(session)
+                // See the other pairing paths: the Hello is what switches companion features on.
+                runCatching { sendHello(session, localDeviceId()) }
+                    .onFailure { VeyroLog.w(TAG) { "[$connId] Hello after pairing failed: ${it.javaClass.simpleName}" } }
                 val driverJob = sessionDriver?.let { driver ->
                     scope.launch { runCatching { driver(session, false) } }
                 }
@@ -1220,6 +1227,10 @@ public class ConnectionManager(
         VeyroLog.i(TAG) { "[$connId] Confirm pairing completed; session established with ${payload.deviceName}" }
         _events.value = ConnectionEvent.Paired(peer)
         claimSlot(session)
+        // Hardware test: without a Hello after pairing neither side learnt the other's
+        // capabilities, so every companion feature stayed off until the app was restarted.
+        runCatching { sendHello(session, localDeviceId()) }
+            .onFailure { VeyroLog.w(TAG) { "[$connId] Hello after pairing failed: ${it.javaClass.simpleName}" } }
         val driverJob = sessionDriver?.let { driver ->
             scope.launch { runCatching { driver(session, false) } }
         }
@@ -1417,6 +1428,10 @@ public class ConnectionManager(
         VeyroLog.i(TAG) { "[$connId] Confirm pairing completed; session established with ${hello.deviceName}" }
         _events.value = ConnectionEvent.Paired(peer)
         claimSlot(session)
+        // Hardware test: without a Hello after pairing neither side learnt the other's
+        // capabilities, so every companion feature stayed off until the app was restarted.
+        runCatching { sendHello(session, localDeviceId()) }
+            .onFailure { VeyroLog.w(TAG) { "[$connId] Hello after pairing failed: ${it.javaClass.simpleName}" } }
         val driverJob = sessionDriver?.let { driver ->
             scope.launch { runCatching { driver(session, true) } }
         }

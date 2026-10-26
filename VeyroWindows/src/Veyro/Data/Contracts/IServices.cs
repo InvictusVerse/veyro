@@ -59,6 +59,9 @@ public interface IDeviceManager
     /// <summary>Re-reads the trust store, for example after a new device paired or one was removed.</summary>
     void ReloadPairedDevices();
 
+    /// <summary>The latest discovery record for a phone (untrusted), or null.</summary>
+    PeerDevice? FindDiscoveredPeer(string deviceId);
+
     /// <summary>Moves the selection through the paired phones (mouse wheel over the phone).</summary>
     void SelectNext(int delta);
 

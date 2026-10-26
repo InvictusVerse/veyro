@@ -37,6 +37,11 @@ public sealed record InboundOfferRequest(
 /// itself when <see cref="Abandoned"/> fires (the phone cancelled or left) and declines at
 /// <see cref="ExpiresAt"/>. The legacy PIN flow (tests only) passes the PIN as the code.
 /// </summary>
+public enum PcPairOutcome { Paired, Declined, TimedOut, Unreachable, Busy, Refused, IdentityMismatch, Cancelled, Failed }
+
+/// <summary>Result of pairing started on this PC (<see cref="VeyroLinkServer.PairWithPhoneAsync"/>).</summary>
+public sealed record PcPairResult(PcPairOutcome Outcome, string? PhoneName = null);
+
 public sealed record InboundPairingRequest(
     string PeerDeviceId,
     string PeerName,
@@ -489,6 +494,151 @@ public sealed class VeyroLinkServer : IAsyncDisposable, ILinkSessionRunner
         try { PairingCompleted?.Invoke(trusted); }
         catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
         await RunSessionAsync(secure, trusted, addresses, ct, pending).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Pairs with a phone the user picked from this PC's nearby list (hardware test: "if the phone
+    /// shows on the PC I should be able to pair from there"). Same confirm protocol (04-PROTOCOL.md
+    /// 4.3) with roles swapped: this PC is the initiator A, the phone is B and shows Accept /
+    /// Decline. <paramref name="showCode"/> receives the 6-digit code to display while waiting.
+    /// On success the phone is trusted and its session keeps running like any other.
+    /// </summary>
+    public async Task<PcPairResult> PairWithPhoneAsync(
+        PeerEndpoint endpoint,
+        string phoneDeviceId,
+        Action<string> showCode,
+        CancellationToken ct)
+    {
+        if (_deriveSharedKey is null || !IsRunning) return new PcPairResult(PcPairOutcome.Failed);
+        DeviceId? expected = DeviceId.ParseOrNull(phoneDeviceId);
+        if (expected is null) return new PcPairResult(PcPairOutcome.IdentityMismatch);
+
+        var socket = new ClientWebSocket { Options = { KeepAliveInterval = TimeSpan.FromSeconds(20) } };
+        bool handedOff = false;
+        try
+        {
+            using (var connect = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                connect.CancelAfter(TimeSpan.FromSeconds(8));
+                try { await socket.ConnectAsync(new Uri($"ws://{endpoint.Host}:{endpoint.Port}/veyro"), connect.Token).ConfigureAwait(false); }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException && !ct.IsCancellationRequested)
+                {
+                    VeyroTrace.Warn($"PC-initiated pairing: phone unreachable ({error.GetType().Name})");
+                    return new PcPairResult(PcPairOutcome.Unreachable);
+                }
+            }
+
+            await SendTextAsync(socket, LinkJson.Encode(new LinkPreamble(
+                _localDeviceId, _localName, "windows",
+                Pair: LinkPreamble.PairConfirm,
+                Pk: Convert.ToBase64String(_localPublicKey))), ct).ConfigureAwait(false);
+            LinkPreambleAck? ack = LinkJson.Decode<LinkPreambleAck>(await ReceiveTextAsync(socket, ct).ConfigureAwait(false));
+            if (ack is null || ack.Mode != LinkPreambleAck.ModePairingConfirm)
+            {
+                VeyroTrace.Warn($"PC-initiated pairing refused: {ack?.Mode ?? "no answer"} {ack?.Reason}");
+                return new PcPairResult(ack?.Mode == LinkPreambleAck.ModeBusy ? PcPairOutcome.Busy : PcPairOutcome.Refused);
+            }
+
+            // The answering key must hash to the phone the user picked, and its nonce must match
+            // the commitment it made before seeing ours.
+            byte[]? pkB = TryDecodeKey(ack.Pk);
+            byte[]? commit = string.IsNullOrEmpty(ack.Commit) ? null : DecodeBase64(ack.Commit, "commit");
+            if (pkB is null || commit is null || !DeviceId.Matches(expected.Value, pkB))
+                return new PcPairResult(PcPairOutcome.IdentityMismatch);
+
+            byte[] nA = PairConfirm.NewNonce();
+            await SendTextAsync(socket, LinkJson.Encode(LinkPairNonce.For(nA)), ct).ConfigureAwait(false);
+            byte[] nB = await ReceivePairNonceAsync(socket, ct).ConfigureAwait(false);
+            if (!CryptographicOperations.FixedTimeEquals(commit, PairConfirm.Commitment(pkB, _localPublicKey, nB)))
+            {
+                VeyroTrace.Warn("PC-initiated pairing aborted: commitment mismatch; nothing stored");
+                return new PcPairResult(PcPairOutcome.IdentityMismatch);
+            }
+
+            string phoneId = expected.Value.Value;
+            showCode(PairConfirm.Code(_localPublicKey, pkB, nA, nB));
+            byte[] key = _deriveSharedKey(pkB, PairConfirm.BootstrapSalt(nA, nB), PairConfirm.BootstrapInfo(_localDeviceId, phoneId));
+            var secure = new SecureLinkSession(socket, _localDeviceId, key, encrypt: false, phoneId);
+            CryptographicOperations.ZeroMemory(key);
+            try
+            {
+                await secure.SendAsync(new LinkMessage.PairHello(
+                    _localDeviceId, _localName, "windows", "1.0",
+                    PublicKeyB64: Convert.ToBase64String(_localPublicKey)), ct).ConfigureAwait(false);
+
+                // The phone shows the same code; wait for its Accept (pairOk) or Decline (pairFail).
+                using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                wait.CancelAfter(ConfirmTimeout);
+                LinkMessage.PairOk? ok = null;
+                while (ok is null)
+                {
+                    SecureLinkMessage? message;
+                    try { message = await secure.ReceiveAsync(wait.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        return new PcPairResult(PcPairOutcome.TimedOut);
+                    }
+                    switch (message?.Envelope.Payload)
+                    {
+                        case null:
+                            return new PcPairResult(PcPairOutcome.Failed);
+                        case LinkMessage.PairFail fail:
+                            VeyroTrace.Info($"PC-initiated pairing ended by the phone: {fail.Reason}");
+                            return new PcPairResult(fail.Reason == "timeout" ? PcPairOutcome.TimedOut : PcPairOutcome.Declined);
+                        case LinkMessage.Ping ping:
+                            await secure.SendAsync(new LinkMessage.Pong(ping.Nonce), ct).ConfigureAwait(false);
+                            break;
+                        case LinkMessage.PairOk pairOk:
+                            ok = pairOk;
+                            break;
+                    }
+                }
+
+                byte[] okKey = DecodeBase64(ok.PublicKeyB64, "pairOk public key");
+                byte[] sessionSecret = DecodeBase64(ok.SessionSecretB64, "session secret");
+                if (!string.Equals(ok.DeviceId, phoneId, StringComparison.OrdinalIgnoreCase) ||
+                    !CryptographicOperations.FixedTimeEquals(okKey, pkB) || sessionSecret.Length != 32)
+                    return new PcPairResult(PcPairOutcome.IdentityMismatch);
+
+                var trusted = new TrustedPeer(
+                    phoneId, ok.DeviceName, PlatformType.Android,
+                    Convert.ToBase64String(pkB), Convert.ToBase64String(sessionSecret),
+                    false, DateTimeOffset.UtcNow);
+                await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
+                secure.Rekey(sessionSecret);
+                CryptographicOperations.ZeroMemory(sessionSecret);
+                await secure.SendAsync(new LinkMessage.Hello(
+                    _localDeviceId, _localName, "windows", Capabilities: LocalCapabilities), ct).ConfigureAwait(false);
+                VeyroTrace.Info($"PC-initiated pairing with {phoneId} completed");
+                try { PairingCompleted?.Invoke(trusted); }
+                catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
+
+                IPAddress? remote = IPAddress.TryParse(endpoint.Host, out IPAddress? parsed) ? parsed : null;
+                Task run = RunOutboundSessionAsync(secure, trusted, new SessionAddresses(remote, null), CancellationToken.None);
+                _ = run.ContinueWith(_ => secure.DisposeAsync().AsTask(), CancellationToken.None,
+                    TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+                handedOff = true;
+                return new PcPairResult(PcPairOutcome.Paired, ok.DeviceName);
+            }
+            finally
+            {
+                if (!handedOff) await secure.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new PcPairResult(PcPairOutcome.Cancelled);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("PC-initiated pairing failed", error);
+            return new PcPairResult(PcPairOutcome.Failed);
+        }
+        finally
+        {
+            // Owned by the running session once handed off; otherwise closed here.
+            if (!handedOff) socket.Dispose();
+        }
     }
 
     private async Task<bool> AuthorizeSafelyAsync(InboundPairingRequest request)

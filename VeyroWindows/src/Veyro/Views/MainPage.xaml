@@ -72,23 +72,29 @@
                             ToolTipService.ToolTip="Open side pane">
                             <FontIcon Glyph="&#xE76C;" />
                         </Button>
+                        <!--  Collapsed rail: a small but well-proportioned phone (19.5:9, thicker
+                              bezel, camera dot) instead of the squashed 24x44 one.  -->
                         <Button
                             Grid.Row="1"
-                            Width="36"
-                            Height="52"
-                            Padding="4"
+                            Width="40"
+                            Height="64"
+                            Padding="0"
                             HorizontalAlignment="Center"
                             AutomationProperties.Name="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
                             Background="Transparent"
                             BorderThickness="0"
                             Click="OpenSideBar_Click"
-                            CornerRadius="6"
+                            CornerRadius="8"
                             ToolTipService.ToolTip="{x:Bind ViewModel.Device.ConnectionStatusText, Mode=OneWay}"
                             Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Grid Width="24" Height="44">
-                                <Border Background="#FF1B1B1F" CornerRadius="5" />
-                                <Grid Margin="2" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
-                                    <Border CornerRadius="3">
+                            <Grid Width="28" Height="56">
+                                <Border
+                                    Background="#FF16161A"
+                                    BorderBrush="#40FFFFFF"
+                                    BorderThickness="1"
+                                    CornerRadius="7" />
+                                <Grid Margin="2.5" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
+                                    <Border CornerRadius="5">
                                         <Border.Background>
                                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                                 <GradientStop Offset="0" Color="#FF2F5BEA" />
@@ -97,12 +103,20 @@
                                             </LinearGradientBrush>
                                         </Border.Background>
                                     </Border>
-                                    <Border CornerRadius="3" Visibility="{x:Bind StatusViewModel.HasWallpaper, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <Border CornerRadius="5" Visibility="{x:Bind StatusViewModel.HasWallpaper, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <Border.Background>
                                             <ImageBrush ImageSource="{x:Bind StatusViewModel.Wallpaper, Mode=OneWay}" Stretch="UniformToFill" />
                                         </Border.Background>
                                     </Border>
                                 </Grid>
+                                <!--  Camera dot  -->
+                                <Ellipse
+                                    Width="3"
+                                    Height="3"
+                                    Margin="0,5,0,0"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Top"
+                                    Fill="#FF16161A" />
                             </Grid>
                         </Button>
                         <ScrollViewer
