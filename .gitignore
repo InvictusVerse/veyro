@@ -56,16 +56,15 @@ $RECYCLE.BIN/
 *.hprof
 # Per-machine Kiro settings (MCP config may hold tokens)
 .kiro/settings/
-# Third-party agent plugins: tooling, not Veyro source
+# Third-party agent plugins and skills: tooling, not Veyro source
 /.agents/
+/.kiro/skills/
+# Session handoff notes are per-session working files
+/HANDOFF*.md
+/.handoffs/
 
-# ProjectInfo: only the specification is versioned. Session logs, machine
-# details and notes about the private reference project stay local.
-/ProjectInfo/07-STATUS.md
-/ProjectInfo/09-ENVIRONMENT.md
-/ProjectInfo/10-CHANGELOG.md
-/ProjectInfo/11-INVOX-FINDINGS.md
-/ProjectInfo/12-TESTING.md
+# ProjectInfo is the private working knowledge base: never versioned.
+/ProjectInfo/
 # Partially received files and their resume sidecars must never be committed
 *.veyropart
 *.veyrometa
