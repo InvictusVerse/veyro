@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Themed-icon (Android 13+) silhouette of the Veyro mark. Only alpha matters here.
+    Same transform as ic_launcher_foreground.xml. The monitor is cut back around the
+    phone so the two devices stay distinct in a single colour.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.068"
+        android:scaleY="0.068"
+        android:translateX="17.858"
+        android:translateY="19.626">
+        <!-- Monitor, minus an 18-unit gap around the phone -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M179,218 H767 A56,56 0 0 1 823,274 V287 H714 A82,82 0 0 0 632,369 V710 H179 A56,56 0 0 1 123,654 V274 A56,56 0 0 1 179,218 Z" />
+        <!-- Stand -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M411.5,710 L534.5,710 L534.5,718 C534.5,745 553.5,756 567.5,762 L378.5,762 C392.5,756 411.5,745 411.5,718 Z M344.5,753 H601.5 A20,20 0 0 1 601.5,793 H344.5 A20,20 0 0 1 344.5,753 Z" />
+        <!-- Phone: bezel ring, glass card and earpiece -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M714,305 H876 A64,64 0 0 1 940,369 V727 A64,64 0 0 1 876,791 H714 A64,64 0 0 1 650,727 V369 A64,64 0 0 1 714,305 Z M714,327 H876 A42,42 0 0 1 918,369 V727 A42,42 0 0 1 876,769 H714 A42,42 0 0 1 672,727 V369 A42,42 0 0 1 714,327 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M672,426 H704 A56,56 0 0 1 760,482 V637 A56,56 0 0 1 704,693 H672 Z M771,347 H819 A10,10 0 0 1 819,367 H771 A10,10 0 0 1 771,347 Z" />
+    </group>
+</vector>
