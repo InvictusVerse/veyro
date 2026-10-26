@@ -10,6 +10,7 @@ namespace Veyro.Platforms.Windows.Services;
 /// <summary>
 /// Mirrors newly posted phone notifications as Windows App SDK app notifications (toasts) and
 /// routes toast buttons and the inline reply back to <see cref="INotificationMirrorService"/>.
+/// Also asks about incoming files with Accept / Decline toasts (ADR-036; counts only, no names).
 /// Also raises toasts for incoming SMS and ringing calls (ADR-027) and routes their reply and
 /// call buttons to <see cref="IMessagingService"/> and <see cref="ICallService"/>.
 /// Notification, message and call contents are user data: never logged here. SMS and call toasts
@@ -34,6 +35,8 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
     private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<bool?>> _transferPrompts = new(StringComparer.Ordinal);
+    private static readonly string TransferGroup = Hash("transfers");
     private (string Directory, string? UriPrefix)? _iconLocation;
     private bool _registered;
 
@@ -308,10 +311,79 @@ public sealed class NotificationToastService : INotificationToastService
         }
     }
 
+    // ── Incoming files (ADR-036) ─────────────────────────────────────────────────────
+
+    public async Task<bool?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct)
+    {
+        if (!_registered) throw new InvalidOperationException("App notifications are not registered.");
+        ct.ThrowIfCancellationRequested();
+        string id = Guid.NewGuid().ToString("N");
+        string tag = Hash("x|" + id);
+        var answer = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _transferPrompts[id] = answer;
+        try
+        {
+            string files = fileCount == 1 ? "1 file" : $"{fileCount.ToString("N0", CultureInfo.CurrentCulture)} files";
+            var builder = new AppNotificationBuilder()
+                // Reminder keeps it on screen until answered instead of sliding into the centre.
+                .SetScenario(AppNotificationScenario.Reminder)
+                .AddArgument("action", "transfer-open")
+                .AddArgument("req", id)
+                .SetTag(tag)
+                .SetGroup(TransferGroup)
+                .AddText(Clip($"{peerName} wants to send files", MaxTitleLength))
+                .AddText($"{files}, {TransferProgressMath.FormatBytes(totalBytes)}")
+                .AddButton(TransferButton("Accept", "transfer-accept", id, AppNotificationButtonStyle.Success))
+                .AddButton(TransferButton("Decline", "transfer-decline", id, null));
+            AppNotification notification = builder.BuildNotification();
+            notification.ExpiresOnReboot = true;
+            AppNotificationManager.Default.Show(notification);
+            using (ct.Register(() => answer.TrySetCanceled(ct)))
+                return await answer.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            _transferPrompts.TryRemove(id, out _);
+            _ = RemoveTagAsync(tag, TransferGroup);
+        }
+    }
+
+    private static AppNotificationButton TransferButton(string label, string action, string id, AppNotificationButtonStyle? style)
+    {
+        var button = new AppNotificationButton(label)
+            .AddArgument("action", action)
+            .AddArgument("req", id);
+        if (style is { } s && AppNotificationButton.IsButtonStyleSupported()) button.SetButtonStyle(s);
+        return button;
+    }
+
+    private void AnswerTransferPrompt(IDictionary<string, string> arguments, bool? answer)
+    {
+        if (arguments.TryGetValue("req", out string? id) && _transferPrompts.TryGetValue(id, out var prompt))
+            prompt.TrySetResult(answer);
+    }
+
     private void OnNotificationInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs args)
     {
         IDictionary<string, string> arguments = args.Arguments;
         if (!arguments.TryGetValue("action", out string? action)) return;
+        switch (action)
+        {
+            case "transfer-accept":
+                AnswerTransferPrompt(arguments, true);
+                return;
+            case "transfer-decline":
+                AnswerTransferPrompt(arguments, false);
+                return;
+            case "transfer-open":
+                // Bring Veyro forward first, then let the prompt ask again in the window.
+                App.MainWindow?.DispatcherQueue.TryEnqueue(() =>
+                {
+                    App.ShowMainWindow();
+                    AnswerTransferPrompt(arguments, null);
+                });
+                return;
+        }
         if (action is "open" or "call-open")
         {
             App.MainWindow?.DispatcherQueue.TryEnqueue(App.ShowMainWindow);

@@ -16,9 +16,20 @@ using Veyro.Core.Transfer;
 
 namespace Veyro.Core.Link;
 
+/// <summary>Both ends of the phone's WebSocket, as the listener saw them. Either may be null.</summary>
+public sealed record SessionAddresses(IPAddress? Remote, IPAddress? Local);
+
+/// <summary>A local IPv4 address with its prefix length, for picking <c>decision.tcpHost</c>.</summary>
+public sealed record LocalIpv4(IPAddress Address, int PrefixLength);
+
+/// <summary>
+/// An offer that needs the user's consent. <see cref="Abandoned"/> fires when the phone cancels
+/// the offer or the session ends; the prompt must close then.
+/// </summary>
 public sealed record InboundOfferRequest(
     TrustedPeer Peer,
-    LinkMessage.TransferOffer Offer);
+    LinkMessage.TransferOffer Offer,
+    CancellationToken Abandoned = default);
 
 /// <summary>
 /// An unknown phone asks to pair. For confirm pairing (04-PROTOCOL.md 4.3) <see cref="Code"/> is
@@ -52,7 +63,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     private readonly string _destinationRoot;
     private readonly byte[] _localPublicKey;
     private readonly Func<byte[], byte[], byte[], byte[]>? _deriveSharedKey;
-    private readonly CancellationTokenSource _stop = new();
+    private CancellationTokenSource _stop = new();
     private readonly PeerSessionRegistry _sessions;
     private WebApplication? _app;
 
@@ -81,6 +92,18 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     /// <summary>Bounds each step of the confirm exchange before the prompt (nonce, pairHello).</summary>
     public TimeSpan ConfirmHandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
+
+    /// <summary>
+    /// The incoming-files prompt with a precise outcome (ADR-036). When set it replaces
+    /// <see cref="OfferAuthorizer"/>, so a timeout reaches the phone as <c>timeout</c>, not <c>declined</c>.
+    /// </summary>
+    public Func<InboundOfferRequest, Task<OfferVerdict>>? OfferConsent { get; set; }
+
+    /// <summary>How long an accepted sender has to open the VTC1 data socket.</summary>
+    public TimeSpan DataConnectTimeout { get; set; } = Vtc1BulkTransfer.DefaultAcceptTimeout;
+
+    /// <summary>How long the VTC1 data socket may stay silent mid-transfer.</summary>
+    public TimeSpan DataIdleTimeout { get; set; } = Vtc1BulkTransfer.DefaultIdleTimeout;
 
     /// <summary>
     /// How long a device pairing through the open window has to send a PairHello that verifies.
@@ -134,6 +157,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     public async Task StartAsync()
     {
         if (_app is not null) return;
+        // Restartable: "Pause sync" stops the listener and "Resume" starts it again.
+        if (_stop.IsCancellationRequested)
+        {
+            _stop.Dispose();
+            _stop = new CancellationTokenSource();
+        }
         VeyroTrace.Info($"Starting control listener; requested port={Port}, range={PortRangeStart}-{PortRangeEnd}");
         string localIpv4 = string.Join(", ", NetworkInterface.GetAllNetworkInterfaces()
             .Where(network => network.OperationalStatus == OperationalStatus.Up)
@@ -162,8 +191,12 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     public async Task StopAsync()
     {
         _stop.Cancel();
-        if (_app is not null) await _app.StopAsync().ConfigureAwait(false);
-        _app = null;
+        if (_app is { } app)
+        {
+            _app = null;
+            await app.StopAsync().ConfigureAwait(false);
+            await app.DisposeAsync().ConfigureAwait(false);
+        }
         VeyroTrace.Info("Control listener stopped");
     }
 
@@ -186,7 +219,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         {
             WebSocket socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
             VeyroTrace.Info($"Accepted WebSocket connection from {context.Connection.RemoteIpAddress}; path={context.Request.Path}");
-            await HandleAsync(socket, context.Connection.RemoteIpAddress, _stop.Token).ConfigureAwait(false);
+            await HandleAsync(socket, new SessionAddresses(context.Connection.RemoteIpAddress, context.Connection.LocalIpAddress), _stop.Token).ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -195,7 +228,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         }
     }
 
-    private async Task HandleAsync(WebSocket socket, IPAddress? remoteAddress, CancellationToken ct)
+    private async Task HandleAsync(WebSocket socket, SessionAddresses addresses, CancellationToken ct)
     {
         await using var sessionOwner = new WebSocketOwner(socket);
         try
@@ -220,7 +253,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             if (trusted is null && preamble.Pair == LinkPreamble.PairConfirm)
             {
                 // ADR-031: compare a code on both screens, accept here. Nothing is typed.
-                await RunConfirmPairingAsync(socket, preamble, remoteAddress, ct).ConfigureAwait(false);
+                await RunConfirmPairingAsync(socket, preamble, addresses, ct).ConfigureAwait(false);
                 return;
             }
             if (trusted is null && preamble.Pair is not null and not LinkPreamble.PairQr)
@@ -309,7 +342,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                 catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
             }
             TrustedPeer pairedPeer = trusted ?? throw new UnauthorizedAccessException("Pairing did not establish trust.");
-            await RunSessionAsync(secure, pairedPeer, remoteAddress, ct).ConfigureAwait(false);
+            await RunSessionAsync(secure, pairedPeer, addresses, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception error)
@@ -329,7 +362,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     /// then ask the user to compare the code. <c>pairOk</c> is sent only after Accept. Nonces, the
     /// code and K are never logged.
     /// </summary>
-    private async Task RunConfirmPairingAsync(WebSocket socket, LinkPreamble preamble, IPAddress? remoteAddress, CancellationToken ct)
+    private async Task RunConfirmPairingAsync(WebSocket socket, LinkPreamble preamble, SessionAddresses addresses, CancellationToken ct)
     {
         byte[]? pkA = TryDecodeKey(preamble.Pk);
         DeviceId? claimed = DeviceId.ParseOrNull(preamble.Id);
@@ -430,7 +463,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         VeyroTrace.Info($"Confirm pairing with {idA} completed");
         try { PairingCompleted?.Invoke(trusted); }
         catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
-        await RunSessionAsync(secure, trusted, remoteAddress, ct, pending).ConfigureAwait(false);
+        await RunSessionAsync(secure, trusted, addresses, ct, pending).ConfigureAwait(false);
     }
 
     private async Task<bool> AuthorizeSafelyAsync(InboundPairingRequest request)
@@ -526,7 +559,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
     private async Task RunSessionAsync(
         SecureLinkSession secure,
         TrustedPeer peer,
-        IPAddress? remoteAddress,
+        SessionAddresses addresses,
         CancellationToken ct,
         Task<SecureLinkMessage?>? pendingReceive = null)
     {
@@ -587,26 +620,30 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                         }
                         if (requested.ContainsKey(offer.TransferId))
                         {
-                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "busy"), ct).ConfigureAwait(false);
+                            VeyroTrace.Warn("Requested offer answered busy: its transfer id is already running");
+                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Busy), ct).ConfigureAwait(false);
                             RequestedOffers?.OnFailed(peer.DeviceId, offer.RequestId!, new InvalidDataException("Duplicate transfer id."));
                             break;
                         }
                         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         requested[offer.TransferId] = (
-                            HandleOfferAsync(secure, peer, offer, remoteAddress, claim, cancellation.Token),
+                            HandleOfferAsync(secure, peer, offer, addresses, claim, cancellation.Token),
                             cancellation);
                         break;
                     }
                     case LinkMessage.TransferOffer offer:
+                        // HandleOfferAsync always finishes (prompt deadline, data connect and idle
+                        // timeouts), so a failed transfer cannot leave this session busy for good.
                         if (activeTransfer is { IsCompleted: false })
                         {
-                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "busy"), ct).ConfigureAwait(false);
+                            VeyroTrace.Info("Offer answered busy: another transfer is running on this session");
+                            await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Busy), ct).ConfigureAwait(false);
                             break;
                         }
                         transferCancellation?.Dispose();
                         transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         activeTransferId = offer.TransferId;
-                        activeTransfer = HandleOfferAsync(secure, peer, offer, remoteAddress, claim: null, transferCancellation.Token);
+                        activeTransfer = HandleOfferAsync(secure, peer, offer, addresses, claim: null, transferCancellation.Token);
                         break;
                     case LinkMessage.Cancel cancel:
                         if (activeTransfer is { IsCompleted: false } && cancel.TransferId == activeTransferId)
@@ -678,7 +715,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         SecureLinkSession secure,
         TrustedPeer sessionPeer,
         LinkMessage.TransferOffer offer,
-        IPAddress? remoteAddress,
+        SessionAddresses addresses,
         RequestedOfferClaim? claim,
         CancellationToken ct)
     {
@@ -690,13 +727,17 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             // since the session was opened. A claimed offer answers our own request (ADR-034): the
             // user already asked for it, so there is no prompt.
             TrustedPeer? peer = _trustStore.GetPeer(sessionPeer.DeviceId);
-            bool allowed = peer is not null &&
-                (claim is not null || peer.AutoAcceptTransfers ||
-                 await OfferAuthorizer(new InboundOfferRequest(peer, offer)).ConfigureAwait(false));
-            if (!allowed)
+            OfferVerdict verdict = peer is null ? OfferVerdict.Declined
+                : claim is not null || peer.AutoAcceptTransfers ? OfferVerdict.Accepted
+                : await AskConsentAsync(new InboundOfferRequest(peer, offer, ct)).ConfigureAwait(false);
+            // The phone cancelled the offer while the prompt was up: it expects no decision.
+            ct.ThrowIfCancellationRequested();
+            if (verdict != OfferVerdict.Accepted)
             {
                 decided = true;
-                await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, "declined"), ct).ConfigureAwait(false);
+                string reason = OfferDeclineReasons.For(verdict);
+                VeyroTrace.Info($"Inbound offer declined: reason={reason}");
+                await secure.SendAsync(new LinkMessage.TransferDecision(offer.TransferId, false, reason), ct).ConfigureAwait(false);
                 if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, new UnauthorizedAccessException("The peer is no longer trusted."));
                 return;
             }
@@ -713,13 +754,15 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             tcp.Start();
             try
             {
-                string host = FindAdvertisableAddress(remoteAddress);
+                string host = FindAdvertisableAddress(addresses);
                 string token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
                 decided = true;
+                // Whatever the phone preferred (WIFI_DIRECT, LAN_TCP), Windows serves LAN_TCP on
+                // the address the phone already reached this session on (04-PROTOCOL.md 7.1).
                 await secure.SendAsync(new LinkMessage.TransferDecision(
                     offer.TransferId,
                     true,
-                    Route: "LAN_TCP",
+                    Route: RouteWireNames.LanTcp,
                     TcpHost: host,
                     TcpPort: ((IPEndPoint)tcp.LocalEndpoint).Port,
                     FallbackHost: host,
@@ -732,7 +775,13 @@ public sealed class VeyroLinkServer : IAsyncDisposable
                     sessionPeer.DeviceId,
                     destinationRoot,
                     inboundItems,
-                    ct: ct).ConfigureAwait(false);
+                    ct: ct,
+                    // Android's sender waits for the session itemResult after each item, not the
+                    // VTC1 one; without it every phone-to-PC transfer (photos included) stalled.
+                    onItemResult: (index, ok, error, sendCt) =>
+                        secure.SendAsync(new LinkMessage.ItemResult(offer.TransferId, index, ok, error), sendCt),
+                    acceptTimeout: DataConnectTimeout,
+                    idleTimeout: DataIdleTimeout).ConfigureAwait(false);
             }
             finally
             {
@@ -762,11 +811,18 @@ public sealed class VeyroLinkServer : IAsyncDisposable
             {
                 LinkMessage failure = decided
                     ? new LinkMessage.TransferEnd(offer.TransferId, false)
-                    : new LinkMessage.TransferDecision(offer.TransferId, false, "error");
+                    : new LinkMessage.TransferDecision(offer.TransferId, false, OfferDeclineReasons.Error);
                 await secure.SendAsync(failure, CancellationToken.None).ConfigureAwait(false);
             }
             catch { }
         }
+    }
+
+    /// <summary>A throwing prompt is an "error" decision (the outer catch), never a silent Decline.</summary>
+    private async Task<OfferVerdict> AskConsentAsync(InboundOfferRequest request)
+    {
+        if (OfferConsent is { } consent) return await consent(request).ConfigureAwait(false);
+        return await OfferAuthorizer(request).ConfigureAwait(false) ? OfferVerdict.Accepted : OfferVerdict.Declined;
     }
 
     /// <summary>ADR-034: an offer carrying a requestId the handler issued. Others take the consent path.</summary>
@@ -811,28 +867,64 @@ public sealed class VeyroLinkServer : IAsyncDisposable
         throw new IOException($"No Veyro control port available in {PortRangeStart}-{PortRangeEnd}.");
     }
 
-    private static string FindAdvertisableAddress(IPAddress? remote)
+    private static string FindAdvertisableAddress(SessionAddresses session)
     {
-        // A loopback peer (local tooling and tests) can only reach us on loopback.
-        if (remote is not null && IPAddress.IsLoopback(remote)) return IPAddress.Loopback.ToString();
-
-        var addresses = NetworkInterface.GetAllNetworkInterfaces()
+        var candidates = NetworkInterface.GetAllNetworkInterfaces()
             .Where(network => network.OperationalStatus == OperationalStatus.Up)
             .SelectMany(network => network.GetIPProperties().UnicastAddresses)
-            .Select(address => address.Address)
-            .Where(address => address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address) && !address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+            .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork)
+            .Select(address => new LocalIpv4(address.Address, address.PrefixLength))
             .ToList();
+        return ChooseAdvertisableAddress(session, candidates)?.ToString()
+            ?? throw new InvalidOperationException("No advertisable IPv4 address.");
+    }
+
+    /// <summary>
+    /// The IPv4 address to put in <c>decision.tcpHost</c>. Prefers the address the phone reached
+    /// this session on (proven reachable), then one on the phone's subnet, then any usable one.
+    /// A loopback peer (local tooling and tests) gets loopback. Null when nothing is usable.
+    /// </summary>
+    public static IPAddress? ChooseAdvertisableAddress(SessionAddresses session, IReadOnlyList<LocalIpv4> candidates)
+    {
+        IPAddress? remote = Ipv4(session.Remote);
+        if (remote is not null && IPAddress.IsLoopback(remote)) return IPAddress.Loopback;
+
+        var usable = candidates.Where(candidate => Ipv4(candidate.Address) is { } address &&
+                                                   !IPAddress.IsLoopback(address) &&
+                                                   !address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+            .Select(candidate => candidate with { Address = Ipv4(candidate.Address)! })
+            .ToList();
+        IPAddress? local = Ipv4(session.Local);
+        if (local is not null && usable.Any(candidate => candidate.Address.Equals(local))) return local;
         if (remote is not null)
         {
-            byte[] remoteBytes = remote.GetAddressBytes();
-            var sameSubnet = addresses.FirstOrDefault(address =>
-            {
-                byte[] localBytes = address.GetAddressBytes();
-                return localBytes.Length == 4 && remoteBytes.Length == 4 && localBytes[0] == remoteBytes[0] && localBytes[1] == remoteBytes[1] && localBytes[2] == remoteBytes[2];
-            });
-            if (sameSubnet is not null) return sameSubnet.ToString();
+            LocalIpv4? sameSubnet = usable.FirstOrDefault(candidate => SameSubnet(candidate, remote));
+            if (sameSubnet is not null) return sameSubnet.Address;
         }
-        return addresses.FirstOrDefault()?.ToString() ?? throw new InvalidOperationException("No advertisable IPv4 address.");
+        return usable.FirstOrDefault()?.Address;
+    }
+
+    /// <summary>IPv4, unwrapping IPv4-mapped IPv6 (a dual-stack socket reports ::ffff:a.b.c.d).</summary>
+    private static IPAddress? Ipv4(IPAddress? address) => address switch
+    {
+        null => null,
+        { IsIPv4MappedToIPv6: true } => address.MapToIPv4(),
+        { AddressFamily: AddressFamily.InterNetwork } => address,
+        _ => null
+    };
+
+    private static bool SameSubnet(LocalIpv4 local, IPAddress remote)
+    {
+        // A missing or odd prefix falls back to /24, the common home-network size.
+        int prefix = local.PrefixLength is > 0 and <= 32 ? local.PrefixLength : 24;
+        uint mask = prefix == 32 ? uint.MaxValue : ~(uint.MaxValue >> prefix);
+        return (ToUInt32(local.Address) & mask) == (ToUInt32(remote) & mask);
+    }
+
+    private static uint ToUInt32(IPAddress address)
+    {
+        byte[] bytes = address.GetAddressBytes();
+        return (uint)(bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
     }
 
     private sealed class WebSocketOwner(WebSocket socket) : IAsyncDisposable

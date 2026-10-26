@@ -8,13 +8,17 @@ public sealed record AppSettings(
     bool IsDiscoverable,
     string DownloadDirectory,
     bool AutoStartOnLogin = false,
-    bool MinimizeToTrayOnClose = true,
+    // Tray mode is off until the user turns it on (ADR-036). Older builds wrote true by default.
+    bool MinimizeToTrayOnClose = false,
     // ADR-029: the Bluetooth phone chosen for call audio and the Veyro peer it belongs to.
     string? BluetoothCallTransportId = null,
     string? BluetoothCallPeerId = null,
     // ADR-030: first-run onboarding finished. Missing in older settings files, so it defaults to
     // false; startup marks installs that already trust a peer as complete.
-    bool OnboardingCompleted = false
+    bool OnboardingCompleted = false,
+    // ADR-036: set once the user changed the tray switch. Files without it carry the old default
+    // (true), which nobody chose, so loading them turns tray mode off.
+    bool TrayModeChosen = false
 );
 
 public interface ISettingsStore
@@ -60,7 +64,7 @@ public sealed class FileSettingsStore : ISettingsStore
             {
                 string json = File.ReadAllText(_filePath);
                 var loaded = JsonSerializer.Deserialize<AppSettings>(json);
-                if (loaded is not null) return loaded;
+                if (loaded is not null) return loaded.TrayModeChosen ? loaded : loaded with { MinimizeToTrayOnClose = false };
             }
         }
         catch

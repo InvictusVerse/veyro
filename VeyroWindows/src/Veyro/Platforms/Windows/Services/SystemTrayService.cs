@@ -6,9 +6,10 @@ namespace Veyro.Platforms.Windows.Services;
 
 /// <summary>
 /// The Veyro icon in the notification area (Shell_NotifyIcon on a hidden window owned by the UI
-/// thread). Left click opens the window; right click offers Open and Quit. The icon is re-added
-/// when Explorer restarts. <see cref="IsAvailable"/> is true only while the icon exists, so
-/// "minimize to tray on close" never hides the window without a way back.
+/// thread), present only while tray mode is on (ADR-036, default off). Left click opens the
+/// window; right click offers Open Veyro, Send files..., Pause/Resume sync and Quit. The icon is
+/// re-added when Explorer restarts. <see cref="IsAvailable"/> is true only while the icon exists,
+/// so "keep running in the tray" never hides the window without a way back.
 /// </summary>
 public sealed class SystemTrayService : ISystemTrayService
 {
@@ -30,9 +31,14 @@ public sealed class SystemTrayService : ISystemTrayService
     private const int SmCxSmIcon = 49;
     private const uint CommandOpen = 1;
     private const uint CommandQuit = 2;
+    private const uint CommandSendFiles = 3;
+    private const uint CommandToggleSync = 4;
     private const string WindowClass = "VeyroTrayWindow";
 
     private readonly Action _open;
+    private readonly Action _sendFiles;
+    private readonly Action _toggleSync;
+    private readonly Func<bool> _isSyncPaused;
     private readonly Action _quit;
     private readonly uint _taskbarCreated;
     private WndProc? _wndProc; // kept alive: the native window calls into it
@@ -40,15 +46,32 @@ public sealed class SystemTrayService : ISystemTrayService
     private nint _hwnd;
     private nint _icon;
     private bool _iconOwned;
+    private bool _enabled;
 
-    public SystemTrayService(Action open, Action quit)
+    public SystemTrayService(Action open, Action sendFiles, Action toggleSync, Func<bool> isSyncPaused, Action quit)
     {
         _open = open;
+        _sendFiles = sendFiles;
+        _toggleSync = toggleSync;
+        _isSyncPaused = isSyncPaused;
         _quit = quit;
         _taskbarCreated = RegisterWindowMessageW("TaskbarCreated");
     }
 
     public bool IsAvailable { get; private set; }
+
+    public void SetEnabled(bool enabled)
+    {
+        _enabled = enabled;
+        if (_hwnd == 0) return;
+        if (enabled && !IsAvailable) IsAvailable = AddIcon();
+        else if (!enabled && IsAvailable)
+        {
+            var data = NewData();
+            Shell_NotifyIconW(NimDelete, ref data);
+            IsAvailable = false;
+        }
+    }
 
     public void Initialize(nint windowHandle)
     {
@@ -73,7 +96,7 @@ public sealed class SystemTrayService : ISystemTrayService
                 return;
             }
             _icon = LoadTrayIcon(out _iconOwned);
-            IsAvailable = AddIcon();
+            if (_enabled) IsAvailable = AddIcon();
         }
         catch (Exception error)
         {
@@ -130,7 +153,7 @@ public sealed class SystemTrayService : ISystemTrayService
         if (message == _taskbarCreated && _taskbarCreated != 0)
         {
             // Explorer restarted and forgot every notification-area icon.
-            IsAvailable = AddIcon();
+            if (_enabled) IsAvailable = AddIcon();
             return 0;
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -143,6 +166,8 @@ public sealed class SystemTrayService : ISystemTrayService
         try
         {
             AppendMenuW(menu, MfString, CommandOpen, "Open Veyro");
+            AppendMenuW(menu, MfString, CommandSendFiles, "Send files...");
+            AppendMenuW(menu, MfString, CommandToggleSync, _isSyncPaused() ? "Resume sync" : "Pause sync");
             AppendMenuW(menu, MfSeparator, 0, null);
             AppendMenuW(menu, MfString, CommandQuit, "Quit Veyro");
             GetCursorPos(out POINT point);
@@ -150,8 +175,15 @@ public sealed class SystemTrayService : ISystemTrayService
             SetForegroundWindow(hwnd);
             uint command = TrackPopupMenuEx(menu, TpmRightButton | TpmReturnCmd | TpmNoNotify, point.X, point.Y, hwnd, 0);
             PostMessageW(hwnd, WmNull, 0, 0);
-            if (command == CommandOpen) Run(_open);
-            else if (command == CommandQuit) Run(_quit);
+            Action? action = command switch
+            {
+                CommandOpen => _open,
+                CommandSendFiles => _sendFiles,
+                CommandToggleSync => _toggleSync,
+                CommandQuit => _quit,
+                _ => null
+            };
+            if (action is not null) Run(action);
         }
         finally
         {

@@ -252,6 +252,34 @@ public sealed class PhotoServiceTests : IDisposable
         Assert.Single(_sessions.SentOf<LinkMessage.PhotoFetch>(Peer));
     }
 
+    /// <summary>
+    /// Hardware report: the viewer spun forever. The whole fetch is now bounded at 60 s from the
+    /// request, even when the phone's offer was claimed and the transfer then stalls.
+    /// </summary>
+    [Fact]
+    public async Task FetchOriginal_IsBoundedAtSixtySecondsEvenAfterTheOfferWasClaimed()
+    {
+        using var service = NewService();
+        Task<string> fetch = service.FetchOriginalAsync(Peer, 7);
+        string requestId = Assert.Single(_sessions.SentOf<LinkMessage.PhotoFetch>(Peer)).RequestId;
+        _time.Advance(TimeSpan.FromSeconds(20));
+        Assert.NotNull(service.TryClaim(Peer,
+            new LinkMessage.TransferOffer("t7", [new LinkItem(0, "x.jpg", 1, 0)], 1, "Phone", ["LAN_TCP"], RequestId: requestId)));
+
+        _time.Advance(PhotoService.FetchTimeout - TimeSpan.FromSeconds(21));
+        Assert.False(fetch.IsCompleted);
+        _time.Advance(TimeSpan.FromSeconds(1));
+        var error = await Assert.ThrowsAsync<TimeoutException>(() => fetch);
+        Assert.Equal(PhotoService.NotSentMessage, error.Message);
+
+        // A retry asks the phone again with a fresh requestId.
+        Task<string> retry = service.FetchOriginalAsync(Peer, 7);
+        Assert.Equal(2, _sessions.SentOf<LinkMessage.PhotoFetch>(Peer).Count);
+        Assert.NotEqual(requestId, _sessions.SentOf<LinkMessage.PhotoFetch>(Peer)[^1].RequestId);
+        _time.Advance(PhotoService.OfferTimeout);
+        await Assert.ThrowsAsync<TimeoutException>(() => retry);
+    }
+
     [Fact]
     public async Task FetchOriginal_FailsWhenTheOfferNeverComesOrIsUnexpected()
     {

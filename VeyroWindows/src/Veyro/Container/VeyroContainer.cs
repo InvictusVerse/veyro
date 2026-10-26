@@ -31,6 +31,7 @@ public sealed class VeyroContainer
     public MessagingService Messaging { get; }
     public CallService Calls { get; }
     public PhotoService Photos { get; }
+    public TransferConsentCoordinator TransferConsent { get; }
     public string? StartupError { get; set; }
 
     public ISystemTrayService SystemTrayService { get; }
@@ -104,7 +105,12 @@ public sealed class VeyroContainer
             controlPort: () => LinkServer.IsRunning ? LinkServer.Port : 0);
 
         // Tray clicks arrive long after construction, once the main window exists.
-        SystemTrayService = new SystemTrayService(open: App.ShowMainWindow, quit: App.ExitApplication);
+        SystemTrayService = new SystemTrayService(
+            open: App.ShowMainWindow,
+            sendFiles: App.SendFilesFromTray,
+            toggleSync: App.ToggleSync,
+            isSyncPaused: () => App.SyncPaused,
+            quit: App.ExitApplication);
         LoginStartup = new LoginStartupService();
         ThemeModeService = new AppThemeModeService();
         // Paired phones from the trust store, connected state from the live sessions.
@@ -120,6 +126,10 @@ public sealed class VeyroContainer
             // Invoked on toast activation, long after construction has assigned the view model.
             openThread: (peerId, threadId) => MessagesViewModel!.RequestOpenThread(peerId, threadId),
             DataDirectory);
+        // ADR-036: incoming files are asked about one at a time, by dialog or actionable toast,
+        // with a 60 s deadline that reaches the phone as "timeout", not "declined".
+        TransferConsent = new TransferConsentCoordinator(new TransferConsentUi(NotificationToastService));
+        LinkServer.OfferConsent = TransferConsent.DecideAsync;
 
         NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager);
         PhoneMediaViewModel = new PhoneMediaViewModel(PhoneMedia, DeviceManager);

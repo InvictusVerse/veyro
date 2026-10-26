@@ -138,7 +138,7 @@ item = {
 transfer-decision = {
   0: tstr,         ; transferId
   1: bool,         ; accept
-  ? 2: tstr,       ; reason, when declined
+  ? 2: tstr,       ; reason, when declined: "declined" | "timeout" | "busy" | "error" (free text, ADR-036)
   ? 3: { * uint => [* uint] },   ; itemIndex => chunk indices still needed (resume)
 }
 

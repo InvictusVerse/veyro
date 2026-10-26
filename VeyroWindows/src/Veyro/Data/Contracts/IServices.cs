@@ -1,15 +1,19 @@
 namespace Veyro.Data.Contracts;
 
 /// <summary>
-/// The Veyro icon in the Windows notification area. <see cref="IsAvailable"/> is true only after
-/// the icon was actually added, so "minimize to tray" never hides the window without a way back.
+/// The Veyro icon in the Windows notification area, shown only while tray mode is on (default
+/// off, ADR-036). <see cref="IsAvailable"/> is true only while the icon actually exists, so
+/// "keep running in the tray" never hides the window without a way back.
 /// </summary>
 public interface ISystemTrayService : IDisposable
 {
     bool IsAvailable { get; }
 
-    /// <summary>Adds the icon for <paramref name="windowHandle"/>. UI thread. Failures leave IsAvailable false.</summary>
+    /// <summary>Prepares the icon's message window. UI thread. Adds no icon by itself.</summary>
     void Initialize(nint windowHandle);
+
+    /// <summary>Adds or removes the icon. UI thread. A failure to add leaves IsAvailable false.</summary>
+    void SetEnabled(bool enabled);
 }
 
 public interface IAppThemeModeService
@@ -70,6 +74,13 @@ public interface INotificationToastService : IDisposable
 {
     /// <summary>Registers for toast activation. Call once at startup, before any toast is shown.</summary>
     void Initialize();
+
+    /// <summary>
+    /// Incoming-files toast with Accept and Decline (ADR-036). True or false for the buttons, null
+    /// when the user clicked the toast body (Veyro is shown). Throws when toasts are unavailable;
+    /// cancelling <paramref name="ct"/> removes the toast. Counts only, never file names.
+    /// </summary>
+    Task<bool?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct);
 }
 
 /// <summary>

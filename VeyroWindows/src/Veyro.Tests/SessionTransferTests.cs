@@ -128,6 +128,9 @@ public sealed class SessionTransferTests : IAsyncLifetime
         var offer = await phone.ReceiveAsync<LinkMessage.TransferOffer>(Ct);
         Assert.Equal("holiday.bin", Assert.Single(offer.Items).RelPath);
         Assert.Null(offer.RequestId);
+        // Hardware test 3: "LANTCP" made Android answer without a VTC1 endpoint. Exactly the
+        // Kotlin TransferRoute name, nothing else.
+        Assert.Equal(["LAN_TCP"], offer.PreferredRoutes);
 
         // Everything a phone may send before deciding: its Hello again, companion data, a
         // heartbeat, and transfer messages for some other id. None of it may break the wait.

@@ -55,7 +55,9 @@ public interface IPhotoService
 
     /// <summary>
     /// Sends <c>photoFetch</c> with a new requestId and completes with the path of the original
-    /// once the phone's answering transfer finished, in this session's cache folder.
+    /// once the phone's answering transfer finished, in this session's cache folder. Fails with
+    /// <see cref="TimeoutException"/> if the offer does not start within 30 s or the whole fetch
+    /// takes longer than 60 s.
     /// </summary>
     Task<string> FetchOriginalAsync(string peerId, long id, CancellationToken ct = default);
 }
@@ -78,8 +80,13 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
     public static readonly TimeSpan ThumbnailRetryAfter = TimeSpan.FromSeconds(20);
     /// <summary>How long the phone has to start the transfer answering a photoFetch.</summary>
     public static readonly TimeSpan OfferTimeout = TimeSpan.FromSeconds(30);
-    /// <summary>Upper bound for a claimed transfer, so a stalled one cannot hang the viewer forever.</summary>
-    public static readonly TimeSpan TransferTimeout = TimeSpan.FromMinutes(10);
+    /// <summary>
+    /// Upper bound for the whole fetch, request to verified file, so the viewer always ends in a
+    /// photo or an error (never an endless spinner). A photo is one file; 60 s is ample on a LAN.
+    /// </summary>
+    public static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(60);
+    /// <summary>Shown when the phone never sent the photo or did not finish in time.</summary>
+    public const string NotSentMessage = "The phone did not send the photo.";
 
     private readonly IPeerSessionRegistry _sessions;
     private readonly TimeProvider _time;
@@ -231,11 +238,11 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
             else
             {
                 string requestId = Guid.NewGuid().ToString("N");
-                var pending = new PendingFetch(id, requestId);
+                var pending = new PendingFetch(id, requestId, _time.GetUtcNow());
                 state.Fetches[requestId] = pending;
                 state.FetchByPhoto[id] = pending;
                 pending.Timer = _time.CreateTimer(
-                    _ => Fail(peerId, requestId, new TimeoutException("The phone did not send the photo.")),
+                    _ => Fail(peerId, requestId, new TimeoutException(NotSentMessage)),
                     null, OfferTimeout, Timeout.InfiniteTimeSpan);
                 task = pending.Completion.Task;
                 request = new LinkMessage.PhotoFetch(id, requestId);
@@ -276,9 +283,11 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
             {
                 pending.Claimed = true;
                 pending.Timer?.Dispose();
+                // The rest of the fetch budget, counted from the request.
+                TimeSpan remaining = pending.RequestedAt + FetchTimeout - _time.GetUtcNow();
                 pending.Timer = _time.CreateTimer(
-                    _ => Fail(peerId, requestId, new TimeoutException("The photo transfer did not finish.")),
-                    null, TransferTimeout, Timeout.InfiniteTimeSpan);
+                    _ => Fail(peerId, requestId, new TimeoutException(NotSentMessage)),
+                    null, remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
                 // requestId is ours (a hex GUID), so it is safe as a folder name.
                 directory = Path.Combine(state.Folder, requestId);
             }
@@ -542,10 +551,11 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
         }
     }
 
-    private sealed class PendingFetch(long photoId, string requestId)
+    private sealed class PendingFetch(long photoId, string requestId, DateTimeOffset requestedAt)
     {
         public long PhotoId { get; } = photoId;
         public string RequestId { get; } = requestId;
+        public DateTimeOffset RequestedAt { get; } = requestedAt;
         public TaskCompletionSource<string> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ITimer? Timer { get; set; }
         public bool Claimed { get; set; }

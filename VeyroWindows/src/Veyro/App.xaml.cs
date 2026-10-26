@@ -36,10 +36,12 @@ public partial class App : Application
 
         MainWindow.AppWindow.Resize(new Windows.Graphics.SizeInt32(1180, 760));
 
-        VeyroContainer.Instance.SystemTrayService.Initialize(WindowHandle);
+        var container = VeyroContainer.Instance;
+        // ADR-036: the tray icon exists only while "keep running in the tray" is on (default off).
+        container.SystemTrayService.Initialize(WindowHandle);
+        container.SystemTrayService.SetEnabled(container.SettingsStore.Current.MinimizeToTrayOnClose);
         MainWindow.Closed += Window_Closed;
 
-        var container = VeyroContainer.Instance;
         // ADR-030: first run shows onboarding. Installs from before onboarding existed that
         // already trust a phone count as onboarded.
         if (!container.SettingsStore.Current.OnboardingCompleted && container.TrustStore.GetTrustedPeers().Count > 0)
@@ -50,8 +52,8 @@ public partial class App : Application
         rootFrame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
 
         MainWindow.Activate();
+        // Incoming files are asked about by the container's TransferConsentCoordinator (ADR-036).
         container.LinkServer.PairingAuthorizer = AuthorizePairingAsync;
-        container.LinkServer.OfferAuthorizer = AuthorizeIncomingTransferAsync;
         // A newly paired phone shows up in the device list and sidebar without a restart.
         container.LinkServer.PairingCompleted += _ =>
             MainWindow.DispatcherQueue.TryEnqueue(() => container.DeviceManager.ReloadPairedDevices());
@@ -85,19 +87,32 @@ public partial class App : Application
         await VeyroContainer.Instance.DeviceManager.RefreshDiscoveryAsync();
     }
 
+    // ── Dialogs: WinUI allows one ContentDialog at a time per window (ADR-036) ──────────
+
+    private static readonly SemaphoreSlim DialogGate = new(1, 1);
+
+    /// <summary>Claims the single dialog slot without waiting. UI thread. Pair with <see cref="ExitDialog"/>.</summary>
+    public static bool TryEnterDialog() => DialogGate.Wait(0);
+
+    public static void ExitDialog() => DialogGate.Release();
+
+    /// <summary>Shown and not minimised: a dialog in it would be seen. UI thread.</summary>
+    public static bool IsWindowOnScreen(Window window)
+        => window.AppWindow is { IsVisible: true } appWindow &&
+           appWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+
     private static Task<bool> AuthorizePairingAsync(InboundPairingRequest request)
     {
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = MainWindow.DispatcherQueue.TryEnqueue(async () =>
         {
+            bool entered = false;
             try
             {
-                // ADR-031: the phone is showing the same code and waiting for Accept here.
-                if (request.Abandoned.IsCancellationRequested)
-                {
-                    completion.TrySetResult(false);
-                    return;
-                }
+                // ADR-031: the phone is showing the same code and waiting for Accept here. An
+                // incoming-files dialog may be open; wait for it (it closes within 60 s).
+                await DialogGate.WaitAsync(request.Abandoned);
+                entered = true;
                 string fingerprint = DeviceId.ParseOrNull(request.PeerDeviceId) is { } id
                     ? DeviceId.FormatFingerprint(id)
                     : request.PeerDeviceId;
@@ -111,42 +126,84 @@ public partial class App : Application
                 bool accepted = await dialog.ShowAsync() == ContentDialogResult.Primary;
                 completion.TrySetResult(accepted && !request.Abandoned.IsCancellationRequested);
             }
-            catch
+            catch (OperationCanceledException) when (request.Abandoned.IsCancellationRequested)
             {
                 completion.TrySetResult(false);
+            }
+            catch (Exception error)
+            {
+                VeyroTrace.Warn($"Pairing prompt could not be shown: {error.GetType().Name}");
+                completion.TrySetResult(false);
+            }
+            finally
+            {
+                if (entered) ExitDialog();
             }
         });
         return completion.Task;
     }
 
-    private static Task<bool> AuthorizeIncomingTransferAsync(InboundOfferRequest request)
+    // ── Tray actions (ADR-036) ───────────────────────────────────────────────────────
+
+    private static bool _syncBusy;
+
+    /// <summary>True while "Pause sync" holds the listener and discovery stopped.</summary>
+    public static bool SyncPaused { get; private set; }
+
+    /// <summary>
+    /// Pause disconnects the phones and stops listening and discovery, so nothing syncs until
+    /// Resume (or the next start; the pause is not saved). UI thread.
+    /// </summary>
+    public static async void ToggleSync()
     {
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = MainWindow.DispatcherQueue.TryEnqueue(async () =>
+        if (_syncBusy) return;
+        _syncBusy = true;
+        var container = VeyroContainer.Instance;
+        try
         {
-            try
+            if (SyncPaused)
             {
-                var dialog = new ContentDialog
-                {
-                    Title = "Incoming files",
-                    Content = new TextBlock
-                    {
-                        Text = $"{request.Peer.DisplayName} wants to send {request.Offer.Items.Count} file(s) ({request.Offer.TotalBytes:N0} bytes).",
-                        TextWrapping = TextWrapping.Wrap
-                    },
-                    PrimaryButtonText = "Allow",
-                    CloseButtonText = "Decline",
-                    DefaultButton = ContentDialogButton.Close,
-                    XamlRoot = MainWindow.Content.XamlRoot
-                };
-                completion.TrySetResult(await dialog.ShowAsync() == ContentDialogResult.Primary);
+                await container.LinkServer.StartAsync();
+                await container.DeviceManager.RefreshDiscoveryAsync();
+                SyncPaused = false;
+                VeyroTrace.Info("Sync resumed from the tray");
             }
-            catch
+            else
             {
-                completion.TrySetResult(false);
+                await container.DiscoveryService.StopAsync();
+                await container.LinkServer.StopAsync();
+                SyncPaused = true;
+                VeyroTrace.Info("Sync paused from the tray");
             }
-        });
-        return completion.Task;
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Changing sync state failed: {error.GetType().Name}");
+        }
+        finally
+        {
+            _syncBusy = false;
+        }
+    }
+
+    /// <summary>Tray "Send files...": shows the window, picks files, sends to the selected phone.</summary>
+    public static async void SendFilesFromTray()
+    {
+        try
+        {
+            ShowMainWindow();
+            var picker = new Windows.Storage.Pickers.FileOpenPicker();
+            InitializeWithWindow.Initialize(picker, WindowHandle);
+            picker.FileTypeFilter.Add("*");
+            var files = await picker.PickMultipleFilesAsync();
+            if (files is not { Count: > 0 }) return;
+            var paths = files.Select(file => file.Path).Where(path => !string.IsNullOrEmpty(path)).ToList();
+            await VeyroContainer.Instance.TransfersPageViewModel.SendFilesToActiveDeviceAsync(paths);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Sending files from the tray failed: {error.GetType().Name}");
+        }
     }
 
     private void Window_Closed(object sender, WindowEventArgs args)

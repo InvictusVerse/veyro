@@ -255,15 +255,25 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     IsActive="False" />
-                <TextBlock
-                    x:Name="ViewerError"
+                <StackPanel
+                    x:Name="ViewerErrorPanel"
                     MaxWidth="420"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    TextAlignment="Center"
-                    TextWrapping="Wrap"
-                    Visibility="Collapsed" />
+                    Spacing="12"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="ViewerError"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <Button
+                        x:Name="ViewerRetryButton"
+                        HorizontalAlignment="Center"
+                        AutomationProperties.Name="Retry"
+                        Click="ViewerRetry_Click"
+                        Content="Retry" />
+                </StackPanel>
                 <Button
                     x:Name="PreviousButton"
                     Width="40"

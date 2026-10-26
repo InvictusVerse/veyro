@@ -156,6 +156,9 @@ public sealed class VeyroLinkServerTests
             await Vtc1BulkTransfer.SendAsync(
                 decision.TcpHost!, decision.TcpPort!.Value, transferId, decision.AuthToken!, phoneId,
                 [new OutboundTransferItem(0, source, "hello.bin")], resume: decision.Resume, ct: ct);
+            // ADR-036: the receiver reports each item on the session too (Android's sender waits for it).
+            var itemResult = Assert.IsType<LinkMessage.ItemResult>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
+            Assert.Equal(new LinkMessage.ItemResult(transferId, 0, true), itemResult);
             var end = Assert.IsType<LinkMessage.TransferEnd>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.True(end.Completed);
             Assert.Equal(payload, await File.ReadAllBytesAsync(Path.Combine(received, "hello.bin"), ct));

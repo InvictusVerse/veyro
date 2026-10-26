@@ -166,7 +166,7 @@ public sealed partial class PhotosPage : Page
         Viewer.Visibility = Visibility.Visible;
         ViewerTitle.Text = item.Name;
         ViewerDetail.Text = item.DetailText;
-        ViewerError.Visibility = Visibility.Collapsed;
+        ViewerErrorPanel.Visibility = Visibility.Collapsed;
         // The tile's thumbnail stands in until the original is here.
         ViewerImage.Source = item.Thumbnail;
         ViewerScroll.ChangeView(0, 0, 1, disableAnimation: true);
@@ -183,9 +183,10 @@ public sealed partial class PhotosPage : Page
         catch (Exception error)
         {
             VeyroTrace.Warn($"Opening photo failed: {error.GetType().Name}");
+            // PhotoService bounds every fetch (60 s), so the spinner always ends here or in the photo.
             if (current()) ShowViewerError(error is TimeoutException
-                ? "The phone did not send this photo. Check that \"Photos on PC\" is on, then try again."
-                : "Could not get this photo from the phone.");
+                ? PhotoService.NotSentMessage + " Check that \"Photos on PC\" is on and the phone is unlocked, then retry."
+                : "Could not get this photo from the phone.", canRetry: true);
             return;
         }
         if (!current()) return;
@@ -207,15 +208,21 @@ public sealed partial class PhotosPage : Page
         catch (Exception error)
         {
             VeyroTrace.Warn($"Decoding photo failed: {error.GetType().Name}");
-            if (current()) ShowViewerError("This photo cannot be shown here. Use Open with default app.");
+            if (current()) ShowViewerError("This photo cannot be shown here. Use Open with default app.", canRetry: false);
         }
     }
 
-    private void ShowViewerError(string text)
+    private void ShowViewerError(string text, bool canRetry = false)
     {
         ViewerProgress.IsActive = false;
         ViewerError.Text = text;
-        ViewerError.Visibility = Visibility.Visible;
+        ViewerRetryButton.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
+        ViewerErrorPanel.Visibility = Visibility.Visible;
+    }
+
+    private void ViewerRetry_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewerItem is { } item) _ = ShowInViewerAsync(item);
     }
 
     private void HideViewer()

@@ -68,14 +68,18 @@ public sealed class GeneralViewModel : BaseViewModel
         get => _minimizeToTrayOnClose;
         set
         {
-            if (SetProperty(ref _minimizeToTrayOnClose, value))
-                _ = _settingsStore.UpdateAsync(s => s with { MinimizeToTrayOnClose = value });
+            if (!SetProperty(ref _minimizeToTrayOnClose, value)) return;
+            _ = _settingsStore.UpdateAsync(s => s with { MinimizeToTrayOnClose = value, TrayModeChosen = true });
+            _tray.SetEnabled(value);
+            OnPropertyChanged(nameof(TrayText));
         }
     }
 
-    public string TrayText => _tray.IsAvailable
-        ? "Closing the window keeps Veyro running in the notification area. Right-click the icon to quit."
-        : "The notification-area icon could not be created, so closing the window quits Veyro.";
+    public string TrayText => !_minimizeToTrayOnClose
+        ? "Off: closing the window quits Veyro and disconnects the phone."
+        : _tray.IsAvailable
+            ? "Closing the window keeps Veyro in the system tray: the phone stays connected and notifications keep arriving. Right-click the icon to quit."
+            : "The system tray icon could not be created, so closing the window quits Veyro.";
 
     public string VersionText
     {

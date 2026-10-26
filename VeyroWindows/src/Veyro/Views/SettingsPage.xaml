@@ -147,14 +147,14 @@
                             </Grid.ColumnDefinitions>
                             <FontIcon VerticalAlignment="Center" Glyph="&#xE7E8;" />
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Start Veyro when I sign in" />
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Start with Windows" />
                                 <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ViewModel.AutoStartText, Mode=OneWay}" />
                             </StackPanel>
                             <ToggleSwitch
                                 Grid.Column="2"
                                 MinWidth="0"
                                 VerticalAlignment="Center"
-                                AutomationProperties.Name="Start Veyro when I sign in"
+                                AutomationProperties.Name="Start with Windows"
                                 IsEnabled="{x:Bind ViewModel.CanChangeAutoStart, Mode=OneWay}"
                                 IsOn="{x:Bind ViewModel.AutoStartOnLogin, Mode=TwoWay}"
                                 OffContent=""
@@ -170,14 +170,14 @@
                             </Grid.ColumnDefinitions>
                             <FontIcon VerticalAlignment="Center" Glyph="&#xE921;" />
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Keep running in the notification area when closed" />
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Keep Veyro running in the system tray when closed" />
                                 <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind ViewModel.TrayText, Mode=OneWay}" />
                             </StackPanel>
                             <ToggleSwitch
                                 Grid.Column="2"
                                 MinWidth="0"
                                 VerticalAlignment="Center"
-                                AutomationProperties.Name="Keep running in the notification area when closed"
+                                AutomationProperties.Name="Keep Veyro running in the system tray when closed"
                                 IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}"
                                 OffContent=""
                                 OnContent="" />

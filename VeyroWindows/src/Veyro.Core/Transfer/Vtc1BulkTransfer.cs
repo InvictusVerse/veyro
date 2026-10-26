@@ -32,6 +32,12 @@ public static class Vtc1BulkTransfer
     private const int SocketBufferSize = 1024 * 1024;
     private const int FlushEveryChunks = 4;
 
+    /// <summary>How long the receiver waits for the accepted sender to open the data socket.</summary>
+    public static readonly TimeSpan DefaultAcceptTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>Longest silence on the data socket before the receiver gives up.</summary>
+    public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromSeconds(60);
+
     public static IReadOnlyDictionary<int, IReadOnlyList<int>> BuildResume(
         string destinationRoot,
         IReadOnlyList<InboundTransferItem> items,
@@ -152,15 +158,32 @@ public static class Vtc1BulkTransfer
         string destinationRoot,
         IReadOnlyList<InboundTransferItem> items,
         IProgress<long>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<int, bool, string?, CancellationToken, Task>? onItemResult = null,
+        TimeSpan? acceptTimeout = null,
+        TimeSpan? idleTimeout = null)
     {
-        using TcpClient client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+        TimeSpan idleLimit = idleTimeout ?? DefaultIdleTimeout;
+        using TcpClient client = await AcceptAsync(listener, acceptTimeout ?? DefaultAcceptTimeout, ct).ConfigureAwait(false);
         client.NoDelay = true;
         client.SendBufferSize = SocketBufferSize;
         client.ReceiveBufferSize = SocketBufferSize;
         await using NetworkStream stream = client.GetStream();
 
-        var auth = await TcpFrameCodec.ReadFrameOrNullAsync(stream, ct).ConfigureAwait(false) as TcpFrame.Auth
+        // Bounded per frame: a sender that goes quiet fails the transfer instead of holding the
+        // receiver (and the session's one-transfer slot) forever. Hashing between reads is not counted.
+        async Task<TcpFrame?> ReadAsync()
+        {
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            idle.CancelAfter(idleLimit);
+            try { return await TcpFrameCodec.ReadFrameOrNullAsync(stream, idle.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
+            {
+                throw new TimeoutException("VTC1 sender stopped sending.", error);
+            }
+        }
+
+        var auth = await ReadAsync().ConfigureAwait(false) as TcpFrame.Auth
             ?? throw new InvalidDataException("VTC1 sender did not send Auth.");
         if (auth.TransferId != transferId || auth.AuthToken != expectedAuthToken ||
             (expectedSenderDeviceId is not null && auth.SenderDeviceId != expectedSenderDeviceId))
@@ -182,7 +205,7 @@ public static class Vtc1BulkTransfer
         {
             while (true)
             {
-                var frame = await TcpFrameCodec.ReadFrameOrNullAsync(stream, ct).ConfigureAwait(false)
+                var frame = await ReadAsync().ConfigureAwait(false)
                     ?? throw new EndOfStreamException("VTC1 stream ended before TransferEnd.");
                 if (frame.TransferId != transferId || frame.Seq <= lastSequence)
                     throw new InvalidDataException("Invalid VTC1 transfer id or sequence.");
@@ -238,7 +261,10 @@ public static class Vtc1BulkTransfer
                             File.Move(tempFiles[end.ItemIndex], finalPath, overwrite: true);
                             completed.Add(item.RelativePath);
                         }
-                        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemResult(frame.Seq + 1, transferId, end.ItemIndex, ok, ok ? null : "HASH_MISMATCH"), ct: ct).ConfigureAwait(false);
+                        string? error = ok ? null : "HASH_MISMATCH";
+                        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemResult(frame.Seq + 1, transferId, end.ItemIndex, ok, error), ct: ct).ConfigureAwait(false);
+                        // The control-plane itemResult (04-PROTOCOL.md 6): Android's sender waits for it.
+                        if (onItemResult is not null) await onItemResult(end.ItemIndex, ok, error, ct).ConfigureAwait(false);
                         if (!ok) throw new InvalidDataException($"SHA-256 verification failed for item {end.ItemIndex}.");
                         break;
                     }
@@ -255,6 +281,19 @@ public static class Vtc1BulkTransfer
         {
             foreach (var output in streams.Values) await output.DisposeAsync().ConfigureAwait(false);
             foreach (var temp in tempFiles.Values) TryDelete(temp);
+        }
+    }
+
+    private static async Task<TcpClient> AcceptAsync(TcpListener listener, TimeSpan timeout, CancellationToken ct)
+    {
+        using var accept = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        accept.CancelAfter(timeout);
+        try { return await listener.AcceptTcpClientAsync(accept.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
+        {
+            // The sender accepted the decision but never connected (unreachable host, firewall,
+            // it failed on its side). Without this bound the session answered "busy" for good.
+            throw new TimeoutException("VTC1 sender did not connect.", error);
         }
     }
 
