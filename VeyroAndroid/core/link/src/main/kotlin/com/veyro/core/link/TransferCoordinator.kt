@@ -77,6 +77,7 @@ public class TransferCoordinator(
         private const val CONNECT_WAIT_MS = 15_000L
         private const val DISCOVERY_WAIT_MS = 5_000L
         private const val RECEIVE_RETRY_DELAY_MS = 250L
+        private const val OFFER_RECHECK_MS = 1_000L
     }
 
     public val progress: Flow<TransferProgress> = runner.progress
@@ -124,6 +125,9 @@ public class TransferCoordinator(
     private class PendingDecision {
         @Volatile var answered = false
         @Volatile var accepted = false
+
+        /** Completed with the answer, so the waiting offer wakes at once instead of polling. */
+        val answeredSignal = kotlinx.coroutines.CompletableDeferred<Unit>()
     }
 
     /** Wire reason for each offer [authorize] refused, read once by the runner. */
@@ -712,7 +716,11 @@ public class TransferCoordinator(
             }
         }
         mutex.withLock {
-            pending[transferId]?.takeUnless { it.answered }?.let { it.accepted = accept; it.answered = true }
+            pending[transferId]?.takeUnless { it.answered }?.let {
+                it.accepted = accept
+                it.answered = true
+                it.answeredSignal.complete(Unit)
+            }
         }
         if (!accept && _activeTransfer.value?.transferId == transferId) {
             _activeTransfer.value = _activeTransfer.value?.copy(
@@ -810,7 +818,9 @@ public class TransferCoordinator(
                     )
                     return false
                 }
-                kotlinx.coroutines.delay(100)
+                // Wakes at once on the answer; otherwise once a second to notice a withdrawn
+                // offer or the deadline (was every 100 ms for the whole minute the prompt shows).
+                kotlinx.coroutines.withTimeoutOrNull(OFFER_RECHECK_MS) { decision.answeredSignal.await() }
             }
             VeyroLog.w(TAG) { "[$transferId] Transfer offer timed out awaiting user decision" }
             declineReasons[transferId] = DeclineReason.TIMEOUT.wire

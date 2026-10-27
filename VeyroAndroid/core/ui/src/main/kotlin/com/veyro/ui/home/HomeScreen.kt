@@ -33,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -56,6 +55,7 @@ import com.veyro.ui.home.components.PcHero
 import com.veyro.ui.home.components.PcVolumeCard
 import com.veyro.ui.home.components.RecentActions
 import com.veyro.ui.home.components.RecentCard
+import com.veyro.ui.components.rememberTickingClock
 import kotlinx.coroutines.delay
 
 /**
@@ -97,13 +97,7 @@ public fun HomeScreen(
     }
 
     // "Last connected 5 min ago" moves on while the screen is open.
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(30_000)
-        }
-    }
+    val now = rememberTickingClock(periodMillis = 30_000)
 
     var refreshing by rememberSaveable { mutableStateOf(false) }
     var askSendTo by rememberSaveable { mutableStateOf(false) }

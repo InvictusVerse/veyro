@@ -167,6 +167,23 @@ class ClipboardBridgeTest {
     }
 
     @Test
+    fun `images beyond the memory budget drop out oldest first, text stays`() {
+        fun image(id: String, bytes: Int) = ClipItem(id, null, null, ByteArray(bytes), 0L)
+        fun text(id: String) = ClipItem(id, null, "t", null, 0L)
+        val mb2 = 2 * 1024 * 1024
+        // Newest first: five 2 MB images (10 MB) with text in between.
+        val items = listOf(image("i5", mb2), text("t3"), image("i4", mb2), image("i3", mb2), text("t2"),
+            image("i2", mb2), image("i1", mb2), text("t1"))
+
+        val kept = ClipboardBridge.trim(items).map { it.id }
+
+        assertEquals(listOf("i5", "t3", "i4", "i3", "t2", "i2", "t1"), kept)
+        // The newest image stays even when it alone is over the budget.
+        val big = image("big", ClipboardBridge.MAX_IMAGE_BYTES_TOTAL + 1)
+        assertEquals(listOf("big", "t1"), ClipboardBridge.trim(listOf(big, image("old", 10), text("t1"))).map { it.id })
+    }
+
+    @Test
     fun `image check accepts only PNG or JPEG within the cap`() {
         assertTrue(ClipboardBridge.isAcceptableImage(PNG))
         assertTrue(ClipboardBridge.isAcceptableImage(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0, 0)))

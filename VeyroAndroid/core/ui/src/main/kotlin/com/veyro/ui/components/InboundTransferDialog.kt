@@ -31,9 +31,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,7 +64,6 @@ import com.veyro.ui.format.destinationLabel
 import com.veyro.ui.format.fileKindOf
 import com.veyro.ui.format.formatBytes
 import com.veyro.ui.format.formatCountdown
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -122,13 +119,7 @@ public fun IncomingFilesSheet(
     // accepted without a prompt. The per-device switch in device settings turns it back off.
     var alwaysAccept by remember(offer.transferId) { mutableStateOf(defaultAlwaysAccept(offer)) }
     var answered by remember(offer.transferId) { mutableStateOf(false) }
-    var nowMs by remember { mutableLongStateOf(now()) }
-    LaunchedEffect(offer.transferId) {
-        while (true) {
-            nowMs = now()
-            delay(TICK_MS)
-        }
-    }
+    val nowMs = rememberTickingClock(periodMillis = TICK_MS, key = offer.transferId, clock = now)
     val total = TransferCoordinator.OFFER_TIMEOUT_MS
     val hasDeadline = offer.expiresAtEpochMillis > 0L
     val remainingMs = if (hasDeadline) (offer.expiresAtEpochMillis - nowMs).coerceIn(0L, total) else total

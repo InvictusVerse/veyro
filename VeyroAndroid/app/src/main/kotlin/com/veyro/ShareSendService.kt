@@ -19,7 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -43,6 +43,7 @@ public class ShareSendService : Service() {
         private const val TAG = "ShareSend"
         private const val ID_PROGRESS = 4400
         private const val ID_RESULT = 4401
+        private const val PROGRESS_POST_INTERVAL_MS = 1_000L
         private const val EXTRA_TARGET = "com.veyro.extra.TARGET"
         private const val ACTION_CANCEL = "com.veyro.action.SHARE_CANCEL"
 
@@ -103,8 +104,11 @@ public class ShareSendService : Service() {
     private suspend fun send(uris: List<Uri>, target: String?, startId: Int) {
         val container = (application as VeyroApplication).container
         val progressJob = scope.launch {
-            container.activeTransfer.collectLatest { t ->
-                if (t == null || t.isTerminal) return@collectLatest
+            // Progress arrives every 200 ms; each post rebuilds the card's RemoteViews, and
+            // Android sheds updates sent faster than a few a second. A StateFlow is conflated,
+            // so the delay below makes this the latest value, at most once a second.
+            container.activeTransfer.collect { t ->
+                if (t == null || t.isTerminal) return@collect
                 val name = t.peerDisplayName ?: "your PC"
                 val percent = if (t.totalBytes > 0) (t.bytesTransferred * 100 / t.totalBytes).toInt() else null
                 val text = if (t.totalFiles > 1) "${t.currentFileIndex + 1} of ${t.totalFiles} · ${t.currentFileName}" else t.currentFileName
@@ -113,6 +117,7 @@ public class ShareSendService : Service() {
                     formatEta(t.etaSeconds),
                 ).joinToString("  ·  ").ifBlank { null }
                 cards.show(ID_PROGRESS, progress("Sending to $name", text, percent, meta))
+                delay(PROGRESS_POST_INTERVAL_MS)
             }
         }
         try {

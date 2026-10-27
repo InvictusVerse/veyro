@@ -46,7 +46,8 @@ public fun interface ClipNotifier {
  *  - A PC's own copies arrive as `clip` and land in [history] (the phone's virtual clipboard) with
  *    a notification, while [receiveEnabled] ("Auto-fetch PC clipboard", default on) is on.
  *
- * History is newest first, at most [MAX_ITEMS], in memory only. Contents are never logged.
+ * History is newest first, at most [MAX_ITEMS] and [MAX_IMAGE_BYTES_TOTAL] of images, in memory
+ * only. Contents are never logged.
  */
 public class ClipboardBridge(
     private val links: Flow<List<CompanionLink>>,
@@ -57,7 +58,26 @@ public class ClipboardBridge(
 ) {
     public companion object {
         public const val MAX_ITEMS: Int = 50
+
+        /**
+         * Image bytes the history may hold (ADR-048). The service keeps the process alive for
+         * days, and 50 images of up to 2 MB would pin 100 MB. Older images beyond this go; the
+         * newest image always stays, and text items are never dropped for it.
+         */
+        public const val MAX_IMAGE_BYTES_TOTAL: Int = 8 * 1024 * 1024
         private const val TAG = "Clipboard"
+
+        /** Newest first: at most [MAX_ITEMS], with images within [MAX_IMAGE_BYTES_TOTAL]. */
+        internal fun trim(items: List<ClipItem>): List<ClipItem> {
+            var imageBytes = 0L
+            var images = 0
+            return items.asSequence().filter { item ->
+                val size = item.image?.size ?: return@filter true
+                imageBytes += size
+                images++
+                images == 1 || imageBytes <= MAX_IMAGE_BYTES_TOTAL
+            }.take(MAX_ITEMS).toList()
+        }
 
         /** PNG or JPEG by magic bytes, within the protocol cap. Untrusted input check. */
         public fun isAcceptableImage(bytes: ByteArray?): Boolean {
@@ -156,7 +176,7 @@ public class ClipboardBridge(
             if (!seen.add("$peerId|${clip.id}")) return
             if (seen.size > 4 * MAX_ITEMS) seen.remove(seen.first())
         }
-        _history.update { (listOf(item) + it).take(MAX_ITEMS) }
+        _history.update { trim(listOf(item) + it) }
         runCatching { notifier.show(item) }
     }
 

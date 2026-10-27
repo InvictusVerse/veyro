@@ -52,6 +52,14 @@ public class SequenceAndTransferReliabilityTest {
         override val main = testDispatcher
     }
 
+    /**
+     * The receiver writes on the real [kotlinx.coroutines.Dispatchers.IO], so a wait for its answer
+     * must time out on real time: under the test's virtual clock the scheduler sees nothing to run
+     * and jumps straight to the deadline.
+     */
+    private suspend fun <T> realTime(block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { block() }
+
     private fun sha256(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
@@ -275,7 +283,7 @@ public class SequenceAndTransferReliabilityTest {
             ),
         )
 
-        val decision = mb.awaitDecision(10_000L)
+        val decision = realTime { mb.awaitDecision(10_000L) }
         assertNotNull(decision)
         assertTrue(decision!!.accept)
 
@@ -302,7 +310,7 @@ public class SequenceAndTransferReliabilityTest {
         }
 
         sender.send(PeerMessage.ItemEnd(tid, 0, expectedSha))
-        val itemRes = mb.awaitItemResult(0, 10_000L)
+        val itemRes = realTime { mb.awaitItemResult(0, 10_000L) }
         assertNotNull(itemRes)
         assertTrue(itemRes!!.ok)
 
@@ -359,7 +367,7 @@ public class SequenceAndTransferReliabilityTest {
             ),
         )
 
-        val decision = mb.awaitDecision(5000L)
+        val decision = realTime { mb.awaitDecision(5000L) }
         assertNotNull(decision)
 
         // Send item begin and exactly one chunk
@@ -523,7 +531,7 @@ public class SequenceAndTransferReliabilityTest {
             ),
         )
 
-        val decision = mb.awaitDecision(5000L)
+        val decision = realTime { mb.awaitDecision(5000L) }
         assertNotNull(decision)
         assertTrue(decision!!.accept)
 
@@ -550,7 +558,7 @@ public class SequenceAndTransferReliabilityTest {
         }
 
         sender.send(PeerMessage.ItemEnd(tid, 0, expectedSha))
-        val itemRes = mb.awaitItemResult(0, 5000L)
+        val itemRes = realTime { mb.awaitItemResult(0, 5000L) }
         assertNotNull(itemRes)
         assertTrue(itemRes!!.ok)
 
@@ -596,7 +604,7 @@ public class SequenceAndTransferReliabilityTest {
             ),
         )
 
-        val decision = mb.awaitDecision(5000L)
+        val decision = realTime { mb.awaitDecision(5000L) }
         assertNotNull(decision)
 
         sender.send(PeerMessage.ItemBegin(tid, 0, totalBytes, 40, 256 * 1024))

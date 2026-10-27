@@ -21,9 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,7 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.veyro.core.designsystem.icons.VeyroIcons
-import kotlinx.coroutines.delay
+import com.veyro.ui.components.rememberTickingClock
 
 /**
  * The shared look of every pairing prompt on the phone (hardware test: the old violet "glass"
@@ -133,13 +131,7 @@ internal fun PairingCodeTiles(code: String, modifier: Modifier = Modifier) {
 /** A quiet bar that empties as the pairing window runs out, with the seconds next to it. */
 @Composable
 internal fun ExpiryBar(expiresAtMillis: Long, totalMillis: Long, modifier: Modifier = Modifier) {
-    var now by remember(expiresAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(expiresAtMillis) {
-        while (now < expiresAtMillis) {
-            delay(500)
-            now = System.currentTimeMillis()
-        }
-    }
+    val now = rememberTickingClock(periodMillis = 500, until = expiresAtMillis)
     val leftMillis = (expiresAtMillis - now).coerceAtLeast(0)
     Column(modifier = modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         LinearProgressIndicator(

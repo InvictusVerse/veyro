@@ -19,7 +19,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -83,11 +82,28 @@ public class PeerConnection(
 ) {
 
     public companion object {
-        /** How often a ping is sent while the session is idle. */
-        public const val HEARTBEAT_INTERVAL_MS: Long = 5_000L
+        /**
+         * Inbound silence after which a ping is sent while a transfer is open on this session.
+         * A stalled transfer has to fail within seconds, not minutes.
+         */
+        public const val HEARTBEAT_ACTIVE_MS: Long = 5_000L
 
-        /** Silence beyond this and the peer is considered gone. */
-        public const val HEARTBEAT_DEAD_MS: Long = 20_000L
+        /**
+         * The same with no transfer open. Each ping wakes the Wi-Fi radio on both devices, so an
+         * idle session in the background pings at most twice a minute; any message from the peer
+         * counts as proof of life and pushes the next ping back.
+         */
+        public const val HEARTBEAT_IDLE_MS: Long = 30_000L
+
+        /**
+         * A ping unanswered for this long and the peer is considered gone. Measured from the ping,
+         * not from the last message, so time the phone spent asleep with nothing to say never
+         * counts against the peer.
+         */
+        public const val HEARTBEAT_PONG_TIMEOUT_MS: Long = 15_000L
+
+        /** Floor for one heartbeat sleep, so a burst of wake-ups cannot spin the loop. */
+        private const val MIN_HEARTBEAT_WAIT_MS: Long = 500L
 
         /** Maximum allowed size for a single frame (24 MB) to prevent memory exhaustion DoS. */
         public const val MAX_FRAME_SIZE_BYTES: Long = 24L * 1024 * 1024
@@ -105,6 +121,7 @@ public class PeerConnection(
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private var heartbeatJob: Job? = null
+    private val heartbeatWake = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile
     private var lastInboundAt: Long = System.currentTimeMillis()
@@ -170,7 +187,12 @@ public class PeerConnection(
     private val handshakeChannel = Channel<LinkEnvelope>(capacity = 16)
 
     public fun mailbox(transferId: String): TransferMailbox =
-        mailboxes.computeIfAbsent(transferId) { TransferMailbox(transferId) }
+        mailboxes.computeIfAbsent(transferId) {
+            // A transfer starts: the heartbeat switches to its short interval now, not after
+            // the idle one runs out.
+            heartbeatWake.trySend(Unit)
+            TransferMailbox(transferId)
+        }
 
     public fun closeMailbox(transferId: String) {
         val mb = mailboxes.remove(transferId)
@@ -480,27 +502,52 @@ public class PeerConnection(
 
     // ── Heartbeat ──────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Pings only after [heartbeatIntervalMs] of inbound silence, and declares the peer gone only
+     * when a ping stays unanswered for [HEARTBEAT_PONG_TIMEOUT_MS]. Sleeps until the next thing
+     * that can change the answer, so an idle session wakes the CPU about twice a minute.
+     */
     private suspend fun heartbeat(onDead: (() -> Unit)?) {
+        var pingSentAt = 0L
+        var wait = heartbeatIntervalMs()
         while (scope.isActive) {
-            delay(HEARTBEAT_INTERVAL_MS)
-            if (heartbeatPaused) continue
-            val now = System.currentTimeMillis()
-            val silent = now - lastInboundAt
-            if (silent > HEARTBEAT_DEAD_MS) {
-                // A device that left Wi-Fi range leaves the TCP connection looking open for
-                // minutes. Without this the UI shows a transfer that will never progress.
-                VeyroLog.w(tag) { "Peer silent for ${silent}ms (lastInboundAt=$lastInboundAt, now=$now); closing" }
-                onDead?.invoke()
-                close("heartbeat-timeout")
-                return
+            withTimeoutOrNull(wait.coerceAtLeast(MIN_HEARTBEAT_WAIT_MS)) { heartbeatWake.receive() }
+            if (heartbeatPaused) {
+                pingSentAt = 0L
+                wait = heartbeatIntervalMs()
+                continue
             }
-            // Only ping if outbound has been idle; if active transfer is streaming frames,
-            // the connection is actively proven alive and ping avoids interleaving.
-            if (now - lastOutboundAt >= HEARTBEAT_INTERVAL_MS) {
-                runCatching { send(PeerMessage.Ping(UUID.randomUUID().toString())) }
+            val now = System.currentTimeMillis()
+            if (pingSentAt != 0L && lastInboundAt < pingSentAt) {
+                val unanswered = now - pingSentAt
+                if (unanswered >= HEARTBEAT_PONG_TIMEOUT_MS) {
+                    // A device that left Wi-Fi range leaves the TCP connection looking open for
+                    // minutes. Without this the UI shows a transfer that will never progress.
+                    VeyroLog.w(tag) { "Ping unanswered for ${unanswered}ms (lastInboundAt=$lastInboundAt); closing" }
+                    onDead?.invoke()
+                    close("heartbeat-timeout")
+                    return
+                }
+                wait = HEARTBEAT_PONG_TIMEOUT_MS - unanswered
+                continue
+            }
+            pingSentAt = 0L
+            val interval = heartbeatIntervalMs()
+            val silent = now - lastInboundAt
+            if (silent >= interval) {
+                // Sent on its own coroutine: a send stuck behind a full socket to a vanished peer
+                // must not stop this loop from noticing the missing answer.
+                scope.launch { runCatching { send(PeerMessage.Ping(UUID.randomUUID().toString())) } }
+                pingSentAt = now
+                wait = HEARTBEAT_PONG_TIMEOUT_MS
+            } else {
+                wait = interval - silent
             }
         }
     }
+
+    private fun heartbeatIntervalMs(): Long =
+        if (mailboxes.isEmpty()) HEARTBEAT_IDLE_MS else HEARTBEAT_ACTIVE_MS
 }
 
 /** Legacy alias for backwards compatibility. */
@@ -590,24 +637,18 @@ public class TransferMailbox(public val transferId: String) {
         payloads.trySend(cancel)
     }
 
-    public suspend fun awaitDecision(timeoutMs: Long): PeerMessage.TransferDecision? {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (!decisionDeferred.isCompleted && System.currentTimeMillis() < deadline) {
-            if (decisionDeferred.isCompleted) break
-            delay(10L)
-        }
-        return if (decisionDeferred.isCompleted) decisionDeferred.await() else null
-    }
+    // Suspend on the deferred instead of polling it: a 10 ms poll woke the CPU 100 times a second
+    // for as long as the other side took to decide or to verify a file. A deferred cancelled by
+    // close() still throws CancellationException from await(), as it did before.
+    public suspend fun awaitDecision(timeoutMs: Long): PeerMessage.TransferDecision? =
+        awaitWithin(decisionDeferred, timeoutMs)
 
-    public suspend fun awaitItemResult(index: Int, timeoutMs: Long): PeerMessage.ItemResult? {
-        val deferred = itemResults.computeIfAbsent(index) { CompletableDeferred() }
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (!deferred.isCompleted && System.currentTimeMillis() < deadline) {
-            if (deferred.isCompleted) break
-            delay(10L)
-        }
-        return if (deferred.isCompleted) deferred.await() else null
-    }
+    public suspend fun awaitItemResult(index: Int, timeoutMs: Long): PeerMessage.ItemResult? =
+        awaitWithin(itemResults.computeIfAbsent(index) { CompletableDeferred() }, timeoutMs)
+
+    private suspend fun <T> awaitWithin(deferred: CompletableDeferred<T>, timeoutMs: Long): T? =
+        // An answer that already arrived is returned even with no time left.
+        if (deferred.isCompleted) deferred.await() else withTimeoutOrNull(timeoutMs) { deferred.await() }
 
     internal fun close() {
         if (!decisionDeferred.isCompleted) {

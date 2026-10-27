@@ -63,9 +63,10 @@ public class ConnectionServer(
 
         val server = embeddedServer(CIO, port = 0, host = "0.0.0.0") {
             install(ServerWebSockets) {
-                // Protocol-level keepalive, separate from the application heartbeat in PeerConnection.
-                // This one detects a dead TCP connection; that one detects an unresponsive peer.
-                pingPeriodMillis = 20_000
+                // Protocol-level keepalive, a backstop to the application heartbeat in
+                // PeerConnection, which already detects a dead connection (ADR-048). Kept slow:
+                // each ping wakes the Wi-Fi radio, and the PC pings this socket every 20 s anyway.
+                pingPeriodMillis = WS_PING_PERIOD_MS
                 timeoutMillis = 40_000
                 // Chunks are base64 inside a JSON envelope, so the frame ceiling has to clear the
                 // largest chunk plus its ~33% encoding overhead plus the envelope.
@@ -158,7 +159,9 @@ public open class ConnectionClient {
 
     private val http = HttpClient(OkHttp) {
         install(WebSockets) {
-            pingIntervalMillis = 20_000
+            // Backstop only; PeerConnection's heartbeat is the liveness check (ADR-048). Each ping
+            // wakes the Wi-Fi radio, and the PC already pings this socket every 20 s.
+            pingIntervalMillis = WS_PING_PERIOD_MS
             // Note: maxFrameSize is intentionally omitted here. In Ktor's OkHttp engine adapter,
             // specifying any maxFrameSize != Long.MAX_VALUE throws WebSocketException("Max frame size switch is not supported in OkHttp engine.").
             // OkHttp manages framing buffers internally, while inbound frame limits are enforced
@@ -195,3 +198,6 @@ public open class ConnectionClient {
 
 /** Legacy alias for backwards compatibility. */
 public typealias LinkClient = ConnectionClient
+
+/** WebSocket ping period on both the server and the client side of a phone socket (ADR-048). */
+private const val WS_PING_PERIOD_MS: Long = 60_000L

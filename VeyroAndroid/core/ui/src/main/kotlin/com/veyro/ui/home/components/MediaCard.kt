@@ -25,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,7 +42,7 @@ import com.veyro.core.designsystem.components.FlowingPageIndicator
 import com.veyro.core.designsystem.components.WavySlider
 import com.veyro.core.designsystem.icons.VeyroIcons
 import com.veyro.core.link.PeerMessage
-import kotlinx.coroutines.delay
+import com.veyro.ui.components.rememberTickingClock
 import java.util.Base64
 import java.util.Locale
 
@@ -208,14 +207,13 @@ private fun SeekBar(
     onCommand: (action: String, id: String?, value: Long?) -> Unit,
 ) {
     // Position is not streamed: tick a local clock while playing and extrapolate from the sample.
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(session.playing, session.ts, session.positionMs) {
-        now = System.currentTimeMillis()
-        while (session.playing) {
-            delay(250)
-            now = System.currentTimeMillis()
-        }
-    }
+    // Lifecycle-aware: with Veyro in the background this no longer wakes the CPU 4 times a
+    // second for as long as music plays on the PC.
+    val now = rememberTickingClock(
+        periodMillis = 250,
+        enabled = session.playing,
+        key = session.ts to session.positionMs,
+    )
     val base = session.positionMs ?: 0L
     val sampledAt = session.ts
     val position = (if (session.playing && sampledAt != null) base + (now - sampledAt) else base)
