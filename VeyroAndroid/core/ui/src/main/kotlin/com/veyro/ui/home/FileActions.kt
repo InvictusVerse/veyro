@@ -7,7 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
-import com.veyro.ui.format.destinationLabel
+import com.veyro.ui.format.ReceivedFolders
 import java.io.File
 
 /**
@@ -44,12 +44,12 @@ internal object FileActions {
      * MediaStore offers no "reveal this file" intent, so the folder is the closest equivalent.
      */
     fun showInFolder(context: Context, fileName: String, uriString: String?): Boolean {
-        val folder = folderFor(fileName, uriString)
+        val folder = mediaStoreFolder(context, uriString) ?: folderFor(fileName, uriString)
         return openFolder(context, folder)
     }
 
     /** The Received files row: the folder received files land in by default. */
-    fun openReceivedFolder(context: Context): Boolean = openFolder(context, "Download/Veyro")
+    fun openReceivedFolder(context: Context): Boolean = openFolder(context, ReceivedFolders.ROOT)
 
     private fun openFolder(context: Context, relativeFolder: String): Boolean {
         val documentUri = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, "primary:$relativeFolder")
@@ -69,7 +69,18 @@ internal object FileActions {
                 return parent.removePrefix(root).trim('/').ifEmpty { "Download" }
             }
         }
-        return destinationLabel(listOf(fileName), null)
+        // A content:// row: ask MediaStore where it really is (older files are still in Pictures/Veyro etc.).
+        return ReceivedFolders.pathFor(fileName)
+    }
+
+    /** The folder a MediaStore item lives in, from its RELATIVE_PATH; null if it cannot be read. */
+    internal fun mediaStoreFolder(context: Context, uriString: String?): String? {
+        val uri = uriString?.let { runCatching { Uri.parse(it) }.getOrNull() }?.takeIf { it.scheme == "content" } ?: return null
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.trim('/') else null
+            }
+        }.getOrNull()
     }
 
     private inline fun start(context: Context, build: () -> Intent): Boolean = try {

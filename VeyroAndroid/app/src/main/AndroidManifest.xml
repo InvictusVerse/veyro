@@ -129,6 +129,11 @@
             android:name=".di.OfferActionReceiver"
             android:exported="false" />
 
+        <!-- ADR-044: Cancel on the "Receiving from <PC>" card. Only our own PendingIntents. -->
+        <receiver
+            android:name=".di.TransferActionReceiver"
+            android:exported="false" />
+
         <!-- ADR-043: "Send to PC" in the share sheet (text, links, files) and in the text-selection
              menu. No UI of its own: text goes straight to the PCs, files are handed to MainActivity.
              Exported because other apps start it; everything it receives is untrusted input. -->

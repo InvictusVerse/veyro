@@ -26,25 +26,18 @@ public fun fileKindOf(name: String): FileKind {
 }
 
 /**
- * Where received files will appear, in the words the Files app uses.
- *
- * Mirrors `AndroidMediaStorePublisher`: images to Pictures/Veyro, videos to Movies/Veyro, audio to
- * Music/Veyro, everything else to Download/Veyro, unless the user chose a folder in Settings.
+ * Where received files will appear, in the words the Files app uses: "Download/Veyro/Photos", or
+ * "Download/Veyro (Photos and Videos)" for a mix. Mirrors [ReceivedFolders], unless the user chose
+ * a folder in Settings.
  */
 public fun destinationLabel(names: List<String>, customDestination: File?): String {
     if (customDestination != null) return customDestination.name.ifBlank { customDestination.path }
-    val folders = names.map { name ->
-        when (fileKindOf(name)) {
-            FileKind.IMAGE -> "Pictures/Veyro"
-            FileKind.VIDEO -> "Movies/Veyro"
-            FileKind.AUDIO -> "Music/Veyro"
-            else -> "Download/Veyro"
-        }
-    }.distinct().ifEmpty { listOf("Download/Veyro") }
+    val folders = names.map { ReceivedFolders.subfolder(it) }.distinct()
     return when (folders.size) {
-        1 -> folders[0]
-        2 -> "${folders[0]} and ${folders[1]}"
-        else -> folders.dropLast(1).joinToString(", ") + " and " + folders.last()
+        0 -> ReceivedFolders.ROOT
+        1 -> "${ReceivedFolders.ROOT}/${folders[0]}"
+        2 -> "${ReceivedFolders.ROOT} (${folders[0]} and ${folders[1]})"
+        else -> "${ReceivedFolders.ROOT} (" + folders.dropLast(1).joinToString(", ") + " and " + folders.last() + ")"
     }
 }
 

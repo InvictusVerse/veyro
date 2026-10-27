@@ -201,7 +201,7 @@ public fun HomeScreen(
                     HomeRow(
                         label = "Received files",
                         icon = VeyroIcons.Folder,
-                        supporting = "Files from your PC are saved to Download, Pictures, Movies or Music, in a Veyro folder.",
+                        supporting = "Everything from your PC is in Download/Veyro, sorted into Photos, Videos, Music, Documents and more.",
                         onClick = { if (!FileActions.openReceivedFolder(context)) onOpenHistory() },
                     )
                 }

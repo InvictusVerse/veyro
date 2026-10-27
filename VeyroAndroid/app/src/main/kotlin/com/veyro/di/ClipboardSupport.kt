@@ -13,9 +13,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
-import android.view.View
-import android.widget.RemoteViews
-import com.veyro.R
+import com.veyro.core.service.VeyroNotificationCard
 import androidx.core.content.FileProvider
 import com.veyro.core.companion.ClipboardBridge
 import com.veyro.MainActivity
@@ -185,40 +183,8 @@ internal class AndroidClipNotifier(
         val picture = item.image?.let(::preview)
         val shownTitle = if (count > 1) "$title  ·  $count new" else title
 
-        // Collapsed: text and the buttons side by side, so nothing needs expanding.
-        val small = RemoteViews(context.packageName, R.layout.notification_clip_small).apply {
-            setTextViewText(R.id.clip_title, shownTitle)
-            setTextViewText(R.id.clip_text, body)
-            setTextViewText(R.id.clip_copy, copyLabel)
-            setOnClickPendingIntent(R.id.clip_copy, copy)
-            if (primary != null) {
-                setTextViewText(R.id.clip_primary, primary.first)
-                setOnClickPendingIntent(R.id.clip_primary, primary.second)
-                setViewVisibility(R.id.clip_primary, View.VISIBLE)
-            }
-            if (picture != null) {
-                setImageViewBitmap(R.id.clip_thumb, picture)
-                setViewVisibility(R.id.clip_thumb, View.VISIBLE)
-            }
-        }
-        // Expanded: more text or the picture; the system draws the actions below it.
-        val big = RemoteViews(context.packageName, R.layout.notification_clip_big).apply {
-            setTextViewText(R.id.clip_title, shownTitle)
-            setTextViewText(R.id.clip_text, body)
-            if (picture != null) {
-                setImageViewBitmap(R.id.clip_picture, picture)
-                setViewVisibility(R.id.clip_picture, View.VISIBLE)
-            }
-        }
-
         val builder = Notification.Builder(context, ClipboardSupport.CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(Notification.DecoratedCustomViewStyle())
-            .setCustomContentView(small)
-            .setCustomBigContentView(big)
-            // Tapping the notification itself copies (the code, for a code); it no longer opens Veyro.
+            // Tapping the notification itself copies (the code, for a code); it does not open Veyro.
             .setContentIntent(if (smart?.kind == ClipSmarts.Kind.CODE) primary!!.second else copy)
             .setDeleteIntent(broadcast(ClipboardSupport.ACTION_DISMISS, item.id, REQ_DISMISS))
             .setAutoCancel(true)
@@ -227,10 +193,34 @@ internal class AndroidClipNotifier(
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_STATUS)
 
-        // Standard actions too: the expanded view, the lock screen and watches show these.
-        primary?.let { builder.addAction(action(it.first, it.second)) }
-        builder.addAction(action(copyLabel, copy))
-        builder.addAction(action("All clips", openVeyro()))
+        // The Veyro card (ADR-044): violet badge with what was copied, the buttons inline when
+        // collapsed, and the standard actions (plus "All clips") when expanded or on the lock screen.
+        val pills = listOfNotNull(
+            primary?.let { VeyroNotificationCard.Pill(it.first, it.second) },
+            VeyroNotificationCard.Pill(copyLabel, copy),
+        )
+        VeyroNotificationCard.apply(
+            context,
+            builder,
+            VeyroNotificationCard.Spec(
+                title = shownTitle,
+                text = body,
+                tone = VeyroNotificationCard.Tone.CLIP,
+                glyph = when (smart?.kind) {
+                    null -> VeyroNotificationCard.Glyph.IMAGE
+                    ClipSmarts.Kind.LINK -> VeyroNotificationCard.Glyph.LINK
+                    ClipSmarts.Kind.PHONE -> VeyroNotificationCard.Glyph.CALL
+                    ClipSmarts.Kind.EMAIL -> VeyroNotificationCard.Glyph.MAIL
+                    ClipSmarts.Kind.CODE -> VeyroNotificationCard.Glyph.KEY
+                    ClipSmarts.Kind.TEXT -> VeyroNotificationCard.Glyph.CLIPBOARD
+                },
+                meta = if (count > 1) "$count new from your PC, all in Veyro > Clipboard" else null,
+                thumbnail = picture,
+                picture = picture,
+                pills = pills,
+                actions = pills + VeyroNotificationCard.Pill("All clips", openVeyro()),
+            ),
+        )
 
         runCatching { manager.notify(ClipboardSupport.NOTIFICATION_ID, builder.build()) }
             .onFailure { VeyroLog.w("Clipboard") { "Notification refused: ${it.javaClass.simpleName}" } }
@@ -265,8 +255,6 @@ internal class AndroidClipNotifier(
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    private fun action(label: String, intent: PendingIntent): Notification.Action =
-        Notification.Action.Builder(null, label, intent).build()
 
     /** A downsampled bitmap for the expanded notification; the original stays in the history. */
     private fun preview(bytes: ByteArray): android.graphics.Bitmap? = runCatching {

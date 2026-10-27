@@ -28,15 +28,17 @@ class IncomingFilesSheetModelTest {
     }
 
     @Test
-    fun `destination follows the media store folders the publisher uses`() {
-        assertEquals("Pictures/Veyro", destinationLabel(listOf("a.jpg", "b.png"), null))
-        assertEquals("Download/Veyro", destinationLabel(listOf("a.pdf"), null))
-        assertEquals("Pictures/Veyro and Download/Veyro", destinationLabel(listOf("a.jpg", "b.zip"), null))
+    fun `destination follows the Veyro subfolders the publisher uses`() {
+        assertEquals("Download/Veyro/Photos", destinationLabel(listOf("a.jpg", "b.png"), null))
+        assertEquals("Download/Veyro/Documents", destinationLabel(listOf("a.pdf"), null))
+        assertEquals("Download/Veyro/Apps", destinationLabel(listOf("app.apk"), null))
+        assertEquals("Download/Veyro (Photos and Archives)", destinationLabel(listOf("a.jpg", "b.zip"), null))
         assertEquals(
-            "Pictures/Veyro, Movies/Veyro and Music/Veyro",
+            "Download/Veyro (Photos, Videos and Music)",
             destinationLabel(listOf("a.jpg", "b.mp4", "c.mp3"), null),
         )
         assertEquals("Download/Veyro", destinationLabel(emptyList(), null))
+        assertEquals("Download/Veyro/Other", destinationLabel(listOf("notes.xyz"), null))
         assertEquals("Inbox", destinationLabel(listOf("a.jpg"), File("/storage/emulated/0/Inbox")))
     }
 

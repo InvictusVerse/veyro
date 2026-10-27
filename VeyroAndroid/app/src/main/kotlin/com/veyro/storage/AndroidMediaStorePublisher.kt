@@ -3,9 +3,8 @@ package com.veyro.storage
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
+import com.veyro.ui.format.ReceivedFolders
 import android.webkit.MimeTypeMap
 import com.veyro.core.common.hex
 import com.veyro.core.common.VeyroLog
@@ -24,10 +23,9 @@ import java.security.MessageDigest
  * Distinct from receiving and hashing: only after whole-file SHA-256 verification passes
  * are bytes copied into shared MediaStore collections.
  *
- * - Images are published to [MediaStore.Images] under `Pictures/Veyro/`.
- * - Videos are published to [MediaStore.Video] under `Movies/Veyro/`.
- * - Audio is published to [MediaStore.Audio] under `Music/Veyro/`.
- * - Other files (Documents, Archives, etc.) are published to [MediaStore.Downloads] under `Download/Veyro/`.
+ * - Every file goes to [MediaStore.Downloads] under one folder, sorted by type:
+ *   `Download/Veyro/Photos`, `Videos`, `Music`, `Documents`, `Archives`, `Apps`, `Other`
+ *   ([ReceivedFolders]). Media is still indexed by MIME type, so Gallery and music apps see it.
  *
  * Uses `IS_PENDING = 1` during writing and clears it upon completion.
  * Handles insert, stream-open, write, and close failures explicitly by deleting abandoned pending rows.
@@ -40,7 +38,6 @@ public class AndroidMediaStorePublisher(
 
     public companion object {
         private const val TAG = "MediaStorePublisher"
-        private const val VEYRO_SUBDIR = "Veyro"
     }
 
     override suspend fun publish(
@@ -57,10 +54,50 @@ public class AndroidMediaStorePublisher(
         // If user specified custom destination folder, write there instead of MediaStore
         val customDir = customDestinationDir?.invoke()
         if (customDir != null && customDir.exists()) {
-            return@withContext publishToCustomDir(sourceFile, customDir, fileName, resolvedMimeType)
+            // The same subfolders inside the chosen folder, so it stays as tidy as the default.
+            val sorted = File(customDir, ReceivedFolders.subfolder(fileName, resolvedMimeType))
+            return@withContext publishToCustomDir(sourceFile, sorted, fileName, resolvedMimeType)
         }
 
         publishToMediaStore(sourceFile, fileName, resolvedMimeType, sizeBytes)
+    }
+
+    /**
+     * One-time move of files Veyro saved before everything went into one folder: Pictures/Veyro,
+     * Movies/Veyro, Music/Veyro and loose files in Download/Veyro go into the Download/Veyro
+     * subfolders. Only rows this app owns can be moved, without any permission; anything else
+     * (files from before a reinstall, files the user moved) stays where it is. Row ids do not
+     * change, so history and Recent keep opening them. Returns how many moved.
+     */
+    public suspend fun moveOlderFiles(): Int = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val files = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val old = listOf("Pictures/Veyro/", "Movies/Veyro/", "Music/Veyro/", "${ReceivedFolders.ROOT}/")
+        var moved = 0
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.RELATIVE_PATH,
+        )
+        // Exactly the old folders, not their subfolders (Download/Veyro/Photos/ is already right).
+        val selection = "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} IN (${old.joinToString { "?" }})"
+        runCatching {
+            resolver.query(files, projection, selection, arrayOf(context.packageName) + old, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val name = c.getString(1) ?: continue
+                    val target = ReceivedFolders.pathFor(name, c.getString(2)) + "/"
+                    val values = ContentValues().apply { put(MediaStore.MediaColumns.RELATIVE_PATH, target) }
+                    val ok = runCatching {
+                        resolver.update(android.content.ContentUris.withAppendedId(files, id), values, null, null) > 0
+                    }.getOrDefault(false)
+                    if (ok) moved++
+                }
+            }
+        }.onFailure { VeyroLog.w(TAG) { "Moving older files failed: ${it.javaClass.simpleName}" } }
+        VeyroLog.i(TAG) { "Moved $moved older received file(s) into ${ReceivedFolders.ROOT}" }
+        moved
     }
 
     private fun detectMimeType(fileName: String): String {
@@ -101,48 +138,17 @@ public class AndroidMediaStorePublisher(
     ): StoragePublishResult {
         val contentResolver = context.contentResolver
 
-        val (collectionUri, relativeDir) = when {
-            mimeType.startsWith("image/") -> {
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                }
-                uri to "${Environment.DIRECTORY_PICTURES}/$VEYRO_SUBDIR"
-            }
-            mimeType.startsWith("video/") -> {
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                }
-                uri to "${Environment.DIRECTORY_MOVIES}/$VEYRO_SUBDIR"
-            }
-            mimeType.startsWith("audio/") -> {
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                }
-                uri to "${Environment.DIRECTORY_MUSIC}/$VEYRO_SUBDIR"
-            }
-            else -> {
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Files.getContentUri("external")
-                }
-                uri to "${Environment.DIRECTORY_DOWNLOADS}/$VEYRO_SUBDIR"
-            }
-        }
+        // One Veyro folder for everything (Download/Veyro/Photos, /Videos, ...). The Downloads
+        // collection is the only one that accepts every type; MediaStore still indexes images,
+        // videos and audio there by MIME type, so they show in Gallery and music apps as before.
+        val collectionUri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val relativeDir = ReceivedFolders.pathFor(fileName, mimeType)
 
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
             put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000)
             put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
         }
@@ -201,12 +207,7 @@ public class AndroidMediaStorePublisher(
                 throw IOException("Post-publication hash verification failed: MediaStore hash $readBackHash != source hash $expectedSourceHash")
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val updateValues = ContentValues().apply {
-                    put(MediaStore.MediaColumns.IS_PENDING, 0)
-                }
-                contentResolver.update(insertedUri, updateValues, null, null)
-            }
+            contentResolver.update(insertedUri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
 
             pendingUri = null // Completed successfully and verified byte-perfect
             // Clean up staging file

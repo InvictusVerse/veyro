@@ -333,6 +333,11 @@ public class VeyroContainer(context: Context) {
         }
     }
 
+    /** Cancel on a transfer notification. */
+    public fun cancelTransfer() {
+        transferCoordinator.cancel()
+    }
+
     /** The running transfer, for the background share's progress notification. */
     public val activeTransfer: kotlinx.coroutines.flow.StateFlow<com.veyro.core.model.ActiveTransfer?>
         get() = transferCoordinator.activeTransfer
@@ -346,11 +351,26 @@ public class VeyroContainer(context: Context) {
         FileTransferHistoryStore(storageDir)
     }
 
-    public val storagePublisher: TransferStoragePublisher by lazy {
+    private val mediaStorePublisher: AndroidMediaStorePublisher by lazy {
         AndroidMediaStorePublisher(
             context = appContext,
             customDestinationDir = { runCatching { settingsStore.destinationDir.first() }.getOrNull() },
         )
+    }
+
+    public val storagePublisher: TransferStoragePublisher get() = mediaStorePublisher
+
+    /**
+     * Once per install: moves files received before "one Veyro folder" into Download/Veyro's
+     * subfolders. A marker file records that it ran, so it never scans MediaStore again.
+     */
+    public fun moveOlderReceivedFilesOnce() {
+        val marker = File(appContext.noBackupFilesDir, "received-folders-v2")
+        if (marker.exists()) return
+        appScope.launch {
+            mediaStorePublisher.moveOlderFiles()
+            runCatching { marker.createNewFile() }
+        }
     }
 
     public val wifiDirectManager: WifiDirectManager by lazy {
@@ -446,6 +466,16 @@ public class VeyroContainer(context: Context) {
     /** Whether any Activity is started. Written by VeyroApplication's lifecycle callbacks. */
     public val appVisible: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
+    /** Receiving progress and the result as notifications while the app is not visible (ADR-044). */
+    public val transferNotifier: TransferNotifier by lazy {
+        TransferNotifier(
+            context = appContext,
+            scope = appScope,
+            transfers = { transferCoordinator.activeTransfer },
+            appVisible = appVisible,
+        )
+    }
+
     /** The incoming-file notification while the app is not visible. */
     public val offerNotifier: OfferNotifier by lazy {
         OfferNotifier(
@@ -473,6 +503,7 @@ public class VeyroContainer(context: Context) {
                 // Building the coordinator installs the receive loop on every session.
                 transferCoordinator
                 offerNotifier.start()
+                transferNotifier.start()
             },
         )
     }

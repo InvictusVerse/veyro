@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification card palette (Veyro brand, see core:designsystem Color.kt). -->
+<resources>
+    <color name="veyro_notif_accent">#FF00B8E6</color>
+    <color name="veyro_notif_on_accent">#FF04070F</color>
+</resources>

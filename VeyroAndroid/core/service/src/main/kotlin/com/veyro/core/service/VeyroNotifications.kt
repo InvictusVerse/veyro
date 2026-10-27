@@ -32,6 +32,9 @@ public class VeyroNotifications(private val context: Context) {
         public const val ID_PROGRESS: Int = 1001
         public const val ID_OFFER: Int = 1002
         public const val ID_BACKGROUND: Int = 1003
+        public const val ID_RESULT: Int = 1004
+
+        private const val RESULT_TIMEOUT_MS = 10_000L
     }
 
     private val manager: NotificationManager? =
@@ -86,26 +89,66 @@ public class VeyroNotifications(private val context: Context) {
         text: String,
         progressPercent: Int?,
         cancelIntent: PendingIntent?,
+        /** True while receiving: teal badge with a download arrow; false: sending. */
+        incoming: Boolean = false,
+        /** "3.2 MB/s, 12 s left" on the expanded card. */
+        meta: String? = null,
+        contentIntent: PendingIntent? = null,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_PROGRESS)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setShowWhen(false)
+        contentIntent?.let { builder.setContentIntent(it) }
+        VeyroNotificationCard.apply(
+            context,
+            builder,
+            VeyroNotificationCard.Spec(
+                title = title,
+                text = text,
+                tone = if (incoming) VeyroNotificationCard.Tone.INCOMING else VeyroNotificationCard.Tone.OUTGOING,
+                glyph = if (incoming) VeyroNotificationCard.Glyph.DOWNLOAD else VeyroNotificationCard.Glyph.UPLOAD,
+                meta = meta,
+                progress = progressPercent?.coerceIn(0, 100),
+                // Indeterminate while connecting or hashing: a 0% bar that sits still reads as stuck.
+                indeterminate = progressPercent == null,
+                pills = listOfNotNull(cancelIntent?.let { VeyroNotificationCard.Pill("Cancel", it) }),
+            ),
+        )
+        return builder.build()
+    }
 
-        if (progressPercent != null) {
-            builder.setProgress(100, progressPercent.coerceIn(0, 100), false)
-        } else {
-            // Indeterminate while connecting or hashing: a 0% bar that sits still reads as stuck.
-            builder.setProgress(0, 0, true)
-        }
-
-        cancelIntent?.let {
-            builder.addAction(
-                Notification.Action.Builder(null, "Cancel", it).build(),
-            )
-        }
+    /** A finished transfer or share: green check, or a red badge when it failed. */
+    public fun result(
+        title: String,
+        text: String,
+        success: Boolean,
+        meta: String? = null,
+        thumbnail: android.graphics.Bitmap? = null,
+        pills: List<VeyroNotificationCard.Pill> = emptyList(),
+        contentIntent: PendingIntent? = null,
+    ): Notification {
+        val builder = Notification.Builder(context, CHANNEL_PROGRESS)
+            .setAutoCancel(true)
+            .setCategory(if (success) Notification.CATEGORY_STATUS else Notification.CATEGORY_ERROR)
+        contentIntent?.let { builder.setContentIntent(it) }
+        // A success needs no attention later; a failure stays until seen.
+        if (success) builder.setTimeoutAfter(RESULT_TIMEOUT_MS)
+        VeyroNotificationCard.apply(
+            context,
+            builder,
+            VeyroNotificationCard.Spec(
+                title = title,
+                text = text,
+                tone = if (success) VeyroNotificationCard.Tone.SUCCESS else VeyroNotificationCard.Tone.ERROR,
+                glyph = if (success) VeyroNotificationCard.Glyph.CHECK else VeyroNotificationCard.Glyph.ERROR,
+                meta = meta,
+                thumbnail = thumbnail,
+                picture = thumbnail,
+                pills = pills,
+            ),
+        )
         return builder.build()
     }
 
@@ -134,20 +177,31 @@ public class VeyroNotifications(private val context: Context) {
         acceptOnceIntent: PendingIntent? = null,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_OFFERS)
-            .setContentTitle("$peerName wants to send you $summary")
-            .setContentText(totalBytesLabel)
-            .setStyle(Notification.BigTextStyle().bigText(totalBytesLabel))
-            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setCategory(Notification.CATEGORY_RECOMMENDATION)
             .setAutoCancel(false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(
-                Notification.Action.Builder(null, if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent).build(),
-            )
-        acceptOnceIntent?.let { builder.addAction(Notification.Action.Builder(null, "Just this once", it).build()) }
-        builder.addAction(Notification.Action.Builder(null, "Decline", declineIntent).build())
         contentIntent?.let { builder.setContentIntent(it) }
+        val accept = VeyroNotificationCard.Pill(if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent)
+        val decline = VeyroNotificationCard.Pill("Decline", declineIntent)
+        VeyroNotificationCard.apply(
+            context,
+            builder,
+            VeyroNotificationCard.Spec(
+                title = "$peerName wants to send you $summary",
+                text = totalBytesLabel.substringBefore(". ").ifBlank { totalBytesLabel },
+                bigText = totalBytesLabel,
+                tone = VeyroNotificationCard.Tone.INCOMING,
+                glyph = VeyroNotificationCard.Glyph.DOWNLOAD,
+                // Collapsed: the short "Accept" when there is a "Just this once" choice to explain.
+                pills = listOf(VeyroNotificationCard.Pill("Accept", acceptIntent), decline),
+                actions = listOfNotNull(
+                    accept,
+                    acceptOnceIntent?.let { VeyroNotificationCard.Pill("Just this once", it) },
+                    decline,
+                ),
+            ),
+        )
         val remaining = expiresAtEpochMillis - System.currentTimeMillis()
         if (remaining > 0) {
             // Counts down to the same moment the prompt in the app declines on its own.
@@ -167,31 +221,35 @@ public class VeyroNotifications(private val context: Context) {
         contentIntent: PendingIntent?,
         sendIntent: PendingIntent?,
         disconnectIntent: PendingIntent?,
+        /** At least one PC is connected; false while only looking. */
+        connected: Boolean = true,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_BACKGROUND)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
         contentIntent?.let { builder.setContentIntent(it) }
-        sendIntent?.let { builder.addAction(Notification.Action.Builder(null, "Send files", it).build()) }
-        disconnectIntent?.let { builder.addAction(Notification.Action.Builder(null, "Disconnect", it).build()) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
+        VeyroNotificationCard.apply(
+            context,
+            builder,
+            VeyroNotificationCard.Spec(
+                title = title,
+                text = text,
+                // Connected: the brand badge with the PC. Looking: the same badge, a search glyph.
+                tone = VeyroNotificationCard.Tone.BRAND,
+                glyph = if (connected) VeyroNotificationCard.Glyph.DESKTOP else VeyroNotificationCard.Glyph.SEARCH,
+                pills = listOfNotNull(
+                    sendIntent?.takeIf { connected }?.let { VeyroNotificationCard.Pill("Send files", it) },
+                    disconnectIntent?.let { VeyroNotificationCard.Pill(if (connected) "Disconnect" else "Stop", it) },
+                ),
+            ),
+        )
         return builder.build()
     }
-
-    public fun completed(title: String, text: String): Notification =
-        Notification.Builder(context, CHANNEL_PROGRESS)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setAutoCancel(true)
-            .build()
 
     public fun show(id: Int, notification: Notification) {
         manager?.notify(id, notification)

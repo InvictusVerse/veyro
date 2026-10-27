@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification card badge (outgoing). Generated with the card kit (VeyroNotificationCard). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <gradient
+        android:angle="315"
+        android:endColor="#FF8B5CF6"
+        android:startColor="#FF4F8FFF" />
+</shape>

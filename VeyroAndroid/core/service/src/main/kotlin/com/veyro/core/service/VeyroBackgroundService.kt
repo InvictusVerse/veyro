@@ -141,6 +141,7 @@ public class VeyroBackgroundService : Service() {
         contentIntent = host?.let { activityIntent(it.openAppIntent(this, null), REQUEST_OPEN) },
         sendIntent = host?.takeIf { status != null }
             ?.let { activityIntent(it.openAppIntent(this, status?.peerDeviceId), REQUEST_SEND) },
+        connected = status?.connected ?: false,
         disconnectIntent = PendingIntent.getService(
             this,
             REQUEST_DISCONNECT,
