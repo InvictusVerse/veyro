@@ -94,7 +94,11 @@ public class ShareToPcActivity : Activity() {
      */
     private fun forwardFiles(uris: List<Uri>) {
         val target = ShareShortcuts.targetOf(intent)
-        ShareSendService.start(this, uris, target)
+        if (!ShareSendService.start(this, uris, target)) {
+            // Rare (OEM restrictions): send on the app scope; the grant holds for a short send.
+            val files = uris.mapNotNull { SharedUris.describe(this, it) }
+            (application as VeyroApplication).container.sendFiles(listOfNotNull(target), files)
+        }
         target?.let { ShareShortcuts.reportUsed(this, it) }
         val what = if (uris.size == 1) "file" else "${uris.size} files"
         Toast.makeText(applicationContext, "Sending $what to your PC", Toast.LENGTH_SHORT).show()

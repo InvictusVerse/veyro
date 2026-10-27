@@ -43,15 +43,18 @@ public class ShareSendService : Service() {
         private const val EXTRA_TARGET = "com.veyro.extra.TARGET"
 
         /** Hands [uris] (with their read grant) to the service. [target]: a PC id, or null for the default PC. */
-        public fun start(context: Context, uris: List<Uri>, target: String?) {
-            if (uris.isEmpty()) return
+        /** False if Android refused to start the service; the caller then sends another way. */
+        public fun start(context: Context, uris: List<Uri>, target: String?): Boolean {
+            if (uris.isEmpty()) return true
             val clip = ClipData.newRawUri("files", uris.first())
             uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
             val intent = Intent(context, ShareSendService::class.java)
                 .putExtra(EXTRA_TARGET, target)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.clipData = clip
-            context.startForegroundService(intent)
+            return runCatching { context.startForegroundService(intent) }
+                .onFailure { VeyroLog.w(TAG) { "Share service not started: ${it.javaClass.simpleName}" } }
+                .isSuccess
         }
     }
 
@@ -68,6 +71,13 @@ public class ShareSendService : Service() {
 
     /** Starts still running; the service stops once the last one is done. */
     private var running = 0
+
+    override fun onCreate() {
+        super.onCreate()
+        // The channel must exist before startForeground posts to it; a notification on a missing
+        // channel is "Bad notification for startForeground" and kills the process.
+        manager
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Promote first: Android allows only a few seconds.
