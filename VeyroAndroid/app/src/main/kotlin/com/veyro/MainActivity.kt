@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -56,6 +58,9 @@ public class MainActivity : ComponentActivity() {
         /** From [ShareToPcActivity]: files shared from another app, URIs in the ClipData (ADR-043). */
         public const val ACTION_SHARE_FILES: String = "com.veyro.action.SHARE_FILES"
 
+        /** From the "Copied on <PC>" notification: show the Clipboard screen (ADR-043). */
+        public const val ACTION_OPEN_CLIPBOARD: String = "com.veyro.action.OPEN_CLIPBOARD"
+
         private const val STATE_SEND_TARGET = "sendTarget"
         private const val STATE_SEND_PENDING = "sendPending"
     }
@@ -66,6 +71,9 @@ public class MainActivity : ComponentActivity() {
      */
     private var sendTargets: ArrayList<String> = ArrayList()
     private var sendPending = false
+
+    /** Set by the clipboard notification; the nav host navigates once and clears it. */
+    private var openClipboard by mutableStateOf(false)
 
     private val pickFiles = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -133,6 +141,8 @@ public class MainActivity : ComponentActivity() {
                             onSendFiles = ::launchSendPicker,
                             onRequestMessagingPermissions = ::requestMessagingPermissions,
                             onRequestPhotosPermission = ::requestPhotosPermission,
+                            openClipboard = openClipboard,
+                            onClipboardOpened = { openClipboard = false },
                         )
                     }
                 }
@@ -164,6 +174,12 @@ public class MainActivity : ComponentActivity() {
     }
 
     private fun readSendRequest(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_CLIPBOARD) {
+            intent.action = Intent.ACTION_MAIN
+            com.veyro.di.ClipboardSupport.unseen.set(0)
+            openClipboard = true
+            return
+        }
         if (intent?.action == ACTION_SHARE_FILES) {
             intent.action = Intent.ACTION_MAIN
             val clip = intent.clipData ?: return

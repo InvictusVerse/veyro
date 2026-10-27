@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.veyro.core.designsystem.components.VeyroDetailScaffold
@@ -74,8 +75,18 @@ public fun VeyroNavHost(
     onRequestMessagingPermissions: () -> Unit = {},
     /** The photo read permission, for "Photos on PC" (ADR-034) and the wallpaper (ADR-038). */
     onRequestPhotosPermission: () -> Unit = {},
+    /** The clipboard notification was tapped: show Clipboard, then call [onClipboardOpened]. */
+    openClipboard: Boolean = false,
+    onClipboardOpened: () -> Unit = {},
 ) {
     val navController = rememberNavController()
+    LaunchedEffect(openClipboard) {
+        if (!openClipboard) return@LaunchedEffect
+        if (navController.currentDestination?.hasRoute(VeyroDestination.Clipboard::class) != true) {
+            navController.navigate(VeyroDestination.Clipboard) { launchSingleTop = true }
+        }
+        onClipboardOpened()
+    }
     val context = LocalContext.current
 
     val homeViewModel = viewModel<HomeViewModel>(factory = viewModelFactory)
