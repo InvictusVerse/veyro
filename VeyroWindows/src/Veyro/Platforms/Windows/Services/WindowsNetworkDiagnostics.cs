@@ -5,7 +5,8 @@ namespace Veyro.Platforms.Windows.Services;
 
 /// <summary>
 /// Firewall and network-profile checks for the pairing screen (ADR-030). Reading needs no
-/// elevation; adding the rule goes through the same UAC prompt Veyro shows at startup.
+/// elevation and runs hidden; adding the rule needs a UAC prompt, which Veyro shows at startup only
+/// when the rule is missing and the user has not said no before.
 /// </summary>
 public sealed class WindowsNetworkDiagnostics : INetworkDiagnosticsService
 {

@@ -107,8 +107,38 @@ public partial class App : Application
             });
         // ADR-029: on the UI thread, since reconnecting may show the Windows access prompt.
         _ = container.BluetoothCalling.InitializeAsync();
-        _ = container.NetworkDiagnostics.RequestFirewallRuleAsync();
+        _ = EnsureFirewallRuleAsync();
         _ = StartNetworkServicesAsync();
+    }
+
+    /// <summary>
+    /// Asks for the firewall rule only when it is really missing. The check needs no elevation and
+    /// shows nothing; before, every start ran the elevated command and Windows showed its
+    /// PowerShell / UAC prompt each time, rule or not. A "No" is remembered: Veyro does not ask on
+    /// its own again (the pairing screen's "Add rule" still can). If the rule cannot be read at all,
+    /// nothing is asked either; the pairing screen names that case.
+    /// </summary>
+    private static async Task EnsureFirewallRuleAsync()
+    {
+        try
+        {
+            VeyroContainer container = VeyroContainer.Instance;
+            NetworkCheckResult check = await container.NetworkDiagnostics.CheckAsync();
+            if (check.Firewall != FirewallRuleState.Missing) return;
+            if (container.SettingsStore.Current.FirewallPromptDeclined)
+            {
+                VeyroTrace.Info("Firewall rule missing; not asking again (declined before)");
+                return;
+            }
+            if (!await container.NetworkDiagnostics.RequestFirewallRuleAsync())
+            {
+                await container.SettingsStore.UpdateAsync(s => s with { FirewallPromptDeclined = true });
+            }
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Firewall check at startup failed", error);
+        }
     }
 
     private static async Task StartNetworkServicesAsync()

@@ -29,7 +29,10 @@ public sealed record AppSettings(
     // ADR-043: what this PC copies goes to the phones' virtual clipboard (on by default).
     bool SendClipboardToPhones = true,
     // ADR-043: include copied images too (off by default: they are large).
-    bool SyncClipboardImages = false
+    bool SyncClipboardImages = false,
+    // The user said no to the firewall prompt at startup: Veyro never asks on its own again. The
+    // pairing network check's "Add rule" still asks, and clears this when it succeeds.
+    bool FirewallPromptDeclined = false
 );
 
 public interface ISettingsStore
