@@ -98,11 +98,12 @@
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>
 
-        <!-- Run on Windows Login -->
+        <!-- Start with Windows (ADR-047): on by default; Veyro starts hidden in the tray. The user
+             turns it off in Settings, the tray menu or Windows Settings > Apps > Startup. -->
         <uap5:Extension Category="windows.startupTask">
           <uap5:StartupTask
             TaskId="VeyroStartupTask"
-            Enabled="false"
+            Enabled="true"
             DisplayName="Veyro" />
         </uap5:Extension>
       </Extensions>

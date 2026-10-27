@@ -22,13 +22,28 @@ public sealed class WindowsWallpaperSource : IWindowsWallpaperSource
 
     public event Action? Changed;
 
+    private bool _active;
+
     public void Start()
     {
         lock (_gate)
         {
             if (_timer is not null) return;
             _fingerprint = Fingerprint();
-            _timer = new Timer(_ => Poll(), null, PollInterval, PollInterval);
+            // Idle until a phone connects (SetActive): nobody needs to hear about a change before.
+            _timer = new Timer(_ => Poll(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            if (_active) _timer.Change(PollInterval, PollInterval);
+        }
+    }
+
+    public void SetActive(bool active)
+    {
+        lock (_gate)
+        {
+            if (active == _active) return;
+            _active = active;
+            if (active) _fingerprint = Fingerprint();
+            _timer?.Change(active ? PollInterval : Timeout.InfiniteTimeSpan, active ? PollInterval : Timeout.InfiniteTimeSpan);
         }
     }
 
@@ -169,13 +184,27 @@ public sealed class WindowsNetworkSource : IWindowsNetworkSource
         }
     }
 
+    private bool _active;
+
+    public void SetActive(bool active)
+    {
+        lock (_gate)
+        {
+            if (active == _active) return;
+            _active = active;
+            _timer?.Change(active ? PollInterval : Timeout.InfiniteTimeSpan, active ? PollInterval : Timeout.InfiniteTimeSpan);
+        }
+    }
+
     public void Start()
     {
         lock (_gate)
         {
             if (_timer is not null) return;
             _last = WifiLevel;
-            _timer = new Timer(_ => Poll(), null, PollInterval, PollInterval);
+            // Idle until a phone connects (SetActive); NetworkStatusChanged still reports changes.
+            _timer = new Timer(_ => Poll(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            if (_active) _timer.Change(PollInterval, PollInterval);
         }
         try { global::Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged += OnNetworkStatusChanged; }
         catch (Exception error) { VeyroTrace.Warn($"Watching network status failed: {error.GetType().Name}"); }

@@ -371,6 +371,27 @@ public sealed class NotificationToastService : INotificationToastService
         }
     }
 
+    public void ShowStatus(string title, string text, string? tag = null)
+    {
+        if (!_registered) return;
+        try
+        {
+            var builder = new AppNotificationBuilder()
+                .AddArgument("action", "open")
+                .SetGroup(StatusGroup)
+                .AddText(Clip(title, MaxTitleLength))
+                .AddText(Clip(text, MaxBodyLength));
+            if (tag is not null) builder.SetTag(Hash("s|" + tag));
+            AppNotificationManager.Default.Show(builder.BuildNotification());
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Status toast failed: {error.GetType().Name}");
+        }
+    }
+
+    private const string StatusGroup = "veyro-status";
+
     private static AppNotificationButton TransferButton(string label, string action, string id, AppNotificationButtonStyle? style)
     {
         var button = new AppNotificationButton(label)

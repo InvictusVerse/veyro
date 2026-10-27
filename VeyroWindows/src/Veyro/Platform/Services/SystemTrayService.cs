@@ -6,8 +6,9 @@ namespace Veyro.Platform.Services;
 
 /// <summary>
 /// The Veyro icon in the notification area (Shell_NotifyIcon on a hidden window owned by the UI
-/// thread), present only while tray mode is on (ADR-036, default off). Left click opens the
-/// window; right click offers Open Veyro, Send files..., Pause/Resume sync and Quit. The icon is
+/// thread), present while tray mode is on (ADR-047, default on). Left click opens the window;
+/// right click offers Open Veyro, Send files..., Pause/Resume sync, "Start with Windows" and
+/// "Keep running in the background" (ticked when on) and Quit. The icon is
 /// re-added when Explorer restarts. <see cref="IsAvailable"/> is true only while the icon exists,
 /// so "keep running in the tray" never hides the window without a way back.
 /// </summary>
@@ -33,6 +34,10 @@ public sealed class SystemTrayService : ISystemTrayService
     private const uint CommandQuit = 2;
     private const uint CommandSendFiles = 3;
     private const uint CommandToggleSync = 4;
+    private const uint CommandToggleStartup = 5;
+    private const uint CommandStopBackground = 6;
+    private const uint MfChecked = 0x8;
+    private const uint MfGrayed = 0x1;
     private const string WindowClass = "VeyroTrayWindow";
 
     private readonly Action _open;
@@ -40,6 +45,9 @@ public sealed class SystemTrayService : ISystemTrayService
     private readonly Action _toggleSync;
     private readonly Func<bool> _isSyncPaused;
     private readonly Action _quit;
+    private readonly Func<bool?> _isStartupEnabled;
+    private readonly Action _toggleStartup;
+    private readonly Action _stopBackground;
     private readonly uint _taskbarCreated;
     private WndProc? _wndProc; // kept alive: the native window calls into it
     private DispatcherQueue? _dispatcher;
@@ -48,13 +56,24 @@ public sealed class SystemTrayService : ISystemTrayService
     private bool _iconOwned;
     private bool _enabled;
 
-    public SystemTrayService(Action open, Action sendFiles, Action toggleSync, Func<bool> isSyncPaused, Action quit)
+    public SystemTrayService(
+        Action open,
+        Action sendFiles,
+        Action toggleSync,
+        Func<bool> isSyncPaused,
+        Action quit,
+        Func<bool?> isStartupEnabled,
+        Action toggleStartup,
+        Action stopBackground)
     {
         _open = open;
         _sendFiles = sendFiles;
         _toggleSync = toggleSync;
         _isSyncPaused = isSyncPaused;
         _quit = quit;
+        _isStartupEnabled = isStartupEnabled;
+        _toggleStartup = toggleStartup;
+        _stopBackground = stopBackground;
         _taskbarCreated = RegisterWindowMessageW("TaskbarCreated");
     }
 
@@ -169,6 +188,11 @@ public sealed class SystemTrayService : ISystemTrayService
             AppendMenuW(menu, MfString, CommandSendFiles, "Send files...");
             AppendMenuW(menu, MfString, CommandToggleSync, _isSyncPaused() ? "Resume sync" : "Pause sync");
             AppendMenuW(menu, MfSeparator, 0, null);
+            // ADR-047: both background choices right here, ticked when on.
+            bool? startup = _isStartupEnabled();
+            AppendMenuW(menu, MfString | (startup == true ? MfChecked : 0) | (startup is null ? MfGrayed : 0), CommandToggleStartup, "Start with Windows");
+            AppendMenuW(menu, MfString | MfChecked, CommandStopBackground, "Keep running in the background");
+            AppendMenuW(menu, MfSeparator, 0, null);
             AppendMenuW(menu, MfString, CommandQuit, "Quit Veyro");
             GetCursorPos(out POINT point);
             // Required so the menu closes when the user clicks elsewhere.
@@ -180,6 +204,8 @@ public sealed class SystemTrayService : ISystemTrayService
                 CommandOpen => _open,
                 CommandSendFiles => _sendFiles,
                 CommandToggleSync => _toggleSync,
+                CommandToggleStartup => _toggleStartup,
+                CommandStopBackground => _stopBackground,
                 CommandQuit => _quit,
                 _ => null
             };

@@ -76,7 +76,7 @@ public sealed class GeneralViewModel : BaseViewModel
     }
 
     public string TrayText => !_minimizeToTrayOnClose
-        ? "Off: closing the window quits Veyro and disconnects the phone."
+        ? "Off: closing the window quits Veyro and disconnects the phone. Turn it on to stay connected with little memory and power."
         : _tray.IsAvailable
             ? "Closing the window keeps Veyro in the system tray: the phone stays connected and notifications keep arriving. Right-click the icon to quit."
             : "The system tray icon could not be created, so closing the window quits Veyro.";
@@ -152,6 +152,7 @@ public sealed class GeneralViewModel : BaseViewModel
     public async Task RefreshAsync()
     {
         _startupState = await _startup.GetStateAsync();
+        App.OnStartupStateChanged(_startupState);
         RaiseStartup();
         OnPropertyChanged(nameof(TrayText));
     }
@@ -163,6 +164,7 @@ public sealed class GeneralViewModel : BaseViewModel
         try
         {
             _startupState = await _startup.SetEnabledAsync(enabled);
+            App.OnStartupStateChanged(_startupState);
             await _settingsStore.UpdateAsync(s => s with { AutoStartOnLogin = _startupState == LoginStartupState.Enabled });
         }
         finally

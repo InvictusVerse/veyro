@@ -59,10 +59,13 @@ internal static class HandoffCoordinator
     {
         if (!await WaitForMainWindowAsync()) return new HandoffReply(HandoffOutcome.Failed, "Veyro is still starting. Try again in a moment.");
         var container = VeyroContainer.Instance;
-        App.ShowMainWindow();
 
+        // ADR-047: sending does not open Veyro. The window comes up only when it has to ask
+        // something (pair a phone, which phone) or for pairing itself; otherwise files go in the
+        // background and a toast says how it went.
         if (request.Kind == HandoffKind.Pair)
         {
+            App.ShowMainWindow();
             container.MainPageViewModel.RequestPairing();
             return new HandoffReply(HandoffOutcome.Sent);
         }
@@ -86,6 +89,7 @@ internal static class HandoffCoordinator
         switch (plan)
         {
             case SendPlan.NoPhonePaired:
+                App.ShowMainWindow();
                 container.MainPageViewModel.RequestPairing();
                 return new HandoffReply(HandoffOutcome.NoPhonePaired, "Pair a phone with Veyro first.");
             case SendPlan.Unavailable unavailable:
@@ -103,16 +107,29 @@ internal static class HandoffCoordinator
                 return new HandoffReply(HandoffOutcome.Failed, GenericFailure);
         }
 
+        string what = files.Count == 1 ? Path.GetFileName(files[0]) : $"{files.Count} files";
+        string names = string.Join(", ", targets.Select(id => Find(container, id)?.Name ?? "your phone"));
+        // While the window is open the transfer banner shows progress; otherwise a toast does.
+        bool toast = !App.WindowOnScreen;
+        if (toast) container.NotificationToastService.ShowStatus($"Sending {what}", $"To {names}", tag: "handoff");
+
         int sent = 0;
         foreach (string deviceId in targets)
         {
             if (await SendToAsync(container, deviceId, files)) sent++;
         }
         VeyroTrace.Info($"Hand-off sent to {sent} of {targets.Count} phone(s)");
-        if (sent == targets.Count) return new HandoffReply(HandoffOutcome.Sent);
-        return sent > 0
-            ? new HandoffReply(HandoffOutcome.PartlySent, $"Sent to {sent} of {targets.Count} phones. Open Veyro to see why.")
-            : new HandoffReply(HandoffOutcome.Failed, GenericFailure);
+        HandoffReply reply = sent == targets.Count
+            ? new HandoffReply(HandoffOutcome.Sent)
+            : sent > 0
+                ? new HandoffReply(HandoffOutcome.PartlySent, $"Sent to {sent} of {targets.Count} phones. Open Veyro to see why.")
+                : new HandoffReply(HandoffOutcome.Failed, GenericFailure);
+        if (toast)
+        {
+            if (reply.Outcome == HandoffOutcome.Sent) container.NotificationToastService.ShowStatus($"Sent {what}", $"To {names}", tag: "handoff");
+            else container.NotificationToastService.ShowStatus($"Could not send {what}", reply.Message ?? GenericFailure, tag: "handoff");
+        }
+        return reply;
     }
 
     /// <summary>
@@ -149,7 +166,10 @@ internal static class HandoffCoordinator
         try
         {
             long totalBytes = files.Sum(path => new FileInfo(path).Length);
-            var dialog = new SendToDialog(paired, preselected, files.Count, totalBytes) { XamlRoot = App.MainWindow.Content.XamlRoot };
+            // The one case that needs the window: the user picks the phone.
+            XamlRoot? root = await App.ShowMainWindowForDialogAsync();
+            if (root is null) return null;
+            var dialog = new SendToDialog(paired, preselected, files.Count, totalBytes) { XamlRoot = root };
             return await dialog.AskAsync();
         }
         finally
@@ -159,38 +179,21 @@ internal static class HandoffCoordinator
     }
 
     /// <summary>
-    /// The Share sheet shows the reply's message itself; the Explorer menu has no such place, so
-    /// the window says it.
+    /// The Share sheet shows the reply's message itself; the Explorer menu has no such place, so a
+    /// toast says it (ADR-047: no window just to report a failure).
     /// </summary>
-    private static async Task<HandoffReply> FailVisiblyAsync(HandoffRequest request, string message)
+    private static Task<HandoffReply> FailVisiblyAsync(HandoffRequest request, string message)
     {
-        if (request.Kind == HandoffKind.ContextMenu && App.TryEnterDialog())
-        {
-            try
-            {
-                var dialog = new ContentDialog
-                {
-                    Title = "Send with Veyro",
-                    Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-                    CloseButtonText = "OK",
-                    XamlRoot = App.MainWindow.Content.XamlRoot
-                };
-                if (Application.Current.Resources.TryGetValue("DefaultContentDialogStyle", out object style) && style is Style dialogStyle)
-                    dialog.Style = dialogStyle;
-                await dialog.ShowAsync();
-            }
-            finally
-            {
-                App.ExitDialog();
-            }
-        }
-        return new HandoffReply(HandoffOutcome.Failed, message);
+        if (request.Kind == HandoffKind.ContextMenu)
+            VeyroContainer.Instance.NotificationToastService.ShowStatus("Send with Veyro", message, tag: "handoff");
+        return Task.FromResult(new HandoffReply(HandoffOutcome.Failed, message));
     }
 
+    /// <summary>The main window object exists (it may be hidden in the tray).</summary>
     private static async Task<bool> WaitForMainWindowAsync()
     {
         var waited = Stopwatch.StartNew();
-        while (App.MainWindow?.Content?.XamlRoot is null)
+        while (App.MainWindow?.Content is null)
         {
             if (waited.Elapsed > WindowWait) return false;
             await Task.Delay(100);

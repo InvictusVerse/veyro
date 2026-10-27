@@ -1,5 +1,6 @@
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.Windows.AppLifecycle;
 using System.ComponentModel;
 using Veyro.Dialogs;
 using Veyro.Core.Diagnostics;
@@ -55,36 +56,49 @@ public partial class App : Application
         MainWindow.AppWindow.Resize(new Windows.Graphics.SizeInt32(1180, 760));
 
         var container = VeyroContainer.Instance;
-        // ADR-036: the tray icon exists only while "keep running in the tray" is on (default off).
+        // ADR-047: the tray icon is there while "keep running in the tray" is on (the default).
         container.SystemTrayService.Initialize(WindowHandle);
         container.SystemTrayService.SetEnabled(container.SettingsStore.Current.MinimizeToTrayOnClose);
         MainWindow.Closed += Window_Closed;
+        MainWindow.AppWindow.Changed += (_, change) =>
+        {
+            if (change.DidVisibilityChange || change.DidPresenterChange) UpdateWindowOnScreen();
+        };
 
         // ADR-030: first run shows onboarding. Installs from before onboarding existed that
         // already trust a phone count as onboarded.
         if (!container.SettingsStore.Current.OnboardingCompleted && container.TrustStore.GetTrustedPeers().Count > 0)
             _ = container.SettingsStore.UpdateAsync(s => s with { OnboardingCompleted = true });
 
-        var rootFrame = new Frame();
-        MainWindow.Content = rootFrame;
-        try
-        {
-            rootFrame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
-        }
-        catch (Exception error)
-        {
-            // Never leave an empty black window: say what happened and where the log is.
-            VeyroTrace.Crash("Opening the main page", error);
-            MainWindow.Content = new TextBlock
-            {
-                Margin = new Thickness(32),
-                TextWrapping = TextWrapping.Wrap,
-                Text = $"Veyro could not open its main page ({error.GetType().Name}). " +
-                       $"Details are in {VeyroTrace.FilePath ?? "the debug output"}."
-            };
-        }
+        // The frame always exists (dialogs need its XamlRoot); its pages are created only while
+        // the window is shown (ADR-047: no UI held in memory while Veyro waits in the tray).
+        MainWindow.Content = new Frame();
 
-        MainWindow.Activate();
+        // ADR-047: started by Windows at sign-in, or by a toast button: stay in the tray. Anything
+        // else (Start menu, a second launch) opens the window. Without a tray icon there would be
+        // no way back to a hidden window, so then it opens minimised instead.
+        ExtendedActivationKind kind = AppInstance.GetCurrent().GetActivatedEventArgs().Kind;
+        bool background = kind is ExtendedActivationKind.StartupTask or ExtendedActivationKind.AppNotification;
+        if (background && container.SystemTrayService.IsAvailable)
+        {
+            VeyroTrace.Info($"Started in the background ({kind}); the window opens from the tray");
+            // Never activated, so nothing is drawn; a dialog later shows the window first
+            // (ShowMainWindowForDialogAsync), which creates its XAML root then.
+            MainWindow.AppWindow.Hide();
+            ScheduleTrim();
+        }
+        else if (background)
+        {
+            EnsurePages();
+            MainWindow.Activate();
+            if (MainWindow.AppWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
+        }
+        else
+        {
+            EnsurePages();
+            MainWindow.Activate();
+        }
+        UpdateWindowOnScreen();
         // ADR-043: watch the Windows clipboard (UI thread).
         try { container.WindowsClipboard.Start(MainWindow.DispatcherQueue); }
         catch (Exception error) { VeyroTrace.Crash("Starting the clipboard watcher", error); }
@@ -108,6 +122,7 @@ public partial class App : Application
         // ADR-029: on the UI thread, since reconnecting may show the Windows access prompt.
         _ = container.BluetoothCalling.InitializeAsync();
         _ = EnsureFirewallRuleAsync();
+        _ = InitializeStartupAsync();
         _ = StartNetworkServicesAsync();
     }
 
@@ -149,6 +164,8 @@ public partial class App : Application
         {
             VeyroTrace.Error("PC media/battery sources unavailable", error);
         }
+        // ADR-047: from here the sources poll only while a phone is connected.
+        VeyroContainer.Instance.BackgroundPower.Start();
         try
         {
             await VeyroContainer.Instance.LinkServer.StartAsync();
@@ -191,11 +208,12 @@ public partial class App : Application
                     ? DeviceId.FormatFingerprint(id)
                     : request.PeerDeviceId;
                 // The window may be hidden in the tray; the user has to see the prompt to accept.
-                ShowMainWindow();
+                XamlRoot root = await ShowMainWindowForDialogAsync()
+                    ?? throw new InvalidOperationException("The window has no XamlRoot.");
                 var dialog = new ConnectionRequestDialog(
                     request.PeerName, fingerprint, request.Code, request.ExpiresAt, request.Abandoned)
                 {
-                    XamlRoot = MainWindow.Content.XamlRoot
+                    XamlRoot = root
                 };
                 bool accepted = await dialog.ShowAsync() == ContentDialogResult.Primary;
                 completion.TrySetResult(accepted && !request.Abandoned.IsCancellationRequested);
@@ -260,6 +278,86 @@ public partial class App : Application
         }
     }
 
+    // ── Start with Windows and background, from the tray (ADR-047) ─────────────────
+
+    private static LoginStartupState _startupState = LoginStartupState.Unavailable;
+
+    /// <summary>For the tray menu's tick: true/false, or null when Windows does not let Veyro change it.</summary>
+    public static bool? StartupEnabledForMenu => _startupState switch
+    {
+        LoginStartupState.Enabled => true,
+        LoginStartupState.Disabled or LoginStartupState.DisabledByUser => false,
+        _ => null
+    };
+
+    /// <summary>
+    /// Reads "Start with Windows" and, once per install, turns it on (the default). After that only
+    /// the user changes it, so turning it off is never undone.
+    /// </summary>
+    private static async Task InitializeStartupAsync()
+    {
+        VeyroContainer container = VeyroContainer.Instance;
+        try
+        {
+            _startupState = await container.LoginStartup.GetStateAsync();
+            if (!container.SettingsStore.Current.AutoStartDefaultApplied)
+            {
+                if (_startupState == LoginStartupState.Disabled)
+                    _startupState = await container.LoginStartup.SetEnabledAsync(true);
+                await container.SettingsStore.UpdateAsync(s => s with
+                {
+                    AutoStartDefaultApplied = true,
+                    AutoStartOnLogin = _startupState == LoginStartupState.Enabled
+                });
+                VeyroTrace.Info($"Start with Windows default applied: {_startupState}");
+            }
+            await container.GeneralViewModel.RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Start with Windows unavailable: {error.GetType().Name}");
+        }
+    }
+
+    /// <summary>Tray "Start with Windows". Windows keeps a user's own "off" in its Startup apps page.</summary>
+    public static async void ToggleStartupFromTray()
+    {
+        VeyroContainer container = VeyroContainer.Instance;
+        try
+        {
+            if (_startupState == LoginStartupState.DisabledByUser)
+            {
+                // Turned off in Windows Settings: only Windows can turn it back on.
+                await global::Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:startupapps"));
+                return;
+            }
+            bool enable = _startupState != LoginStartupState.Enabled;
+            _startupState = await container.LoginStartup.SetEnabledAsync(enable);
+            await container.SettingsStore.UpdateAsync(s => s with { AutoStartOnLogin = _startupState == LoginStartupState.Enabled });
+            await container.GeneralViewModel.RefreshAsync();
+            VeyroTrace.Info($"Start with Windows from the tray: {_startupState}");
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Changing Start with Windows failed: {error.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// Tray "Keep running in the background", unticked: closing the window will quit Veyro. The
+    /// window opens first, since the tray icon (the only way back to a hidden window) goes away.
+    /// </summary>
+    public static void StopBackgroundFromTray()
+    {
+        ShowMainWindow();
+        // Through the view model, so Settings shows it and the icon is removed the usual way.
+        VeyroContainer.Instance.GeneralViewModel.MinimizeToTrayOnClose = false;
+        VeyroTrace.Info("Background mode turned off from the tray");
+    }
+
+    /// <summary>Settings changed "Start with Windows": keep the tray tick in step.</summary>
+    public static void OnStartupStateChanged(LoginStartupState state) => _startupState = state;
+
     /// <summary>
     /// Tray "Send files...": brings the window forward (the picker needs an owner on screen),
     /// then opens the picker directly.
@@ -300,7 +398,7 @@ public partial class App : Application
             VeyroContainer.Instance.SystemTrayService.IsAvailable)
         {
             args.Handled = true;
-            MainWindow.AppWindow.Hide();
+            HideToTray();
             return;
         }
 
@@ -312,6 +410,8 @@ public partial class App : Application
 
     public static void ShowMainWindow()
     {
+        _trimGeneration++; // a pending "release the UI" from a recent hide no longer applies
+        EnsurePages();
         if (MainWindow.AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
         {
             presenter.Restore();
@@ -320,6 +420,109 @@ public partial class App : Application
         MainWindow.AppWindow.Show();
         MainWindow.Activate();
         InteropHelpers.SetForegroundWindow(WindowHandle);
+        UpdateWindowOnScreen();
+    }
+
+    // ── Background (ADR-047) ─────────────────────────────────────────────────────────
+
+    private static volatile bool _windowOnScreen;
+    private static int _trimGeneration;
+
+    /// <summary>
+    /// The window is shown and not minimised. Read from any thread (the discovery beacon and the
+    /// power policy use it); written on the UI thread.
+    /// </summary>
+    public static bool WindowOnScreen => _windowOnScreen;
+
+    private static void UpdateWindowOnScreen()
+    {
+        bool now = MainWindow is { } window && IsWindowOnScreen(window);
+        if (now == _windowOnScreen) return;
+        _windowOnScreen = now;
+        VeyroContainer.Instance.BackgroundPower.WindowChanged();
+    }
+
+    /// <summary>Creates the main page (or onboarding) if the frame is empty. UI thread.</summary>
+    private static void EnsurePages()
+    {
+        if (MainWindow.Content is not Frame frame || frame.Content is not null) return;
+        var container = VeyroContainer.Instance;
+        try
+        {
+            frame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
+        }
+        catch (Exception error)
+        {
+            // Never leave an empty black window: say what happened and where the log is.
+            VeyroTrace.Crash("Opening the main page", error);
+            frame.Content = new TextBlock
+            {
+                Margin = new Thickness(32),
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"Veyro could not open its main page ({error.GetType().Name}). " +
+                       $"Details are in {VeyroTrace.FilePath ?? "the debug output"}."
+            };
+        }
+    }
+
+    /// <summary>Close button with tray mode on: hide, then let go of the UI. UI thread.</summary>
+    private static void HideToTray()
+    {
+        MainWindow.AppWindow.Hide();
+        UpdateWindowOnScreen();
+        VeyroContainer container = VeyroContainer.Instance;
+        if (!container.SettingsStore.Current.TrayHintShown)
+        {
+            _ = container.SettingsStore.UpdateAsync(s => s with { TrayHintShown = true });
+            container.NotificationToastService.ShowStatus(
+                "Veyro is still running",
+                "Your phone stays connected. Open Veyro from the tray icon; right-click it to quit or stop starting with Windows.");
+        }
+        ScheduleTrim();
+    }
+
+    /// <summary>
+    /// A few seconds after the window is hidden (so a quick reopen costs nothing): drop the
+    /// pages, then trim the heap and the working set once. Cancelled by showing the window.
+    /// </summary>
+    private static void ScheduleTrim()
+    {
+        int generation = ++_trimGeneration;
+        DispatcherQueueTimer timer = MainWindow.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(5);
+        timer.IsRepeating = false;
+        timer.Tick += (t, _) =>
+        {
+            t.Stop();
+            if (generation != _trimGeneration || _windowOnScreen) return;
+            // A dialog (pairing, incoming files) needs the window; do not pull pages from under it.
+            if (!TryEnterDialog()) return;
+            try
+            {
+                if (MainWindow.Content is Frame frame)
+                {
+                    frame.Content = null;
+                    frame.BackStack.Clear();
+                }
+            }
+            finally
+            {
+                ExitDialog();
+            }
+            _ = Task.Run(ProcessPower.TrimMemory);
+        };
+        timer.Start();
+    }
+
+    /// <summary>
+    /// Shows the window and waits until it can host a dialog (its XAML root exists). UI thread.
+    /// </summary>
+    public static async Task<XamlRoot?> ShowMainWindowForDialogAsync()
+    {
+        ShowMainWindow();
+        var waited = Stopwatch.StartNew();
+        while (MainWindow.Content?.XamlRoot is null && waited.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(50);
+        return MainWindow.Content?.XamlRoot;
     }
 
     public static void ExitApplication()

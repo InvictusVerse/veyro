@@ -48,6 +48,7 @@ public sealed class VeyroContainer
     public IAppThemeModeService ThemeModeService { get; }
     public IDeviceManager DeviceManager { get; }
     public IFileTransferService FileTransferService { get; }
+    internal BackgroundPower BackgroundPower { get; }
     public ILoginStartupService LoginStartup { get; }
     public INotificationToastService NotificationToastService { get; }
     public IBluetoothCallingService BluetoothCalling { get; }
@@ -131,7 +132,9 @@ public sealed class VeyroContainer
             SettingsStore.Current.DeviceName,
             IdentityManager.DeriveLocalKey("presence-token"),
             IdentityManager.PublicKey.Span,
-            controlPort: () => LinkServer.IsRunning ? LinkServer.Port : 0);
+            controlPort: () => LinkServer.IsRunning ? LinkServer.Port : 0,
+            // Background power: a beacon a second only while someone may be looking for the PC.
+            announceFast: () => App.WindowOnScreen || LinkServer.PairingWindow.IsOpen);
         // ADR-040: dial a paired phone that is on the network but did not reconnect by itself.
         // The dialled session runs in the listener's session loop, so "Pause sync" ends it too.
         NetworkChangeSignal = new WindowsNetworkChangeSignal();
@@ -150,13 +153,20 @@ public sealed class VeyroContainer
             sendFiles: App.SendFilesFromTray,
             toggleSync: App.ToggleSync,
             isSyncPaused: () => App.SyncPaused,
-            quit: App.ExitApplication);
+            quit: App.ExitApplication,
+            isStartupEnabled: () => App.StartupEnabledForMenu,
+            toggleStartup: App.ToggleStartupFromTray,
+            stopBackground: App.StopBackgroundFromTray);
         LoginStartup = new LoginStartupService();
         ThemeModeService = new AppThemeModeService();
         // Paired phones from the trust store, connected state from the live sessions.
         DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService, PeerSessions, SessionKeeper);
         // ADR-034: sends over the phone's live session; dials only when there is none.
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
+        // ADR-047: what Veyro may do in the background (polling, EcoQoS), from three facts.
+        BackgroundPower = new BackgroundPower(
+            PeerSessions, LinkServer, FileTransferService, PcMediaSource, PcWallpaperSource, PcNetworkSource,
+            windowOnScreen: () => App.WindowOnScreen);
         // ADR-029: Bluetooth hands-free call audio (Windows 11); answers route through CallRouter.
         BluetoothCalling = new BluetoothCallingService(SettingsStore);
         CallRouter = new CallRouter(Calls, BluetoothCalling);

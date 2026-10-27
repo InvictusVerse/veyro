@@ -8,16 +8,17 @@ public sealed record AppSettings(
     bool IsDiscoverable,
     string DownloadDirectory,
     bool AutoStartOnLogin = false,
-    // Tray mode is off until the user turns it on (ADR-036). Older builds wrote true by default.
-    bool MinimizeToTrayOnClose = false,
+    // ADR-047: closing the window keeps Veyro running in the tray, on by default; turned off in
+    // Settings or from the tray icon's menu.
+    bool MinimizeToTrayOnClose = true,
     // ADR-029: the Bluetooth phone chosen for call audio and the Veyro peer it belongs to.
     string? BluetoothCallTransportId = null,
     string? BluetoothCallPeerId = null,
     // ADR-030: first-run onboarding finished. Missing in older settings files, so it defaults to
     // false; startup marks installs that already trust a peer as complete.
     bool OnboardingCompleted = false,
-    // ADR-036: set once the user changed the tray switch. Files without it carry the old default
-    // (true), which nobody chose, so loading them turns tray mode off.
+    // ADR-036/047: set once the user changed the tray switch. Without it the stored value was
+    // never chosen, so loading takes the current default (on).
     bool TrayModeChosen = false,
     // ADR-039: a Share sheet hand-off goes straight to the phone when exactly one is connected.
     bool SendSharedFilesStraightToConnectedPhone = true,
@@ -32,7 +33,12 @@ public sealed record AppSettings(
     bool SyncClipboardImages = false,
     // Veyro asked for the firewall rule at startup once (whatever the answer): it never asks on
     // its own again. Only the pairing network check's "Add rule", pressed by the user, asks then.
-    bool FirewallPromptAsked = false
+    bool FirewallPromptAsked = false,
+    // ADR-047: "Start with Windows" is turned on once, on the first start of a build that has
+    // it; after that only the user changes it (Settings, the tray menu, or Windows' Startup apps).
+    bool AutoStartDefaultApplied = false,
+    // ADR-047: the one-time "Veyro is still running in the tray" note was shown.
+    bool TrayHintShown = false
 );
 
 public interface ISettingsStore
@@ -78,7 +84,8 @@ public sealed class FileSettingsStore : ISettingsStore
             {
                 string json = File.ReadAllText(_filePath);
                 var loaded = JsonSerializer.Deserialize<AppSettings>(json);
-                if (loaded is not null) return loaded.TrayModeChosen ? loaded : loaded with { MinimizeToTrayOnClose = false };
+                // ADR-047: tray mode is the default now; a value nobody chose takes the default.
+                if (loaded is not null) return loaded.TrayModeChosen ? loaded : loaded with { MinimizeToTrayOnClose = true };
             }
         }
         catch

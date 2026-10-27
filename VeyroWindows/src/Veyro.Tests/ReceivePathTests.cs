@@ -461,22 +461,28 @@ public sealed class ReceivePathTests : IAsyncLifetime
     // ── Settings ──────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task TrayMode_IsOffByDefaultAndOnlyAnExplicitChoiceKeepsItOn()
+    public async Task TrayMode_IsOnByDefaultAndOnlyAnExplicitChoiceTurnsItOff()
     {
+        // ADR-047: tray mode is the default; an unchosen stored value takes the default.
         string dir = Path.Combine(_root, "settings");
         Directory.CreateDirectory(dir);
         string file = Path.Combine(dir, "settings.json");
 
-        Assert.False(new FileSettingsStore(dir).Current.MinimizeToTrayOnClose);
+        var fresh = new FileSettingsStore(dir).Current;
+        Assert.True(fresh.MinimizeToTrayOnClose);
+        Assert.False(fresh.AutoStartDefaultApplied);
+        Assert.False(fresh.TrayHintShown);
 
-        // Written by an older build, where true was the silent default.
-        await File.WriteAllTextAsync(file, """{"DeviceName":"PC","IsDiscoverable":true,"DownloadDirectory":"D:\\x","MinimizeToTrayOnClose":true}""", Ct);
-        Assert.False(new FileSettingsStore(dir).Current.MinimizeToTrayOnClose);
+        // Written by a build where off was the default, but never chosen by the user.
+        await File.WriteAllTextAsync(file, """{"DeviceName":"PC","IsDiscoverable":true,"DownloadDirectory":"D:\\x","MinimizeToTrayOnClose":false}""", Ct);
+        Assert.True(new FileSettingsStore(dir).Current.MinimizeToTrayOnClose);
 
         var store = new FileSettingsStore(dir);
+        await store.UpdateAsync(s => s with { MinimizeToTrayOnClose = false, TrayModeChosen = true });
+        Assert.False(new FileSettingsStore(dir).Current.MinimizeToTrayOnClose);
+
         await store.UpdateAsync(s => s with { MinimizeToTrayOnClose = true, TrayModeChosen = true });
         Assert.True(new FileSettingsStore(dir).Current.MinimizeToTrayOnClose);
-        Assert.False(new FileSettingsStore(dir).Current.AutoStartOnLogin);
     }
 
     private async Task WaitUntilAsync(Func<bool> condition)

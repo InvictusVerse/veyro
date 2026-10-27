@@ -182,6 +182,30 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     /// <summary>A phone removed this PC (ADR-042); its trust record is already gone. Server thread.</summary>
     public event Action<string>? PeerUnpaired;
 
+    private int _inboundTransfers;
+
+    /// <summary>Files are being received right now (for power throttling: never slow a transfer).</summary>
+    public bool IsReceiving => Volatile.Read(ref _inboundTransfers) > 0;
+
+    /// <summary><see cref="IsReceiving"/> changed. Raised on a server thread.</summary>
+    public event Action? ReceivingChanged;
+
+    private void InboundTransferStarted()
+    {
+        if (Interlocked.Increment(ref _inboundTransfers) == 1) RaiseReceivingChanged();
+    }
+
+    private void InboundTransferEnded()
+    {
+        if (Interlocked.Decrement(ref _inboundTransfers) == 0) RaiseReceivingChanged();
+    }
+
+    private void RaiseReceivingChanged()
+    {
+        try { ReceivingChanged?.Invoke(); }
+        catch (Exception error) { VeyroTrace.Error("ReceivingChanged handler failed", error); }
+    }
+
     /// <summary>Live authenticated sessions, for companion features (ADR-025).</summary>
     public IPeerSessionRegistry Sessions => _sessions;
 
@@ -1028,6 +1052,9 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                     FallbackHost: host,
                     AuthToken: token,
                     Resume: resume), ct).ConfigureAwait(false);
+                InboundTransferStarted();
+                try
+                {
                 result = await BulkTransfer.ReceiveAsync(
                     tcp,
                     offer.TransferId,
@@ -1042,6 +1069,11 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                         secure.SendAsync(new PeerMessage.ItemResult(offer.TransferId, index, ok, error), sendCt),
                     acceptTimeout: DataConnectTimeout,
                     idleTimeout: DataIdleTimeout).ConfigureAwait(false);
+                }
+                finally
+                {
+                    InboundTransferEnded();
+                }
             }
             finally
             {

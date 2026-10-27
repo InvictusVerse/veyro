@@ -13,4 +13,11 @@ public interface INotificationToastService : IDisposable
     /// removes the toast. Counts only, never file names.
     /// </summary>
     Task<ConsentAnswer?> ShowTransferRequestAsync(string peerName, int fileCount, long totalBytes, CancellationToken ct);
+
+    /// <summary>
+    /// A plain status toast (ADR-047): what Veyro did while its window was closed, such as files
+    /// sent from the Share sheet or Explorer. A later toast with the same <paramref name="tag"/>
+    /// replaces it. Clicking it opens Veyro. Never throws.
+    /// </summary>
+    void ShowStatus(string title, string text, string? tag = null);
 }

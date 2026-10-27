@@ -4,4 +4,7 @@ namespace Veyro.Data.Contracts;
 public interface IWindowsNetworkSource : IPcNetworkSource, IDisposable
 {
     void Start();
+
+    /// <summary>Polls only while a phone is connected to hear about it (ADR-047).</summary>
+    void SetActive(bool active);
 }

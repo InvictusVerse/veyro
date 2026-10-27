@@ -36,24 +36,54 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         InitializeComponent();
-        // A toast asked for a conversation: switch to the Messages tab (the view model selects the thread).
-        VeyroContainer.Instance.MessagesViewModel.OpenRequested += () => NavigateToPage("Messages");
-        ViewModel.OpenDeviceSettingsRequested += () => OpenSettings(SettingsPage.DevicesSection);
-        ViewModel.PairRequested += OpenPairing;
-        ViewModel.PropertyChanged += (_, e) =>
-        {
-            // The phone tabs hide without a phone; do not leave one of them on screen.
-            if (e.PropertyName == nameof(MainPageViewModel.HasActiveDevice) && !ViewModel.HasActiveDevice &&
-                MainNavigationView.SelectedItem is NavigationViewItem { Tag: "Calls" or "Messages" or "Photos" })
-            {
-                OpenSettings(null);
-            }
-        };
+        // Subscribed here (requests can come right after navigation, before Loaded) and released
+        // on Unloaded: the view models live for the whole app, and ADR-047 drops this page while
+        // Veyro is in the tray, so a lingering handler would keep every old page alive.
+        Subscribe();
         Loaded += (_, _) =>
         {
+            Subscribe();
             ApplyPaneMode(ActualWidth);
             UpdatePaneCustomHeight();
         };
+        Unloaded += (_, _) => Unsubscribe();
+    }
+
+    private bool _subscribed;
+
+    private void Subscribe()
+    {
+        if (_subscribed) return;
+        _subscribed = true;
+        VeyroContainer.Instance.MessagesViewModel.OpenRequested += OnOpenMessages;
+        ViewModel.OpenDeviceSettingsRequested += OnOpenDeviceSettings;
+        ViewModel.PairRequested += OpenPairing;
+        ViewModel.PropertyChanged += OnViewModelChanged;
+    }
+
+    private void Unsubscribe()
+    {
+        if (!_subscribed) return;
+        _subscribed = false;
+        VeyroContainer.Instance.MessagesViewModel.OpenRequested -= OnOpenMessages;
+        ViewModel.OpenDeviceSettingsRequested -= OnOpenDeviceSettings;
+        ViewModel.PairRequested -= OpenPairing;
+        ViewModel.PropertyChanged -= OnViewModelChanged;
+    }
+
+    // A toast asked for a conversation: switch to the Messages tab (the view model selects the thread).
+    private void OnOpenMessages() => NavigateToPage("Messages");
+
+    private void OnOpenDeviceSettings() => OpenSettings(SettingsPage.DevicesSection);
+
+    private void OnViewModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // The phone tabs hide without a phone; do not leave one of them on screen.
+        if (e.PropertyName == nameof(MainPageViewModel.HasActiveDevice) && !ViewModel.HasActiveDevice &&
+            MainNavigationView.SelectedItem is NavigationViewItem { Tag: "Calls" or "Messages" or "Photos" })
+        {
+            OpenSettings(null);
+        }
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)

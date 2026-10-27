@@ -24,7 +24,18 @@ public sealed class UdpDiscoveryService : IDiscoveryService
     private readonly byte[] _tokenKey;
     private readonly Func<int> _controlPort;
     private readonly Func<bool> _privateMode;
+    private readonly Func<bool> _announceFast;
     private readonly byte[] _publicKey;
+
+    /// <summary>Beacon period while someone may be looking: window on screen or pairing open.</summary>
+    public static readonly TimeSpan FastAnnounceInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Beacon period in the background. Paired phones keep their session and mostly reconnect to
+    /// the last address; a beacon every 3 s still finds the PC within a few seconds while waking
+    /// the Wi-Fi radio a third as often. Android drops a PC only after 30 s without one.
+    /// </summary>
+    public static readonly TimeSpan IdleAnnounceInterval = TimeSpan.FromSeconds(3);
     private readonly object _gate = new();
     private readonly Dictionary<string, (PeerDevice Peer, DateTimeOffset Seen)> _peers = new(StringComparer.OrdinalIgnoreCase);
     private UdpClient? _socket;
@@ -38,7 +49,8 @@ public sealed class UdpDiscoveryService : IDiscoveryService
         ReadOnlySpan<byte> tokenKey,
         ReadOnlySpan<byte> publicKey,
         Func<int> controlPort,
-        Func<bool>? privateMode = null)
+        Func<bool>? privateMode = null,
+        Func<bool>? announceFast = null)
     {
         _localDeviceId = localDeviceId;
         _localName = localName;
@@ -46,6 +58,7 @@ public sealed class UdpDiscoveryService : IDiscoveryService
         _publicKey = publicKey.ToArray();
         _controlPort = controlPort;
         _privateMode = privateMode ?? (() => false);
+        _announceFast = announceFast ?? (() => true);
         if (_tokenKey.Length == 0) throw new ArgumentException("Discovery token key is required.", nameof(tokenKey));
         if (_publicKey.Length != 32) throw new ArgumentException("X25519 public key must be 32 bytes.", nameof(publicKey));
     }
@@ -130,7 +143,7 @@ public sealed class UdpDiscoveryService : IDiscoveryService
                 }
                 else VeyroTrace.Warn("UDP discovery is listening but control listener is not running; no announcement sent");
                 RemoveExpired();
-                await Task.Delay(1000, ct).ConfigureAwait(false);
+                await Task.Delay(_announceFast() ? FastAnnounceInterval : IdleAnnounceInterval, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (SocketException) when (ct.IsCancellationRequested) { break; }

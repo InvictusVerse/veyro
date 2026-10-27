@@ -55,7 +55,23 @@ public sealed class WindowsMediaSource : IWindowsMediaSource
         {
             VeyroTrace.Error("Media session manager unavailable", error);
         }
-        _volumeTimer = new Timer(_ => PollVolume(), null, TimeSpan.Zero, VolumePollInterval);
+        // Not polled until a phone connects (SetVolumePolling): each read opens the audio endpoint.
+        _volumeTimer = new Timer(_ => PollVolume(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        if (_volumeInterval is { } interval) _volumeTimer.Change(TimeSpan.Zero, interval);
+    }
+
+    private TimeSpan? _volumeInterval;
+
+    public void SetVolumePolling(TimeSpan? interval)
+    {
+        lock (_gate)
+        {
+            if (_disposed || interval == _volumeInterval) return;
+            bool resumed = _volumeInterval is null && interval is not null;
+            _volumeInterval = interval;
+            if (interval is { } every) _volumeTimer?.Change(resumed ? TimeSpan.Zero : every, every);
+            else _volumeTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
     }
 
     public void Dispose()
