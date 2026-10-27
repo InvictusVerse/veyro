@@ -113,7 +113,9 @@ public class VeyroNotifications(private val context: Context) {
                 progress = progressPercent?.coerceIn(0, 100),
                 // Indeterminate while connecting or hashing: a 0% bar that sits still reads as stuck.
                 indeterminate = progressPercent == null,
-                pills = listOfNotNull(cancelIntent?.let { VeyroNotificationCard.Pill("Cancel", it) }),
+                // Secondary look (grey), not the gradient: Cancel is not the thing to invite.
+                pills = listOfNotNull(cancelIntent?.let { VeyroNotificationCard.Pill("Cancel", it, VeyroNotificationCard.Glyph.CLOSE) }),
+                secondaryOnly = true,
             ),
         )
         return builder.build()
@@ -182,8 +184,8 @@ public class VeyroNotifications(private val context: Context) {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
         contentIntent?.let { builder.setContentIntent(it) }
-        val accept = VeyroNotificationCard.Pill(if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent)
-        val decline = VeyroNotificationCard.Pill("Decline", declineIntent)
+        val accept = VeyroNotificationCard.Pill(if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent, VeyroNotificationCard.Glyph.CHECK)
+        val decline = VeyroNotificationCard.Pill("Decline", declineIntent, VeyroNotificationCard.Glyph.CLOSE)
         VeyroNotificationCard.apply(
             context,
             builder,
@@ -194,10 +196,10 @@ public class VeyroNotifications(private val context: Context) {
                 tone = VeyroNotificationCard.Tone.INCOMING,
                 glyph = VeyroNotificationCard.Glyph.DOWNLOAD,
                 // Collapsed: the short "Accept" when there is a "Just this once" choice to explain.
-                pills = listOf(VeyroNotificationCard.Pill("Accept", acceptIntent), decline),
+                pills = listOf(VeyroNotificationCard.Pill("Accept", acceptIntent, VeyroNotificationCard.Glyph.CHECK), decline),
                 actions = listOfNotNull(
                     accept,
-                    acceptOnceIntent?.let { VeyroNotificationCard.Pill("Just this once", it) },
+                    acceptOnceIntent?.let { VeyroNotificationCard.Pill("Just this once", it, VeyroNotificationCard.Glyph.CHECK) },
                     decline,
                 ),
             ),
@@ -243,8 +245,10 @@ public class VeyroNotifications(private val context: Context) {
                 tone = VeyroNotificationCard.Tone.BRAND,
                 glyph = if (connected) VeyroNotificationCard.Glyph.DESKTOP else VeyroNotificationCard.Glyph.SEARCH,
                 pills = listOfNotNull(
-                    sendIntent?.takeIf { connected }?.let { VeyroNotificationCard.Pill("Send files", it) },
-                    disconnectIntent?.let { VeyroNotificationCard.Pill(if (connected) "Disconnect" else "Stop", it) },
+                    sendIntent?.takeIf { connected }?.let { VeyroNotificationCard.Pill("Send files", it, VeyroNotificationCard.Glyph.UPLOAD) },
+                    disconnectIntent?.let {
+                        VeyroNotificationCard.Pill(if (connected) "Disconnect" else "Stop", it, VeyroNotificationCard.Glyph.DISCONNECT)
+                    },
                 ),
             ),
         )

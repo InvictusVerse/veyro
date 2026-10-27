@@ -195,9 +195,15 @@ internal class AndroidClipNotifier(
 
         // The Veyro card (ADR-044): violet badge with what was copied, the buttons inline when
         // collapsed, and the standard actions (plus "All clips") when expanded or on the lock screen.
+        val primaryIcon = when (smart?.kind) {
+            ClipSmarts.Kind.PHONE -> VeyroNotificationCard.Glyph.CALL
+            ClipSmarts.Kind.EMAIL -> VeyroNotificationCard.Glyph.MAIL
+            ClipSmarts.Kind.CODE -> VeyroNotificationCard.Glyph.KEY
+            else -> VeyroNotificationCard.Glyph.OPEN
+        }
         val pills = listOfNotNull(
-            primary?.let { VeyroNotificationCard.Pill(it.first, it.second) },
-            VeyroNotificationCard.Pill(copyLabel, copy),
+            primary?.let { VeyroNotificationCard.Pill(it.first, it.second, primaryIcon) },
+            VeyroNotificationCard.Pill(copyLabel, copy, VeyroNotificationCard.Glyph.COPY),
         )
         VeyroNotificationCard.apply(
             context,

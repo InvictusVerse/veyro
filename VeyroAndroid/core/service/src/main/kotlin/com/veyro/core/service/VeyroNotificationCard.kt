@@ -43,10 +43,18 @@ public object VeyroNotificationCard {
         CALL(R.drawable.notif_glyph_call),
         IMAGE(R.drawable.notif_glyph_image),
         SEARCH(R.drawable.notif_glyph_search),
+        COPY(R.drawable.notif_glyph_copy),
+        OPEN(R.drawable.notif_glyph_open),
+        CLOSE(R.drawable.notif_glyph_close),
+        FOLDER(R.drawable.notif_glyph_folder),
+        DISCONNECT(R.drawable.notif_glyph_link_off),
     }
 
-    /** A button. The first pill on a card is drawn as the primary (gradient) one. */
-    public data class Pill(val label: String, val intent: PendingIntent)
+    /**
+     * A button. On the collapsed card it is a round [icon] (the first one in the Veyro gradient),
+     * so the text keeps the width; [label] is its accessibility name and its text when expanded.
+     */
+    public data class Pill(val label: String, val intent: PendingIntent, val icon: Glyph = Glyph.OPEN)
 
     public data class Spec(
         val title: String,
@@ -69,13 +77,18 @@ public object VeyroNotificationCard {
         val pills: List<Pill> = emptyList(),
         /** Standard actions for the expanded card, lock screen and watches; [pills] when null. */
         val actions: List<Pill>? = null,
+        /** Draw every button grey (a lone Cancel should not look like the thing to press). */
+        val secondaryOnly: Boolean = false,
     )
 
     /** Applies [spec] to [builder]: views, style, icon, colour and actions. */
     public fun apply(context: Context, builder: Notification.Builder, spec: Spec): Notification.Builder {
         val small = RemoteViews(context.packageName, R.layout.notification_card_small).apply {
             fill(spec, big = false)
-            spec.pills.getOrNull(0)?.let { pill(R.id.card_pill_1, it) }
+            spec.pills.getOrNull(0)?.let {
+                pill(R.id.card_pill_1, it)
+                if (spec.secondaryOnly) setInt(R.id.card_pill_1, "setBackgroundResource", R.drawable.notif_button)
+            }
             spec.pills.getOrNull(1)?.let { pill(R.id.card_pill_2, it) }
             spec.thumbnail?.let {
                 setImageViewBitmap(R.id.card_thumb, it)
@@ -128,8 +141,13 @@ public object VeyroNotificationCard {
     }
 
     private fun RemoteViews.pill(id: Int, pill: Pill) {
-        setTextViewText(id, pill.label)
+        setImageViewResource(id, pill.icon.res)
+        // Dark glyph on both the gradient and the light-grey button: readable on any shade.
+        setInt(id, "setColorFilter", ON_BUTTON)
+        setContentDescription(id, pill.label)
         setOnClickPendingIntent(id, pill.intent)
         setViewVisibility(id, View.VISIBLE)
     }
+
+    private const val ON_BUTTON = 0xFF04070F.toInt()
 }

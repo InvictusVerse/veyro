@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Round secondary button on a collapsed notification card (ADR-044). A solid light fill with a
+     dark glyph, so it reads the same on a light and a dark shade. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33000000">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#FFE4E9F0" />
+        </shape>
+    </item>
+</ripple>

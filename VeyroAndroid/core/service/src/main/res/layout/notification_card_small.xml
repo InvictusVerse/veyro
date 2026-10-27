@@ -89,32 +89,25 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <TextView
+    <!-- Round icon buttons: 36 dp each, so the title and line keep almost the full width. Their
+         label is the content description, read by TalkBack and shown as text when expanded. -->
+    <ImageView
         android:id="@+id/card_pill_1"
-        android:layout_width="wrap_content"
-        android:layout_height="32dp"
-        android:layout_marginStart="10dp"
-        android:background="@drawable/notif_pill_primary"
-        android:gravity="center"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:singleLine="true"
-        android:textColor="@color/veyro_notif_on_accent"
-        android:textSize="13sp"
-        android:textStyle="bold"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/notif_button_primary"
+        android:padding="8dp"
+        android:scaleType="fitCenter"
         android:visibility="gone" />
 
-    <TextView
+    <ImageView
         android:id="@+id/card_pill_2"
-        android:layout_width="wrap_content"
-        android:layout_height="32dp"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
         android:layout_marginStart="6dp"
-        android:background="@drawable/notif_pill"
-        android:gravity="center"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:singleLine="true"
-        android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
-        android:textSize="13sp"
+        android:background="@drawable/notif_button"
+        android:padding="8dp"
+        android:scaleType="fitCenter"
         android:visibility="gone" />
 </LinearLayout>

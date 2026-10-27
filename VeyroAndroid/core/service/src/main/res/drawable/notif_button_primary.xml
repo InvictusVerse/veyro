@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Primary pill on a notification card: the Veyro cyan-to-blue gradient. -->
+<!-- Round primary button on a collapsed notification card (ADR-044): the Veyro gradient. -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#4404070F">
     <item>
-        <shape android:shape="rectangle">
-            <corners android:radius="16dp" />
+        <shape android:shape="oval">
             <gradient
-                android:angle="0"
+                android:angle="315"
                 android:endColor="#FF4F8FFF"
                 android:startColor="#FF00D9FF" />
         </shape>

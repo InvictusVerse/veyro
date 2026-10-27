@@ -123,8 +123,8 @@ public class TransferNotifier(
                 val uri = t.destinationUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
                 val thumb = uri?.takeIf { t.totalFiles == 1 }?.let { thumbnail(it) }
                 val pills = listOfNotNull(
-                    uri?.takeIf { t.totalFiles == 1 }?.let { VeyroNotificationCard.Pill("Open", openFile(it)) },
-                    VeyroNotificationCard.Pill("Show in folder", openFolder(folder)),
+                    uri?.takeIf { t.totalFiles == 1 }?.let { VeyroNotificationCard.Pill("Open", openFile(it), VeyroNotificationCard.Glyph.OPEN) },
+                    VeyroNotificationCard.Pill("Show in folder", openFolder(folder), VeyroNotificationCard.Glyph.FOLDER),
                 )
                 cards.show(
                     VeyroNotifications.ID_RESULT,
