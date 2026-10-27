@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +36,7 @@ public interface CallSource {
     public suspend fun contactName(number: String): String?
 
     /** Up to [limit] call-log entries, newest first. Empty without `READ_CALL_LOG`. */
-    public suspend fun callLog(limit: Int): List<LinkMessage.CallLogEntry>
+    public suspend fun callLog(limit: Int): List<PeerMessage.CallLogEntry>
 }
 
 /** Acts on the phone's current call. Implementations check their own permissions and never throw. */
@@ -144,8 +144,8 @@ public class CallBridge(
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.CallLogRequest -> link.send(callLog(s, message))
-                            is LinkMessage.CallAction -> handleAction(s, message)
+                            is PeerMessage.CallLogRequest -> link.send(callLog(s, message))
+                            is PeerMessage.CallAction -> handleAction(s, message)
                             else -> Unit
                         }
                     }
@@ -225,7 +225,7 @@ public class CallBridge(
         null
     }
 
-    private suspend fun handleAction(s: Session, action: LinkMessage.CallAction) {
+    private suspend fun handleAction(s: Session, action: PeerMessage.CallAction) {
         if (!s.on.value) {
             VeyroLog.i(TAG) { "Ignored callAction: messages and calls are off" }
             return
@@ -259,8 +259,8 @@ public class CallBridge(
         }
     }
 
-    private suspend fun callLog(s: Session, request: LinkMessage.CallLogRequest): LinkMessage.CallLog {
-        if (!s.on.value) return LinkMessage.CallLog(emptyList())
+    private suspend fun callLog(s: Session, request: PeerMessage.CallLogRequest): PeerMessage.CallLog {
+        if (!s.on.value) return PeerMessage.CallLog(emptyList())
         val limit = request.limit.coerceIn(1, MAX_LOG_LIMIT)
         val entries = try {
             source.callLog(limit).take(limit)
@@ -271,9 +271,9 @@ public class CallBridge(
             emptyList()
         }
         VeyroLog.d(TAG) { "callLog: ${entries.size}" }
-        return LinkMessage.CallLog(entries)
+        return PeerMessage.CallLog(entries)
     }
 
-    private fun Call.toMessage(): LinkMessage.CallState =
-        LinkMessage.CallState(callId = id, state = state, direction = direction, number = number, name = name)
+    private fun Call.toMessage(): PeerMessage.CallState =
+        PeerMessage.CallState(callId = id, state = state, direction = direction, number = number, name = name)
 }

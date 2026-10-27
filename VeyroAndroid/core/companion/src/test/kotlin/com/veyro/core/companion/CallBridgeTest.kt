@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,14 +22,14 @@ class CallBridgeTest {
 
     private class FakeLink(caps: Capabilities) : CompanionLink {
         val caps = MutableStateFlow(caps)
-        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 16)
-        val sent = mutableListOf<LinkMessage>()
+        val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 16)
+        val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> get() = caps
-        override val incoming: Flow<LinkMessage> get() = inbound
-        override suspend fun send(message: LinkMessage) {
+        override val incoming: Flow<PeerMessage> get() = inbound
+        override suspend fun send(message: PeerMessage) {
             sent += message
         }
-        val states get() = sent.filterIsInstance<LinkMessage.CallState>()
+        val states get() = sent.filterIsInstance<PeerMessage.CallState>()
     }
 
     private class FakeSource : CallSource {
@@ -39,9 +39,9 @@ class CallBridgeTest {
         override val signals: Flow<CallSignal>
             get() = signalFlow.onStart { collectors++ }.onCompletion { collectors-- }
         override suspend fun contactName(number: String): String? = if (number == "+15550100") "Sam" else null
-        override suspend fun callLog(limit: Int): List<LinkMessage.CallLogEntry> {
+        override suspend fun callLog(limit: Int): List<PeerMessage.CallLogEntry> {
             logLimits += limit
-            return listOf(LinkMessage.CallLogEntry(5, "+15550100", "Sam", 1, 42, "missed"))
+            return listOf(PeerMessage.CallLogEntry(5, "+15550100", "Sam", 1, 42, "missed"))
         }
     }
 
@@ -103,9 +103,9 @@ class CallBridgeTest {
 
         assertEquals(
             listOf(
-                LinkMessage.CallState("call-1", "ringing", "in", "+15550100", "Sam"),
-                LinkMessage.CallState("call-1", "active", "in", "+15550100", "Sam"),
-                LinkMessage.CallState("call-1", "ended", "in", "+15550100", "Sam"),
+                PeerMessage.CallState("call-1", "ringing", "in", "+15550100", "Sam"),
+                PeerMessage.CallState("call-1", "active", "in", "+15550100", "Sam"),
+                PeerMessage.CallState("call-1", "ended", "in", "+15550100", "Sam"),
             ),
             link.states,
         )
@@ -120,8 +120,8 @@ class CallBridgeTest {
         signal(rig, TelephonyCallState.RINGING, "+15550100")
         assertEquals(
             listOf(
-                LinkMessage.CallState("call-1", "ringing", "in"),
-                LinkMessage.CallState("call-1", "ringing", "in", "+15550100", "Sam"),
+                PeerMessage.CallState("call-1", "ringing", "in"),
+                PeerMessage.CallState("call-1", "ringing", "in", "+15550100", "Sam"),
             ),
             link.states,
         )
@@ -140,10 +140,10 @@ class CallBridgeTest {
 
         assertEquals(
             listOf(
-                LinkMessage.CallState("call-1", "active", "out"),
-                LinkMessage.CallState("call-1", "ended", "out"),
-                LinkMessage.CallState("call-2", "ringing", "in", "+15550199"),
-                LinkMessage.CallState("call-2", "ended", "in", "+15550199"),
+                PeerMessage.CallState("call-1", "active", "out"),
+                PeerMessage.CallState("call-1", "ended", "out"),
+                PeerMessage.CallState("call-2", "ringing", "in", "+15550199"),
+                PeerMessage.CallState("call-2", "ended", "in", "+15550199"),
             ),
             link.states,
         )
@@ -153,11 +153,11 @@ class CallBridgeTest {
     fun `a call dialed from the PC carries its number`() = runTest {
         val rig = rig()
         val link = connect(rig)
-        link.inbound.emit(LinkMessage.CallAction("dial", number = "+1 555-0100"))
+        link.inbound.emit(PeerMessage.CallAction("dial", number = "+1 555-0100"))
         runCurrent()
         assertEquals(listOf("dial:+15550100"), rig.controller.actions)
         signal(rig, TelephonyCallState.OFFHOOK)
-        assertEquals(LinkMessage.CallState("call-1", "active", "out", "+15550100", "Sam"), link.states.single())
+        assertEquals(PeerMessage.CallState("call-1", "active", "out", "+15550100", "Sam"), link.states.single())
     }
 
     @Test
@@ -165,7 +165,7 @@ class CallBridgeTest {
         val rig = rig()
         val link = connect(rig)
         for (n in listOf(null, "", "12", "555-CALL", "1".repeat(33), "++1555")) {
-            link.inbound.emit(LinkMessage.CallAction("dial", number = n))
+            link.inbound.emit(PeerMessage.CallAction("dial", number = n))
         }
         runCurrent()
         assertTrue(rig.controller.actions.isEmpty())
@@ -175,24 +175,24 @@ class CallBridgeTest {
     fun `actions for another call id are ignored`() = runTest {
         val rig = rig()
         val link = connect(rig)
-        link.inbound.emit(LinkMessage.CallAction("decline", callId = "call-1"))
+        link.inbound.emit(PeerMessage.CallAction("decline", callId = "call-1"))
         runCurrent()
         assertTrue("no current call", rig.controller.actions.isEmpty())
 
         signal(rig, TelephonyCallState.RINGING, "+15550100")
-        link.inbound.emit(LinkMessage.CallAction("decline", callId = "stale"))
-        link.inbound.emit(LinkMessage.CallAction("answer"))
-        link.inbound.emit(LinkMessage.CallAction("explode", callId = "call-1"))
+        link.inbound.emit(PeerMessage.CallAction("decline", callId = "stale"))
+        link.inbound.emit(PeerMessage.CallAction("answer"))
+        link.inbound.emit(PeerMessage.CallAction("explode", callId = "call-1"))
         runCurrent()
         assertTrue(rig.controller.actions.isEmpty())
 
-        link.inbound.emit(LinkMessage.CallAction("silence", callId = "call-1"))
-        link.inbound.emit(LinkMessage.CallAction("answer", callId = "call-1"))
+        link.inbound.emit(PeerMessage.CallAction("silence", callId = "call-1"))
+        link.inbound.emit(PeerMessage.CallAction("answer", callId = "call-1"))
         runCurrent()
         signal(rig, TelephonyCallState.OFFHOOK)
         // Answer and silence only apply while ringing; end works on an active call.
-        link.inbound.emit(LinkMessage.CallAction("answer", callId = "call-1"))
-        link.inbound.emit(LinkMessage.CallAction("end", callId = "call-1"))
+        link.inbound.emit(PeerMessage.CallAction("answer", callId = "call-1"))
+        link.inbound.emit(PeerMessage.CallAction("end", callId = "call-1"))
         runCurrent()
         assertEquals(listOf("silence", "answer", "end"), rig.controller.actions)
     }
@@ -206,11 +206,11 @@ class CallBridgeTest {
         runCurrent()
         assertEquals("setting off: no listener", 0, rig.source.collectors)
 
-        link.inbound.emit(LinkMessage.CallAction("dial", number = "+15550100"))
-        link.inbound.emit(LinkMessage.CallLogRequest())
+        link.inbound.emit(PeerMessage.CallAction("dial", number = "+15550100"))
+        link.inbound.emit(PeerMessage.CallLogRequest())
         runCurrent()
         assertTrue(rig.controller.actions.isEmpty())
-        assertEquals(listOf(LinkMessage.CallLog(emptyList())), link.sent)
+        assertEquals(listOf(PeerMessage.CallLog(emptyList())), link.sent)
         assertTrue(rig.source.logLimits.isEmpty())
 
         rig.enabled.value = true
@@ -231,10 +231,10 @@ class CallBridgeTest {
     fun `call log limit is clamped`() = runTest {
         val rig = rig()
         val link = connect(rig)
-        link.inbound.emit(LinkMessage.CallLogRequest(limit = 0))
-        link.inbound.emit(LinkMessage.CallLogRequest(limit = 10_000))
+        link.inbound.emit(PeerMessage.CallLogRequest(limit = 0))
+        link.inbound.emit(PeerMessage.CallLogRequest(limit = 10_000))
         runCurrent()
         assertEquals(listOf(1, 500), rig.source.logLimits)
-        assertEquals(2, link.sent.filterIsInstance<LinkMessage.CallLog>().size)
+        assertEquals(2, link.sent.filterIsInstance<PeerMessage.CallLog>().size)
     }
 }

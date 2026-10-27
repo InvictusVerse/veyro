@@ -17,7 +17,7 @@ import java.io.File
  */
 class ClipboardVectorTest {
 
-    private val json = LinkJson.codec
+    private val json = PeerMessageJson.codec
 
     private fun vectors(): List<String> {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -36,22 +36,22 @@ class ClipboardVectorTest {
         val all = vectors()
         assertEquals(3, all.size)
         for (text in all) {
-            val decoded = json.decodeFromString<LinkMessage>(text)
-            assertTrue(decoded is LinkMessage.Clip)
-            val reEncoded = json.encodeToString<LinkMessage>(decoded)
+            val decoded = json.decodeFromString<PeerMessage>(text)
+            assertTrue(decoded is PeerMessage.Clip)
+            val reEncoded = json.encodeToString<PeerMessage>(decoded)
             assertEquals(json.parseToJsonElement(text) as JsonObject, json.parseToJsonElement(reEncoded) as JsonObject)
         }
     }
 
     @Test
     fun `vectors carry the expected values`() {
-        val clips = vectors().map { json.decodeFromString<LinkMessage>(it) as LinkMessage.Clip }
+        val clips = vectors().map { json.decodeFromString<PeerMessage>(it) as PeerMessage.Clip }
         assertEquals(
-            LinkMessage.Clip("c-1", LinkMessage.Clip.KIND_TEXT, text = "https://youtu.be/dQw4w9WgXcQ", apply = true, ts = 1793011200000),
+            PeerMessage.Clip("c-1", PeerMessage.Clip.KIND_TEXT, text = "https://youtu.be/dQw4w9WgXcQ", apply = true, ts = 1793011200000),
             clips[0],
         )
         assertEquals(false, clips[1].apply)
-        assertEquals(LinkMessage.Clip.KIND_IMAGE, clips[2].kind)
+        assertEquals(PeerMessage.Clip.KIND_IMAGE, clips[2].kind)
         assertEquals("iVBORw0KGgo=", clips[2].image)
         assertEquals(null, clips[2].text)
     }

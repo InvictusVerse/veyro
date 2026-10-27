@@ -13,7 +13,7 @@ import com.veyro.VeyroApplication
 import com.veyro.core.model.ActiveTransfer
 import com.veyro.core.model.TransferDirection
 import com.veyro.core.model.TransferStage
-import com.veyro.core.service.VeyroNotificationCard
+import com.veyro.core.service.NotificationCard
 import com.veyro.core.service.VeyroNotifications
 import com.veyro.ui.format.ReceivedFolders
 import com.veyro.ui.format.formatBytes
@@ -125,8 +125,8 @@ public class TransferNotifier(
                 val uri = t.destinationUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
                 val thumb = uri?.takeIf { t.totalFiles == 1 }?.let { thumbnail(it) }
                 val pills = listOfNotNull(
-                    uri?.takeIf { t.totalFiles == 1 }?.let { VeyroNotificationCard.Pill("Open", openFile(it), VeyroNotificationCard.Glyph.OPEN) },
-                    VeyroNotificationCard.Pill("Show in folder", openFolder(folder), VeyroNotificationCard.Glyph.FOLDER),
+                    uri?.takeIf { t.totalFiles == 1 }?.let { NotificationCard.Pill("Open", openFile(it), NotificationCard.Glyph.OPEN) },
+                    NotificationCard.Pill("Show in folder", openFolder(folder), NotificationCard.Glyph.FOLDER),
                 )
                 cards.show(
                     VeyroNotifications.ID_RESULT,
@@ -148,7 +148,7 @@ public class TransferNotifier(
                     title = "Could not receive $what",
                     text = t.errorMessage ?: "The connection to $name was lost.",
                     success = false,
-                    pills = listOf(VeyroNotificationCard.Pill("Open Veyro", openApp())),
+                    pills = listOf(NotificationCard.Pill("Open Veyro", openApp())),
                     contentIntent = openApp(),
                     autoClearMs = autoClearMs(),
                 ),

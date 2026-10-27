@@ -586,7 +586,7 @@ public class TcpAndWifiDirectTransferTest {
         val runner = TransferRunner(dispatchers)
 
         // Simulate a TransferDecision with P2P tcpHost and LAN fallbackHost
-        val decision = LinkMessage.TransferDecision(
+        val decision = PeerMessage.TransferDecision(
             transferId = "test",
             accept = true,
             route = TransferRoute.WIFI_DIRECT.name,

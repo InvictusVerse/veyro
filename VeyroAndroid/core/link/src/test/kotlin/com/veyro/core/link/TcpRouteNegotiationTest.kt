@@ -107,7 +107,7 @@ public class TcpRouteNegotiationTest {
 
     @Test
     fun `TransferDecision serialization preserves route, hosts, port, and auth token`() {
-        val original = LinkMessage.TransferDecision(
+        val original = PeerMessage.TransferDecision(
             transferId = "transfer-123",
             accept = true,
             reason = null,
@@ -119,8 +119,8 @@ public class TcpRouteNegotiationTest {
             authToken = "auth-token-xyz-789",
         )
 
-        val json = LinkJson.codec.encodeToString(LinkMessage.serializer(), original)
-        val decoded = LinkJson.codec.decodeFromString(LinkMessage.serializer(), json) as LinkMessage.TransferDecision
+        val json = PeerMessageJson.codec.encodeToString(PeerMessage.serializer(), original)
+        val decoded = PeerMessageJson.codec.decodeFromString(PeerMessage.serializer(), json) as PeerMessage.TransferDecision
 
         assertEquals("transfer-123", decoded.transferId)
         assertTrue(decoded.accept)
@@ -140,7 +140,7 @@ public class TcpRouteNegotiationTest {
         val (senderSession, _) = createConnectedPair(initiatorRemoteHost = null)
 
         // Wildcard
-        val wildcardDecision = LinkMessage.TransferDecision(
+        val wildcardDecision = PeerMessage.TransferDecision(
             transferId = "t1",
             accept = true,
             route = "LAN_TCP",
@@ -152,7 +152,7 @@ public class TcpRouteNegotiationTest {
         assertTrue(wildcardRes is TransferRunner.TargetHostResolution.Invalid)
 
         // Malformed IP
-        val malformedDecision = LinkMessage.TransferDecision(
+        val malformedDecision = PeerMessage.TransferDecision(
             transferId = "t1",
             accept = true,
             route = "LAN_TCP",
@@ -164,7 +164,7 @@ public class TcpRouteNegotiationTest {
         assertTrue(malformedRes is TransferRunner.TargetHostResolution.Invalid)
 
         // Blank IP
-        val blankDecision = LinkMessage.TransferDecision(
+        val blankDecision = PeerMessage.TransferDecision(
             transferId = "t1",
             accept = true,
             route = "LAN_TCP",
@@ -292,9 +292,9 @@ public class TcpRouteNegotiationTest {
         // Launch receiver that responds with accept=true but tcpPort=null
         val receiveJob = launch(dispatchers.io) {
             val offerEnvelope = receiverSession.receiveOffer()
-            val offer = offerEnvelope.payload as LinkMessage.TransferOffer
+            val offer = offerEnvelope.payload as PeerMessage.TransferOffer
             receiverSession.send(
-                LinkMessage.TransferDecision(
+                PeerMessage.TransferDecision(
                     transferId = offer.transferId,
                     accept = true,
                     route = "LAN_TCP",
@@ -333,9 +333,9 @@ public class TcpRouteNegotiationTest {
 
         val receiveJob = launch(dispatchers.io) {
             val offerEnvelope = receiverSession.receiveOffer()
-            val offer = offerEnvelope.payload as LinkMessage.TransferOffer
+            val offer = offerEnvelope.payload as PeerMessage.TransferOffer
             receiverSession.send(
-                LinkMessage.TransferDecision(
+                PeerMessage.TransferDecision(
                     transferId = offer.transferId,
                     accept = true,
                     route = "LAN_TCP",

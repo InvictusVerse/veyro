@@ -27,7 +27,7 @@ class PresenceCodecTest {
         caps: Capabilities = Capabilities.of(Capability.FILE_TRANSFER, Capability.RESUME),
         key: ByteArray? = publicKey,
     ) = PresenceRecord(
-        version = Vlp.VERSION,
+        version = ProtocolConstants.VERSION,
         deviceId = deviceId,
         platform = Platform.WINDOWS,
         capabilities = caps,
@@ -305,7 +305,7 @@ class BeaconCodecTest {
     private val deviceId = DeviceId.fromPublicKey(ByteArray(32) { (it + 3).toByte() })
 
     private fun record() = PresenceRecord(
-        version = Vlp.VERSION,
+        version = ProtocolConstants.VERSION,
         deviceId = deviceId,
         platform = Platform.ANDROID,
         capabilities = Capabilities.ANDROID_CURRENT,
@@ -347,7 +347,7 @@ class BeaconCodecTest {
     fun `the header layout is exactly as specified`() {
         val frame = BeaconCodec.encode(BeaconCodec.Type.ANNOUNCE, record())
         assertEquals("VEYR", String(frame, 0, 4, Charsets.US_ASCII))
-        assertEquals(Vlp.VERSION, frame[4].toInt())
+        assertEquals(ProtocolConstants.VERSION, frame[4].toInt())
         assertEquals(0x02, frame[5].toInt())
         val declared = ((frame[6].toInt() and 0xFF) shl 8) or (frame[7].toInt() and 0xFF)
         assertEquals(frame.size - BeaconCodec.HEADER_BYTES, declared)
@@ -429,8 +429,8 @@ class BeaconCodecTest {
     @Test
     fun `an announce with no payload is rejected`() {
         val frame = ByteArray(BeaconCodec.HEADER_BYTES)
-        com.veyro.core.protocol.Vlp.UDP_MAGIC.copyInto(frame, 0)
-        frame[4] = Vlp.VERSION.toByte()
+        com.veyro.core.protocol.ProtocolConstants.UDP_MAGIC.copyInto(frame, 0)
+        frame[4] = ProtocolConstants.VERSION.toByte()
         frame[5] = BeaconCodec.Type.ANNOUNCE.wire
         val result = BeaconCodec.decode(frame)
         assertEquals(BeaconCodec.Reason.BAD_PAYLOAD, (result as BeaconCodec.Result.Invalid).reason)

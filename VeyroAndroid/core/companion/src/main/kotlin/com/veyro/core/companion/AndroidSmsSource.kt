@@ -18,7 +18,7 @@ import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -109,7 +109,7 @@ public class AndroidSmsSource(
     }
 
     @SuppressLint("MissingPermission") // READ_PHONE_STATE checked just below.
-    override suspend fun sims(): List<LinkMessage.SimInfo> = withContext(dispatchers.io) {
+    override suspend fun sims(): List<PeerMessage.SimInfo> = withContext(dispatchers.io) {
         if (!granted(Manifest.permission.READ_PHONE_STATE)) return@withContext emptyList()
         if (!appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)) {
             return@withContext emptyList()
@@ -119,7 +119,7 @@ public class AndroidSmsSource(
         try {
             manager.activeSubscriptionInfoList.orEmpty().map { info ->
                 val slot = info.simSlotIndex.takeIf { it >= 0 }
-                LinkMessage.SimInfo(
+                PeerMessage.SimInfo(
                     id = info.subscriptionId,
                     label = info.displayName?.toString()?.takeIf { it.isNotBlank() }
                         ?: "SIM ${(slot ?: 0) + 1}",
@@ -131,7 +131,7 @@ public class AndroidSmsSource(
         }
     }
 
-    override suspend fun threads(limit: Int): List<LinkMessage.SmsThread> = read(emptyList()) {
+    override suspend fun threads(limit: Int): List<PeerMessage.SmsThread> = read(emptyList()) {
         data class Acc(val newestId: Long, val ts: Long, val addresses: LinkedHashSet<String>)
 
         // Pass 1, light columns only: newest message and addresses per thread, newest thread first.
@@ -163,7 +163,7 @@ public class AndroidSmsSource(
         acc.map { (threadId, a) -> buildThread(threadId, a.addresses.toList(), snippets[a.newestId], a.ts, unread[threadId] ?: 0) }
     }
 
-    override suspend fun thread(threadId: Long): LinkMessage.SmsThread? = read(null) {
+    override suspend fun thread(threadId: Long): PeerMessage.SmsThread? = read(null) {
         var newest: Pair<String?, Long>? = null
         val addresses = LinkedHashSet<String>()
         query(arrayOf(ADDRESS, BODY, DATE), "$THREAD = ? AND $SERVED_TYPES", arrayOf(threadId.toString()), "$DATE DESC, $ID DESC")
@@ -178,7 +178,7 @@ public class AndroidSmsSource(
         buildThread(threadId, addresses.toList(), snippet, ts, unreadCounts(threadId)[threadId] ?: 0)
     }
 
-    override suspend fun messages(threadId: Long, beforeTs: Long?, limit: Int): List<LinkMessage.SmsMessage> =
+    override suspend fun messages(threadId: Long, beforeTs: Long?, limit: Int): List<PeerMessage.SmsMessage> =
         read(emptyList()) {
             val selection = buildString {
                 append("$THREAD = ? AND $SERVED_TYPES")
@@ -194,7 +194,7 @@ public class AndroidSmsSource(
         query(arrayOf(ID), null, null, "$ID DESC")?.use { c -> if (c.moveToFirst()) c.getLong(0) else 0L } ?: 0L
     }
 
-    override suspend fun messagesAfter(id: Long): List<LinkMessage.SmsMessage> = read(emptyList()) {
+    override suspend fun messagesAfter(id: Long): List<PeerMessage.SmsMessage> = read(emptyList()) {
         query(null, "$ID > ? AND $SERVED_TYPES", arrayOf(id.toString()), "$ID ASC")
             ?.use { c -> readMessages(c, MAX_NEW_PER_PASS) }
             .orEmpty()
@@ -206,9 +206,9 @@ public class AndroidSmsSource(
         snippet: String?,
         ts: Long,
         unread: Int,
-    ): LinkMessage.SmsThread {
+    ): PeerMessage.SmsThread {
         val contactNames = addresses.map { names.nameFor(it) }
-        return LinkMessage.SmsThread(
+        return PeerMessage.SmsThread(
             threadId = threadId,
             addresses = addresses,
             names = contactNames.takeIf { list -> list.any { it != null } },
@@ -232,7 +232,7 @@ public class AndroidSmsSource(
         return counts
     }
 
-    private fun readMessages(c: Cursor, max: Int): List<LinkMessage.SmsMessage> {
+    private fun readMessages(c: Cursor, max: Int): List<PeerMessage.SmsMessage> {
         val iId = c.getColumnIndex(ID)
         val iThread = c.getColumnIndex(THREAD)
         val iAddress = c.getColumnIndex(ADDRESS)
@@ -243,7 +243,7 @@ public class AndroidSmsSource(
         val iSub = c.getColumnIndex(SUB_ID)
         if (iId < 0 || iThread < 0 || iType < 0) return emptyList()
 
-        val out = ArrayList<LinkMessage.SmsMessage>()
+        val out = ArrayList<PeerMessage.SmsMessage>()
         while (out.size < max && c.moveToNext()) {
             val (outgoing, status) = when (c.getInt(iType)) {
                 Telephony.Sms.MESSAGE_TYPE_INBOX -> false to null
@@ -252,7 +252,7 @@ public class AndroidSmsSource(
                 Telephony.Sms.MESSAGE_TYPE_FAILED -> true to "failed"
                 else -> continue
             }
-            out += LinkMessage.SmsMessage(
+            out += PeerMessage.SmsMessage(
                 id = c.getLong(iId),
                 threadId = c.getLong(iThread),
                 address = if (iAddress >= 0) c.getString(iAddress).orEmpty() else "",

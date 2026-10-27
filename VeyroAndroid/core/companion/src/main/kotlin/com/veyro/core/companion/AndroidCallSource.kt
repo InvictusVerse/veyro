@@ -19,7 +19,7 @@ import android.telephony.TelephonyManager
 import androidx.annotation.RequiresApi
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -100,7 +100,7 @@ public class AndroidCallSource(
         withContext(dispatchers.io) { names.nameFor(number) }
 
     @SuppressLint("MissingPermission") // READ_CALL_LOG checked just below.
-    override suspend fun callLog(limit: Int): List<LinkMessage.CallLogEntry> = withContext(dispatchers.io) {
+    override suspend fun callLog(limit: Int): List<PeerMessage.CallLogEntry> = withContext(dispatchers.io) {
         if (!appContext.granted(Manifest.permission.READ_CALL_LOG)) return@withContext emptyList()
         val projection = arrayOf(
             CallLog.Calls._ID,
@@ -110,7 +110,7 @@ public class AndroidCallSource(
             CallLog.Calls.DURATION,
             CallLog.Calls.TYPE,
         )
-        val entries = ArrayList<LinkMessage.CallLogEntry>()
+        val entries = ArrayList<PeerMessage.CallLogEntry>()
         try {
             appContext.contentResolver.query(
                 CallLog.Calls.CONTENT_URI,
@@ -129,7 +129,7 @@ public class AndroidCallSource(
                         else -> continue // Voicemail and anything newer: not a call the PC can show.
                     }
                     val number = c.getString(1).orEmpty()
-                    entries += LinkMessage.CallLogEntry(
+                    entries += PeerMessage.CallLogEntry(
                         id = c.getLong(0),
                         number = number,
                         name = c.getString(2)?.takeIf { it.isNotBlank() } ?: names.nameFor(number),

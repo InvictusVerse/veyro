@@ -12,7 +12,7 @@ import com.veyro.core.model.Endpoint
 import com.veyro.core.model.TrustState
 import com.veyro.core.protocol.PresenceCodec
 import com.veyro.core.protocol.PresenceRecord
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
@@ -131,7 +131,7 @@ public class NsdMdnsAdvertiser(
         val info = NsdServiceInfo().apply {
             // Opaque instance name: the display name must not leak to passive observers.
             serviceName = "veyro-${deviceId.take(8)}"
-            serviceType = Vlp.MDNS_SERVICE_TYPE
+            serviceType = ProtocolConstants.MDNS_SERVICE_TYPE
             this.port = port
 
             if (record != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -310,7 +310,7 @@ public class NsdMdnsBrowser(
         withContext(dispatchers.io) {
             runCatching {
                 manager.discoverServices(
-                    Vlp.MDNS_SERVICE_TYPE,
+                    ProtocolConstants.MDNS_SERVICE_TYPE,
                     NsdManager.PROTOCOL_DNS_SD,
                     listener,
                 )

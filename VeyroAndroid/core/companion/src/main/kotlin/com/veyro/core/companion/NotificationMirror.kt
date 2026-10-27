@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -87,7 +87,7 @@ public class NotificationMirror(
 
                 val active = source.activeNotifications()
                 for (notification in active) {
-                    link.send(notification.copy(kind = LinkMessage.Notification.KIND_ACTIVE))
+                    link.send(notification.copy(kind = PeerMessage.Notification.KIND_ACTIVE))
                 }
                 VeyroLog.i(TAG) { "Mirroring started; sent ${active.size} active notification(s)" }
 
@@ -104,11 +104,11 @@ public class NotificationMirror(
         }
     }
 
-    private suspend fun handleRequest(message: LinkMessage) {
+    private suspend fun handleRequest(message: PeerMessage) {
         val key = when (message) {
-            is LinkMessage.NotificationActionRequest -> message.key
-            is LinkMessage.NotificationReplyRequest -> message.key
-            is LinkMessage.NotificationDismissRequest -> message.key
+            is PeerMessage.NotificationActionRequest -> message.key
+            is PeerMessage.NotificationReplyRequest -> message.key
+            is PeerMessage.NotificationDismissRequest -> message.key
             else -> return
         }
         // Re-resolved against live state every time: the PC can only name what is showing now.
@@ -119,15 +119,15 @@ public class NotificationMirror(
         }
         try {
             when (message) {
-                is LinkMessage.NotificationActionRequest -> executor.invokeAction(key, message.index)
-                is LinkMessage.NotificationReplyRequest -> {
+                is PeerMessage.NotificationActionRequest -> executor.invokeAction(key, message.index)
+                is PeerMessage.NotificationReplyRequest -> {
                     if (message.text.isEmpty() || message.text.length > MAX_REPLY_CHARS) {
                         VeyroLog.w(TAG) { "Ignored reply of ${message.text.length} chars" }
                         return
                     }
                     executor.reply(key, message.text)
                 }
-                is LinkMessage.NotificationDismissRequest -> executor.dismiss(key)
+                is PeerMessage.NotificationDismissRequest -> executor.dismiss(key)
                 else -> Unit
             }
         } catch (c: CancellationException) {
@@ -137,11 +137,11 @@ public class NotificationMirror(
         }
     }
 
-    private fun NotificationEvent.toMessage(): LinkMessage.Notification = when (this) {
-        is NotificationEvent.Posted -> notification.copy(kind = LinkMessage.Notification.KIND_POSTED)
-        is NotificationEvent.Removed -> LinkMessage.Notification(
+    private fun NotificationEvent.toMessage(): PeerMessage.Notification = when (this) {
+        is NotificationEvent.Posted -> notification.copy(kind = PeerMessage.Notification.KIND_POSTED)
+        is NotificationEvent.Removed -> PeerMessage.Notification(
             key = key,
-            kind = LinkMessage.Notification.KIND_REMOVED,
+            kind = PeerMessage.Notification.KIND_REMOVED,
         )
     }
 }

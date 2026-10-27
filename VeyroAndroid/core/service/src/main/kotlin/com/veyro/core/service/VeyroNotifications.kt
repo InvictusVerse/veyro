@@ -102,20 +102,20 @@ public class VeyroNotifications(private val context: Context) {
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setShowWhen(false)
         contentIntent?.let { builder.setContentIntent(it) }
-        VeyroNotificationCard.apply(
+        NotificationCard.apply(
             context,
             builder,
-            VeyroNotificationCard.Spec(
+            NotificationCard.Spec(
                 title = title,
                 text = text,
-                tone = if (incoming) VeyroNotificationCard.Tone.INCOMING else VeyroNotificationCard.Tone.OUTGOING,
-                glyph = if (incoming) VeyroNotificationCard.Glyph.DOWNLOAD else VeyroNotificationCard.Glyph.UPLOAD,
+                tone = if (incoming) NotificationCard.Tone.INCOMING else NotificationCard.Tone.OUTGOING,
+                glyph = if (incoming) NotificationCard.Glyph.DOWNLOAD else NotificationCard.Glyph.UPLOAD,
                 meta = meta,
                 progress = progressPercent?.coerceIn(0, 100),
                 // Indeterminate while connecting or hashing: a 0% bar that sits still reads as stuck.
                 indeterminate = progressPercent == null,
                 // Secondary look (grey), not the gradient: Cancel is not the thing to invite.
-                pills = listOfNotNull(cancelIntent?.let { VeyroNotificationCard.Pill("Cancel", it, VeyroNotificationCard.Glyph.CLOSE) }),
+                pills = listOfNotNull(cancelIntent?.let { NotificationCard.Pill("Cancel", it, NotificationCard.Glyph.CLOSE) }),
                 secondaryOnly = true,
             ),
         )
@@ -129,7 +129,7 @@ public class VeyroNotifications(private val context: Context) {
         success: Boolean,
         meta: String? = null,
         thumbnail: android.graphics.Bitmap? = null,
-        pills: List<VeyroNotificationCard.Pill> = emptyList(),
+        pills: List<NotificationCard.Pill> = emptyList(),
         contentIntent: PendingIntent? = null,
         /** Settings > "Clear notifications automatically": null keeps the card until dismissed. */
         autoClearMs: Long? = AUTO_CLEAR_MS,
@@ -139,14 +139,14 @@ public class VeyroNotifications(private val context: Context) {
             .setCategory(if (success) Notification.CATEGORY_STATUS else Notification.CATEGORY_ERROR)
         contentIntent?.let { builder.setContentIntent(it) }
         autoClearMs?.let { builder.setTimeoutAfter(it) }
-        VeyroNotificationCard.apply(
+        NotificationCard.apply(
             context,
             builder,
-            VeyroNotificationCard.Spec(
+            NotificationCard.Spec(
                 title = title,
                 text = text,
-                tone = if (success) VeyroNotificationCard.Tone.SUCCESS else VeyroNotificationCard.Tone.ERROR,
-                glyph = if (success) VeyroNotificationCard.Glyph.CHECK else VeyroNotificationCard.Glyph.ERROR,
+                tone = if (success) NotificationCard.Tone.SUCCESS else NotificationCard.Tone.ERROR,
+                glyph = if (success) NotificationCard.Glyph.CHECK else NotificationCard.Glyph.ERROR,
                 meta = meta,
                 thumbnail = thumbnail,
                 picture = thumbnail,
@@ -186,22 +186,22 @@ public class VeyroNotifications(private val context: Context) {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
         contentIntent?.let { builder.setContentIntent(it) }
-        val accept = VeyroNotificationCard.Pill(if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent, VeyroNotificationCard.Glyph.CHECK)
-        val decline = VeyroNotificationCard.Pill("Decline", declineIntent, VeyroNotificationCard.Glyph.CLOSE)
-        VeyroNotificationCard.apply(
+        val accept = NotificationCard.Pill(if (acceptOnceIntent != null) "Always accept" else "Accept", acceptIntent, NotificationCard.Glyph.CHECK)
+        val decline = NotificationCard.Pill("Decline", declineIntent, NotificationCard.Glyph.CLOSE)
+        NotificationCard.apply(
             context,
             builder,
-            VeyroNotificationCard.Spec(
+            NotificationCard.Spec(
                 title = "$peerName wants to send you $summary",
                 text = totalBytesLabel.substringBefore(". ").ifBlank { totalBytesLabel },
                 bigText = totalBytesLabel,
-                tone = VeyroNotificationCard.Tone.INCOMING,
-                glyph = VeyroNotificationCard.Glyph.DOWNLOAD,
+                tone = NotificationCard.Tone.INCOMING,
+                glyph = NotificationCard.Glyph.DOWNLOAD,
                 // Collapsed: the short "Accept" when there is a "Just this once" choice to explain.
-                pills = listOf(VeyroNotificationCard.Pill("Accept", acceptIntent, VeyroNotificationCard.Glyph.CHECK), decline),
+                pills = listOf(NotificationCard.Pill("Accept", acceptIntent, NotificationCard.Glyph.CHECK), decline),
                 actions = listOfNotNull(
                     accept,
-                    acceptOnceIntent?.let { VeyroNotificationCard.Pill("Just this once", it, VeyroNotificationCard.Glyph.CHECK) },
+                    acceptOnceIntent?.let { NotificationCard.Pill("Just this once", it, NotificationCard.Glyph.CHECK) },
                     decline,
                 ),
             ),
@@ -237,19 +237,19 @@ public class VeyroNotifications(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
-        VeyroNotificationCard.apply(
+        NotificationCard.apply(
             context,
             builder,
-            VeyroNotificationCard.Spec(
+            NotificationCard.Spec(
                 title = title,
                 text = text,
                 // Connected: the brand badge with the PC. Looking: the same badge, a search glyph.
-                tone = VeyroNotificationCard.Tone.BRAND,
-                glyph = if (connected) VeyroNotificationCard.Glyph.DESKTOP else VeyroNotificationCard.Glyph.SEARCH,
+                tone = NotificationCard.Tone.BRAND,
+                glyph = if (connected) NotificationCard.Glyph.DESKTOP else NotificationCard.Glyph.SEARCH,
                 pills = listOfNotNull(
-                    sendIntent?.takeIf { connected }?.let { VeyroNotificationCard.Pill("Send files", it, VeyroNotificationCard.Glyph.UPLOAD) },
+                    sendIntent?.takeIf { connected }?.let { NotificationCard.Pill("Send files", it, NotificationCard.Glyph.UPLOAD) },
                     disconnectIntent?.let {
-                        VeyroNotificationCard.Pill(if (connected) "Disconnect" else "Stop", it, VeyroNotificationCard.Glyph.DISCONNECT)
+                        NotificationCard.Pill(if (connected) "Disconnect" else "Stop", it, NotificationCard.Glyph.DISCONNECT)
                     },
                 ),
             ),

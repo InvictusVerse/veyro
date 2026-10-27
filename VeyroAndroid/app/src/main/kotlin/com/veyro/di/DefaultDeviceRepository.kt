@@ -6,7 +6,7 @@ import com.veyro.core.discovery.DiscoveryManager
 import com.veyro.core.discovery.DiscoveryReason
 import com.veyro.core.discovery.DiscoveryRequest
 import com.veyro.core.model.PeerDevice
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -44,7 +44,7 @@ internal class DefaultDeviceRepository(
                 reason = if (forPairing) DiscoveryReason.PAIRING else DiscoveryReason.FOREGROUND,
                 // Only the pairing window is capped. An unbounded pairing window would leave the
                 // device accepting unpaired handshakes indefinitely (04-PROTOCOL.md section 4.6).
-                timeoutMillis = if (forPairing) Vlp.PAIRING_WINDOW_MILLIS else null,
+                timeoutMillis = if (forPairing) ProtocolConstants.PAIRING_WINDOW_MILLIS else null,
                 // Always true. See the class note: hiding unpaired peers made pairing impossible.
                 includeUnpaired = true,
             ),

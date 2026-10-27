@@ -192,7 +192,7 @@ public object PresenceCodec {
 
         val version = map[PresenceRecord.KEY_VERSION]?.toIntOrNull()
             ?: return Result.Invalid(Reason.MISSING_REQUIRED, PresenceRecord.KEY_VERSION)
-        if (version != Vlp.VERSION) {
+        if (version != ProtocolConstants.VERSION) {
             // Refuse rather than guess (REQ-S08). Note this is not an error to show the user for
             // every stray packet - it just means "not a peer we can talk to".
             return Result.Invalid(Reason.BAD_VERSION, "version $version")
@@ -226,7 +226,7 @@ public object PresenceCodec {
 
         val name = map[PresenceRecord.KEY_NAME]
         if (name != null) {
-            if (name.toByteArray(Charsets.UTF_8).size > Vlp.MAX_DISPLAY_NAME_BYTES) {
+            if (name.toByteArray(Charsets.UTF_8).size > ProtocolConstants.MAX_DISPLAY_NAME_BYTES) {
                 return Result.Invalid(Reason.NAME_TOO_LONG, "${name.length} chars")
             }
             // Control characters in a name that gets rendered in a list is a UI-spoofing vector:

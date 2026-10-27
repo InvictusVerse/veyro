@@ -1,7 +1,7 @@
 // Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/main/MainScreen.kt, GPL-3.0.
 // Modified for Veyro.
 // The tab graph inside follows app/src/main/java/com/castle/sefirah/navigation/graphs/MainNavGraph.kt.
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding

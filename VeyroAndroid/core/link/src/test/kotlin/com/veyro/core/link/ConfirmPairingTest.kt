@@ -127,7 +127,7 @@ class ConfirmPairingTest {
         // The rekeyed session carries traffic in both directions.
         val pcSeen = pcManager.activeConnection.value!!
         phoneManager.activeConnection.value!!.send(
-            LinkMessage.Hello(deviceId = phone.id, deviceName = "Phone", platform = "android", capabilities = 1),
+            PeerMessage.Hello(deviceId = phone.id, deviceName = "Phone", platform = "android", capabilities = 1),
         )
         val bits = awaitValue("hello on the PC") { pcSeen.peerCapabilities.value.bits.takeIf { it != 0 } }
         assertEquals(1, bits)
@@ -215,17 +215,17 @@ class ConfirmPairingTest {
     }
 
     private suspend fun readPreamble(fromPhone: Channel<Frame>): LinkPreamble =
-        LinkJson.codec.decodeFromString(LinkPreamble.serializer(), text(fromPhone.receive()))
+        PeerMessageJson.codec.decodeFromString(LinkPreamble.serializer(), text(fromPhone.receive()))
 
     private fun ackFrame(pk: ByteArray, commit: ByteArray): Frame.Text = Frame.Text(
-        LinkJson.codec.encodeToString(
+        PeerMessageJson.codec.encodeToString(
             LinkPreambleAck.serializer(),
             LinkPreambleAck(LinkPreambleAck.MODE_PAIRING_CONFIRM, pk = b64(pk), commit = b64(commit)),
         ),
     )
 
     private fun nonceFrame(n: ByteArray): Frame.Text =
-        Frame.Text(LinkJson.codec.encodeToString(LinkPairNonce.serializer(), LinkPairNonce(n = b64(n))))
+        Frame.Text(PeerMessageJson.codec.encodeToString(LinkPairNonce.serializer(), LinkPairNonce(n = b64(n))))
 
     @Test
     fun `preamble carries pair confirm, the key and version 2`() = runTest(testDispatcher) {
@@ -282,7 +282,7 @@ class ConfirmPairingTest {
         val other = Device()
         initiatorEnd.outgoingChannel.send(
             Frame.Text(
-                LinkJson.codec.encodeToString(
+                PeerMessageJson.codec.encodeToString(
                     LinkPreamble.serializer(),
                     LinkPreamble(phone.id, "Phone", pair = LinkPreamble.PAIR_CONFIRM, pk = b64(other.pk)),
                 ),
@@ -290,7 +290,7 @@ class ConfirmPairingTest {
         )
         pcManager.handleInbound(pcEnd)
 
-        val ack = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
         assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
         assertEquals("identity-mismatch", ack.reason)
         assertNull(ack.commit)
@@ -304,7 +304,7 @@ class ConfirmPairingTest {
         val pcManager = manager(pc, "Office PC")
         initiatorEnd.outgoingChannel.send(
             Frame.Text(
-                LinkJson.codec.encodeToString(
+                PeerMessageJson.codec.encodeToString(
                     LinkPreamble.serializer(),
                     LinkPreamble(phone.id, "Phone", protocolVersion = 1, pair = LinkPreamble.PAIR_CONFIRM, pk = b64(phone.pk)),
                 ),
@@ -312,7 +312,7 @@ class ConfirmPairingTest {
         )
         pcManager.handleInbound(pcEnd)
 
-        val ack = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
         assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
         assertEquals("unsupported-protocol-version", ack.reason)
     }

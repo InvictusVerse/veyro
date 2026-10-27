@@ -1,4 +1,4 @@
-package com.veyro.feature.clipboard
+package com.veyro.ui.clipboard
 
 import android.content.ActivityNotFoundException
 import android.content.Context

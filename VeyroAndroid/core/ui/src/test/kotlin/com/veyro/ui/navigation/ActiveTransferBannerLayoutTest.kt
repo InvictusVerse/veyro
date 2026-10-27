@@ -1,4 +1,4 @@
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -10,7 +10,7 @@ class ActiveTransferBannerLayoutTest {
     @Test
     fun `ActiveTransferBanner is uniquely hosted in VeyroNavHost and not duplicated in individual screens`() {
         val projectRoot = findProjectRoot()
-        val navHostFile = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt")
+        val navHostFile = File(projectRoot, "core/ui/src/main/kotlin/com/veyro/ui/navigation/VeyroNavHost.kt")
         assertTrue("VeyroNavHost.kt must exist", navHostFile.exists())
 
         val navHostContent = navHostFile.readText()
@@ -24,7 +24,7 @@ class ActiveTransferBannerLayoutTest {
         assertTrue("core/ui source dir must exist", screensDir.exists())
 
         val screenFiles = screensDir.walkTopDown()
-            .filter { it.isFile && it.name.endsWith(".kt") && it.name != "ActiveTransferBanner.kt" }
+            .filter { it.isFile && it.name.endsWith(".kt") && it.name != "ActiveTransferBanner.kt" && it.name != "VeyroNavHost.kt" }
             .toList()
 
         for (file in screenFiles) {
@@ -39,7 +39,7 @@ class ActiveTransferBannerLayoutTest {
     @Test
     fun `VeyroNavHost floats the banner above the root NavHost so nothing below it moves`() {
         val projectRoot = findProjectRoot()
-        val content = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt").readText()
+        val content = File(projectRoot, "core/ui/src/main/kotlin/com/veyro/ui/navigation/VeyroNavHost.kt").readText()
 
         // ADR-038: the banner overlays the graph in a Box instead of pushing it down in a Column,
         // so appearing and sliding out never shift the screen below.
@@ -62,7 +62,7 @@ class ActiveTransferBannerLayoutTest {
     @Test
     fun `the tab graph does not host a second banner`() {
         val projectRoot = findProjectRoot()
-        val mainScreen = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/MainScreen.kt")
+        val mainScreen = File(projectRoot, "core/ui/src/main/kotlin/com/veyro/ui/navigation/MainScreen.kt")
         assertTrue("MainScreen.kt must exist", mainScreen.exists())
         assertFalse(mainScreen.readText().contains("ActiveTransferBanner("))
     }
@@ -70,7 +70,7 @@ class ActiveTransferBannerLayoutTest {
     @Test
     fun `VeyroNavHost binds dismiss to the banner model and cancel to the coordinator`() {
         val projectRoot = findProjectRoot()
-        val content = File(projectRoot, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt").readText()
+        val content = File(projectRoot, "core/ui/src/main/kotlin/com/veyro/ui/navigation/VeyroNavHost.kt").readText()
 
         assertTrue(content.contains("onDismiss = { bannerModel.dismiss() }"))
         assertTrue(content.contains("onCancel = { transferCoordinator?.cancel() }"))
@@ -86,7 +86,7 @@ class ActiveTransferBannerLayoutTest {
             File(".."),
             File("../../.."),
         )
-        return candidates.firstOrNull { File(it, "app/src/main/kotlin/com/veyro/navigation/VeyroNavHost.kt").exists() }
+        return candidates.firstOrNull { File(it, "core/ui/src/main/kotlin/com/veyro/ui/navigation/VeyroNavHost.kt").exists() }
             ?: File("D:/Coding/Projects/veyro/VeyroAndroid")
     }
 }

@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,23 +27,23 @@ class MediaMirrorTest {
 
     private class FakeLink(caps: Capabilities, override val peerDeviceId: String = PC) : CompanionLink {
         val caps = MutableStateFlow(caps)
-        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 16)
-        val sent = mutableListOf<LinkMessage>()
+        val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 16)
+        val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> get() = caps
-        override val incoming: Flow<LinkMessage> get() = inbound
-        override suspend fun send(message: LinkMessage) {
+        override val incoming: Flow<PeerMessage> get() = inbound
+        override suspend fun send(message: PeerMessage) {
             sent += message
         }
-        val states get() = sent.filterIsInstance<LinkMessage.MediaState>()
+        val states get() = sent.filterIsInstance<PeerMessage.MediaState>()
     }
 
     private class FakeSource : MediaSource {
         val availableFlow = MutableStateFlow(true)
         val changeFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
-        var current = LinkMessage.MediaState(sessions = emptyList(), volume = 50, muted = false)
+        var current = PeerMessage.MediaState(sessions = emptyList(), volume = 50, muted = false)
         override val available: Flow<Boolean> get() = availableFlow
         override val changes: Flow<Unit> get() = changeFlow
-        override suspend fun snapshot(): LinkMessage.MediaState = current
+        override suspend fun snapshot(): PeerMessage.MediaState = current
     }
 
     private class FakeExecutor : MediaCommandExecutor {
@@ -63,10 +63,10 @@ class MediaMirrorTest {
     private val plainCaps = Capabilities.of(Capability.FILE_TRANSFER, Capability.NOTIFICATION_MIRROR)
 
     private fun session(id: String, title: String = "t", canSeek: Boolean = true) =
-        LinkMessage.MediaSessionInfo(id = id, title = title, playing = true, durationMs = 200_000, canSeek = canSeek)
+        PeerMessage.MediaSessionInfo(id = id, title = title, playing = true, durationMs = 200_000, canSeek = canSeek)
 
-    private fun state(vararg sessions: LinkMessage.MediaSessionInfo) =
-        LinkMessage.MediaState(sessions = sessions.toList(), volume = 50, muted = false)
+    private fun state(vararg sessions: PeerMessage.MediaSessionInfo) =
+        PeerMessage.MediaState(sessions = sessions.toList(), volume = 50, muted = false)
 
     private class Rig(
         val mirror: MediaMirror,
@@ -112,7 +112,7 @@ class MediaMirrorTest {
         runCurrent()
         assertTrue(link.sent.isEmpty())
         assertNull(rig.mirror.peerMedia.value[PC])
-        assertFalse(rig.mirror.sendMediaCommand(PC, LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "pc")))
+        assertFalse(rig.mirror.sendMediaCommand(PC, PeerMessage.MediaCommand(PeerMessage.MediaCommand.PLAY, "pc")))
 
         // The bit arriving later (hello after connect) starts it.
         link.caps.value = mediaCaps
@@ -133,12 +133,12 @@ class MediaMirrorTest {
         runCurrent()
         assertEquals(state(session("pc")), rig.mirror.peerMedia.value[PC])
 
-        val command = LinkMessage.MediaCommand(LinkMessage.MediaCommand.TOGGLE, "pc")
+        val command = PeerMessage.MediaCommand(PeerMessage.MediaCommand.TOGGLE, "pc")
         assertTrue(rig.mirror.sendMediaCommand(PC, command))
-        assertEquals(listOf<LinkMessage>(command), link.sent)
+        assertEquals(listOf<PeerMessage>(command), link.sent)
 
         // Commands from the PC are ignored while not sharing.
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.VOLUME, value = 10))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.VOLUME, value = 10))
         runCurrent()
         assertTrue(rig.executor.calls.isEmpty())
 
@@ -149,7 +149,7 @@ class MediaMirrorTest {
         // Switching off mid-session clears the PC's view of our sessions.
         rig.enabled.value = false
         runCurrent()
-        assertEquals(LinkMessage.MediaState(sessions = emptyList()), link.states.last())
+        assertEquals(PeerMessage.MediaState(sessions = emptyList()), link.states.last())
     }
 
     @Test
@@ -205,16 +205,16 @@ class MediaMirrorTest {
         rig.links.value = link
         runCurrent()
 
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "ghost"))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.PAUSE, null))
-        link.inbound.emit(LinkMessage.MediaCommand("explode", "a"))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.SEEK, "b", 5_000))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.PLAY, "ghost"))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.PAUSE, null))
+        link.inbound.emit(PeerMessage.MediaCommand("explode", "a"))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.SEEK, "b", 5_000))
         runCurrent()
         assertTrue(rig.executor.calls.isEmpty())
 
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.NEXT, "a"))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.SEEK, "a", 999_999))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.TOGGLE, "b"))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.NEXT, "a"))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.SEEK, "a", 999_999))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.TOGGLE, "b"))
         runCurrent()
         assertEquals(listOf("next:a:null", "seek:a:200000", "toggle:b:null"), rig.executor.calls)
     }
@@ -226,12 +226,12 @@ class MediaMirrorTest {
         rig.links.value = link
         runCurrent()
 
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.VOLUME, value = 150))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.VOLUME, value = -5))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.VOLUME, value = 25))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.VOLUME))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.MUTE, value = 1))
-        link.inbound.emit(LinkMessage.MediaCommand(LinkMessage.MediaCommand.MUTE, value = 0))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.VOLUME, value = 150))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.VOLUME, value = -5))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.VOLUME, value = 25))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.VOLUME))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.MUTE, value = 1))
+        link.inbound.emit(PeerMessage.MediaCommand(PeerMessage.MediaCommand.MUTE, value = 0))
         runCurrent()
 
         assertEquals(listOf("volume:100", "volume:0", "volume:25", "mute:true", "mute:false"), rig.executor.calls)
@@ -250,6 +250,6 @@ class MediaMirrorTest {
         rig.links.value = null
         runCurrent()
         assertNull(rig.mirror.peerMedia.value[PC])
-        assertFalse(rig.mirror.sendMediaCommand(PC, LinkMessage.MediaCommand(LinkMessage.MediaCommand.PLAY, "pc")))
+        assertFalse(rig.mirror.sendMediaCommand(PC, PeerMessage.MediaCommand(PeerMessage.MediaCommand.PLAY, "pc")))
     }
 }

@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.veyro.core.data.DeviceRepository
 import com.veyro.core.data.DiscoverySubscription
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
@@ -40,13 +40,13 @@ public class HomeViewModel(
     private val deviceRepository: DeviceRepository,
     private val networkMonitor: NetworkMonitor,
     /** Each connected PC's media (ADR-026), by device id. */
-    pcMedia: Flow<Map<String, LinkMessage.MediaState>> = flowOf(emptyMap()),
+    pcMedia: Flow<Map<String, PeerMessage.MediaState>> = flowOf(emptyMap()),
     /** Each connected PC's own status, by device id. */
-    pcStatus: Flow<Map<String, LinkMessage.DeviceStatus>> = flowOf(emptyMap()),
+    pcStatus: Flow<Map<String, PeerMessage.DeviceStatus>> = flowOf(emptyMap()),
     /** Device ids of the PCs with a live session (multiple PCs). */
     connectedPeerIds: Flow<Set<String>> = flowOf(emptySet()),
     /** Sends a media command to the PC with this device id; true if it was sent. */
-    private val sendMediaCommand: suspend (deviceId: String, LinkMessage.MediaCommand) -> Boolean = { _, _ -> false },
+    private val sendMediaCommand: suspend (deviceId: String, PeerMessage.MediaCommand) -> Boolean = { _, _ -> false },
     /** Paired devices, for the device cards and the PC switcher. */
     trustedPeers: Flow<List<TrustedPeer>> = flowOf(emptyList()),
     /** Opens a session with a paired device at the given endpoints; true on success. */
@@ -206,7 +206,7 @@ public class HomeViewModel(
     public fun mediaCommand(action: String, id: String? = null, value: Long? = null) {
         val pc = _state.value.selectedPc?.takeIf { it.isConnected } ?: return
         viewModelScope.launch {
-            sendMediaCommand(pc.deviceId.value, LinkMessage.MediaCommand(action = action, id = id, value = value))
+            sendMediaCommand(pc.deviceId.value, PeerMessage.MediaCommand(action = action, id = id, value = value))
         }
     }
 

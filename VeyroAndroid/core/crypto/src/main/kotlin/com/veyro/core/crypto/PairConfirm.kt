@@ -1,7 +1,7 @@
 package com.veyro.core.crypto
 
 import com.veyro.core.common.Bytes
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import java.security.MessageDigest
 import java.security.SecureRandom
 
@@ -22,7 +22,7 @@ import java.security.SecureRandom
 public object PairConfirm {
 
     public const val INFO_COMMIT: String = "veyro-commit-v1"
-    public const val INFO_CODE: String = Vlp.INFO_SAS
+    public const val INFO_CODE: String = ProtocolConstants.INFO_SAS
     public const val INFO_BOOTSTRAP: String = "veyro-pair-confirm-v1"
 
     public const val NONCE_SIZE: Int = 32

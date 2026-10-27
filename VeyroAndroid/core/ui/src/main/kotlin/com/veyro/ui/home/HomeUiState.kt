@@ -1,6 +1,6 @@
 package com.veyro.ui.home
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
@@ -104,10 +104,10 @@ public data class HomeUiState(
     val connectedPeerIds: Set<DeviceId> = emptySet(),
 
     /** Each connected PC's media sessions (ADR-026), by device id string. */
-    val pcMediaByPeer: Map<String, LinkMessage.MediaState> = emptyMap(),
+    val pcMediaByPeer: Map<String, PeerMessage.MediaState> = emptyMap(),
 
     /** Each connected PC's own status (battery, Wi-Fi), by device id string. */
-    val pcStatuses: Map<String, LinkMessage.DeviceStatus> = emptyMap(),
+    val pcStatuses: Map<String, PeerMessage.DeviceStatus> = emptyMap(),
 
     /** What each connected PC advertised in its hello, by device id string. */
     val peerCapabilities: Map<String, Capabilities> = emptyMap(),
@@ -134,15 +134,15 @@ public data class HomeUiState(
     val message: String? = null,
 ) {
     /** The selected PC's media, which the media and volume cards show; null when it shares none. */
-    val pcMedia: LinkMessage.MediaState?
+    val pcMedia: PeerMessage.MediaState?
         get() = selectedPc?.takeIf { it.isConnected }?.let { pcMediaByPeer[it.deviceId.value] }
 
     /** The PC session the media card shows: the playing one, else the first. */
-    val pcMediaSession: LinkMessage.MediaSessionInfo?
+    val pcMediaSession: PeerMessage.MediaSessionInfo?
         get() = pcMedia?.sessions?.let { sessions -> sessions.firstOrNull { it.playing } ?: sessions.firstOrNull() }
 
     /** Status line extras for [device], present only while that PC is connected. */
-    public fun statusFor(device: PeerDevice): LinkMessage.DeviceStatus? =
+    public fun statusFor(device: PeerDevice): PeerMessage.DeviceStatus? =
         pcStatuses[device.deviceId.value]?.takeIf { device.deviceId in connectedPeerIds }
 
     val trustedDevices: List<PeerDevice>

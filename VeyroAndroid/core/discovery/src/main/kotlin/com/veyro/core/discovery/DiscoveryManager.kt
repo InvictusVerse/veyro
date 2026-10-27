@@ -56,7 +56,7 @@ public enum class DiscoveryReason {
     /** A transfer is in progress and needs its peer. */
     TRANSFER,
 
-    /** The "pair a new device" flow - bounded to `Vlp.PAIRING_WINDOW_MILLIS`. */
+    /** The "pair a new device" flow - bounded to `ProtocolConstants.PAIRING_WINDOW_MILLIS`. */
     PAIRING,
 
     /** The user turned on "always discoverable". Off by default. */

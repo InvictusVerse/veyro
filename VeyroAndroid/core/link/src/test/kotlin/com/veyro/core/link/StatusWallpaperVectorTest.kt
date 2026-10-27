@@ -20,7 +20,7 @@ import java.io.File
  */
 class StatusWallpaperVectorTest {
 
-    private val json = LinkJson.codec
+    private val json = PeerMessageJson.codec
 
     private fun vectors(): List<Pair<String, String>> {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -37,9 +37,9 @@ class StatusWallpaperVectorTest {
     }
 
     private val expectedTypes = mapOf(
-        "devStatus" to LinkMessage.DeviceStatus::class,
-        "pcLock" to LinkMessage.PcLock::class,
-        "wallpaper" to LinkMessage.Wallpaper::class,
+        "devStatus" to PeerMessage.DeviceStatus::class,
+        "pcLock" to PeerMessage.PcLock::class,
+        "wallpaper" to PeerMessage.Wallpaper::class,
     )
 
     @Test
@@ -48,11 +48,11 @@ class StatusWallpaperVectorTest {
         assertEquals(5, all.size)
 
         for ((type, text) in all) {
-            val decoded = json.decodeFromString<LinkMessage>(text)
+            val decoded = json.decodeFromString<PeerMessage>(text)
             val expected = expectedTypes.getValue(type)
             assertTrue("vector '$type' decoded to ${decoded::class.simpleName}", expected.isInstance(decoded))
 
-            val reEncoded = json.encodeToString<LinkMessage>(decoded)
+            val reEncoded = json.encodeToString<PeerMessage>(decoded)
             assertEquals(
                 "vector '$type' did not round-trip",
                 json.parseToJsonElement(text) as JsonObject,
@@ -63,10 +63,10 @@ class StatusWallpaperVectorTest {
 
     @Test
     fun `vectors carry the expected values`() {
-        val decoded = vectors().map { (_, text) -> json.decodeFromString<LinkMessage>(text) }
+        val decoded = vectors().map { (_, text) -> json.decodeFromString<PeerMessage>(text) }
 
         assertEquals(
-            LinkMessage.DeviceStatus(
+            PeerMessage.DeviceStatus(
                 battery = 57,
                 charging = false,
                 ringer = "normal",
@@ -79,19 +79,19 @@ class StatusWallpaperVectorTest {
             ),
             decoded[0],
         )
-        val noRadio = decoded[1] as LinkMessage.DeviceStatus
+        val noRadio = decoded[1] as PeerMessage.DeviceStatus
         assertEquals(-1, noRadio.wifi)
         assertEquals(-1, noRadio.cell)
         assertNull("absent fields stay absent", noRadio.battery)
-        assertSame(LinkMessage.PcLock, decoded[2])
-        assertEquals("/9j/4AAQSkZJRg==", (decoded[3] as LinkMessage.Wallpaper).jpeg)
-        assertNull("no wallpaper omits jpeg", (decoded[4] as LinkMessage.Wallpaper).jpeg)
+        assertSame(PeerMessage.PcLock, decoded[2])
+        assertEquals("/9j/4AAQSkZJRg==", (decoded[3] as PeerMessage.Wallpaper).jpeg)
+        assertNull("no wallpaper omits jpeg", (decoded[4] as PeerMessage.Wallpaper).jpeg)
     }
 
     @Test
     fun `an old devStatus without radio fields still decodes`() {
-        val old = json.decodeFromString<LinkMessage>("""{"t":"devStatus","battery":80,"charging":true}""")
-        assertEquals(LinkMessage.DeviceStatus(battery = 80, charging = true), old)
+        val old = json.decodeFromString<PeerMessage>("""{"t":"devStatus","battery":80,"charging":true}""")
+        assertEquals(PeerMessage.DeviceStatus(battery = 80, charging = true), old)
     }
 
     @Test

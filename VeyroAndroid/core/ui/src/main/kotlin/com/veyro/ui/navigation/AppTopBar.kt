@@ -1,6 +1,6 @@
 // Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/presentation/src/main/java/sefirah/presentation/components/AppTopBar.kt, GPL-3.0.
 // Modified for Veyro.
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon

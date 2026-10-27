@@ -12,7 +12,7 @@ import com.veyro.core.model.PeerDevice
 import com.veyro.core.model.TrustState
 import com.veyro.core.model.fingerprint
 import com.veyro.core.protocol.PairingQrCode
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -123,11 +123,11 @@ public class PairingViewModel(
         subscription = deviceRepository.observeNearby(forPairing = true)
         _state.value = _state.value.copy(
             isSearching = true,
-            secondsRemaining = (Vlp.PAIRING_WINDOW_MILLIS / 1000).toInt(),
+            secondsRemaining = (ProtocolConstants.PAIRING_WINDOW_MILLIS / 1000).toInt(),
             error = null,
         )
         countdown = viewModelScope.launch {
-            var remaining = (Vlp.PAIRING_WINDOW_MILLIS / 1000).toInt()
+            var remaining = (ProtocolConstants.PAIRING_WINDOW_MILLIS / 1000).toInt()
             while (remaining > 0) {
                 kotlinx.coroutines.delay(1_000)
                 remaining--

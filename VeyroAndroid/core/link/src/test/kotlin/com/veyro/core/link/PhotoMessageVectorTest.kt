@@ -16,7 +16,7 @@ import java.io.File
  */
 class PhotoMessageVectorTest {
 
-    private val json = LinkJson.codec
+    private val json = PeerMessageJson.codec
 
     private fun vectors(): List<Pair<String, String>> {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -33,13 +33,13 @@ class PhotoMessageVectorTest {
     }
 
     private val expectedTypes = mapOf(
-        "photosReq" to LinkMessage.PhotosRequest::class,
-        "photos" to LinkMessage.Photos::class,
-        "photoThumbReq" to LinkMessage.PhotoThumbRequest::class,
-        "photoThumb" to LinkMessage.PhotoThumb::class,
-        "photoFetch" to LinkMessage.PhotoFetch::class,
-        "photoNew" to LinkMessage.PhotoNew::class,
-        "photoRemoved" to LinkMessage.PhotoRemoved::class,
+        "photosReq" to PeerMessage.PhotosRequest::class,
+        "photos" to PeerMessage.Photos::class,
+        "photoThumbReq" to PeerMessage.PhotoThumbRequest::class,
+        "photoThumb" to PeerMessage.PhotoThumb::class,
+        "photoFetch" to PeerMessage.PhotoFetch::class,
+        "photoNew" to PeerMessage.PhotoNew::class,
+        "photoRemoved" to PeerMessage.PhotoRemoved::class,
     )
 
     @Test
@@ -48,11 +48,11 @@ class PhotoMessageVectorTest {
         assertEquals(8, all.size)
 
         for ((type, text) in all) {
-            val decoded = json.decodeFromString<LinkMessage>(text)
+            val decoded = json.decodeFromString<PeerMessage>(text)
             val expected = expectedTypes.getValue(type)
             assertTrue("vector '$type' decoded to ${decoded::class.simpleName}", expected.isInstance(decoded))
 
-            val reEncoded = json.encodeToString<LinkMessage>(decoded)
+            val reEncoded = json.encodeToString<PeerMessage>(decoded)
             assertEquals(
                 "vector '$type' did not round-trip",
                 json.parseToJsonElement(text) as JsonObject,
@@ -63,10 +63,10 @@ class PhotoMessageVectorTest {
 
     @Test
     fun `vectors carry the expected values`() {
-        val decoded = vectors().map { (_, text) -> json.decodeFromString<LinkMessage>(text) }
+        val decoded = vectors().map { (_, text) -> json.decodeFromString<PeerMessage>(text) }
 
-        assertEquals(LinkMessage.PhotosRequest(limit = 2000), decoded[0])
-        val photo = (decoded[1] as LinkMessage.Photos).items.single()
+        assertEquals(PeerMessage.PhotosRequest(limit = 2000), decoded[0])
+        val photo = (decoded[1] as PeerMessage.Photos).items.single()
         assertEquals(4021L, photo.id)
         assertEquals(1793009700000L, photo.ts)
         assertEquals(4000, photo.width)
@@ -74,23 +74,23 @@ class PhotoMessageVectorTest {
         assertEquals(3145728L, photo.size)
         assertEquals("image/jpeg", photo.mime)
         assertEquals("camera", photo.bucket)
-        assertEquals(LinkMessage.PhotoThumbRequest(ids = listOf(4021L, 4020L), size = 256), decoded[2])
-        assertEquals("/9j/4AAQSkZJRg==", (decoded[3] as LinkMessage.PhotoThumb).jpeg)
-        assertNull("an unreadable thumbnail omits jpeg", (decoded[4] as LinkMessage.PhotoThumb).jpeg)
-        assertEquals(LinkMessage.PhotoFetch(id = 4021L, requestId = "r-1"), decoded[5])
-        val new = (decoded[6] as LinkMessage.PhotoNew).item
+        assertEquals(PeerMessage.PhotoThumbRequest(ids = listOf(4021L, 4020L), size = 256), decoded[2])
+        assertEquals("/9j/4AAQSkZJRg==", (decoded[3] as PeerMessage.PhotoThumb).jpeg)
+        assertNull("an unreadable thumbnail omits jpeg", (decoded[4] as PeerMessage.PhotoThumb).jpeg)
+        assertEquals(PeerMessage.PhotoFetch(id = 4021L, requestId = "r-1"), decoded[5])
+        val new = (decoded[6] as PeerMessage.PhotoNew).item
         assertEquals("screenshots", new.bucket)
         assertNull(new.width)
-        assertEquals(LinkMessage.PhotoRemoved(id = 4019L), decoded[7])
+        assertEquals(PeerMessage.PhotoRemoved(id = 4019L), decoded[7])
     }
 
     @Test
     fun `offer requestId round-trips and is omitted when absent`() {
-        val plain = LinkMessage.TransferOffer("t-1", emptyList(), 0L, "Phone")
-        val plainJson = json.encodeToString<LinkMessage>(plain)
+        val plain = PeerMessage.TransferOffer("t-1", emptyList(), 0L, "Phone")
+        val plainJson = json.encodeToString<PeerMessage>(plain)
         assertTrue("requestId must be omitted, not null", "requestId" !in plainJson)
 
         val answering = plain.copy(requestId = "r-1")
-        assertEquals(answering, json.decodeFromString<LinkMessage>(json.encodeToString<LinkMessage>(answering)))
+        assertEquals(answering, json.decodeFromString<PeerMessage>(json.encodeToString<PeerMessage>(answering)))
     }
 }

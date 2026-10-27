@@ -17,7 +17,7 @@ import android.widget.RemoteViews
  * Built on [Notification.DecoratedCustomViewStyle], so the system header (app name, time, expand
  * arrow) and the shade's own background stay in charge of light and dark.
  */
-public object VeyroNotificationCard {
+public object NotificationCard {
 
     /** The badge colour, by what the notification is about. */
     public enum class Tone(internal val badge: Int) {

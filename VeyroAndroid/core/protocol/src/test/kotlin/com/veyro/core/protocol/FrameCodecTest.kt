@@ -27,18 +27,18 @@ class FrameCodecTest {
     @Test
     fun `a small frame round trips in one piece`() {
         val payload = "control message".toByteArray()
-        val pieces = FrameCodec.encodeFrame(Vlp.FRAME_CONTROL, payload)
+        val pieces = FrameCodec.encodeFrame(ProtocolConstants.FRAME_CONTROL, payload)
         assertEquals("a small frame must not be fragmented", 1, pieces.size)
 
         val out = frames(reassemble(pieces))
         assertEquals(1, out.size)
-        assertEquals(Vlp.FRAME_CONTROL, out[0].type)
+        assertEquals(ProtocolConstants.FRAME_CONTROL, out[0].type)
         assertArrayEquals(payload, out[0].payload)
     }
 
     @Test
     fun `an empty payload round trips`() {
-        val out = frames(reassemble(FrameCodec.encodeFrame(Vlp.FRAME_KEEPALIVE, ByteArray(0))))
+        val out = frames(reassemble(FrameCodec.encodeFrame(ProtocolConstants.FRAME_KEEPALIVE, ByteArray(0))))
         assertEquals(1, out.size)
         assertEquals(0, out[0].payload.size)
     }
@@ -48,7 +48,7 @@ class FrameCodecTest {
         // A 4 MiB chunk cannot be a single Noise message. If fragmentation were left to callers,
         // someone would eventually get the 65535 limit wrong on one platform only.
         val payload = ByteArray(4 * 1024 * 1024) { (it % 251).toByte() }
-        val pieces = FrameCodec.encodeFrame(Vlp.FRAME_BULK, payload)
+        val pieces = FrameCodec.encodeFrame(ProtocolConstants.FRAME_BULK, payload)
         assertTrue("expected fragmentation, got ${pieces.size} piece(s)", pieces.size > 1)
         pieces.forEach {
             assertTrue("a fragment exceeds the Noise limit", it.size <= FrameCodec.MAX_NOISE_PLAINTEXT)
@@ -67,7 +67,7 @@ class FrameCodecTest {
         for (delta in intArrayOf(-1, 0, 1)) {
             val size = FrameCodec.MAX_NOISE_PLAINTEXT - FrameCodec.APP_HEADER_BYTES + delta
             val payload = ByteArray(size) { 7 }
-            val out = frames(reassemble(FrameCodec.encodeFrame(Vlp.FRAME_BULK, payload)))
+            val out = frames(reassemble(FrameCodec.encodeFrame(ProtocolConstants.FRAME_BULK, payload)))
             assertEquals("delta $delta", 1, out.size)
             assertEquals("delta $delta", size, out[0].payload.size)
         }
@@ -75,8 +75,8 @@ class FrameCodecTest {
 
     @Test
     fun `several frames in one piece are all returned`() {
-        val a = FrameCodec.encodeFrame(Vlp.FRAME_CONTROL, "one".toByteArray()).single()
-        val b = FrameCodec.encodeFrame(Vlp.FRAME_CONTROL, "two".toByteArray()).single()
+        val a = FrameCodec.encodeFrame(ProtocolConstants.FRAME_CONTROL, "one".toByteArray()).single()
+        val b = FrameCodec.encodeFrame(ProtocolConstants.FRAME_CONTROL, "two".toByteArray()).single()
         val out = frames(reassemble(listOf(a + b)))
         assertEquals(2, out.size)
         assertArrayEquals("one".toByteArray(), out[0].payload)
@@ -88,7 +88,7 @@ class FrameCodecTest {
         // Real sockets split wherever they like. A reassembler that only works on tidy boundaries
         // fails intermittently under load, which is the worst kind of bug to chase.
         val payload = "the quick brown fox jumps over the lazy dog".toByteArray()
-        val whole = FrameCodec.encodeFrame(Vlp.FRAME_CONTROL, payload).single()
+        val whole = FrameCodec.encodeFrame(ProtocolConstants.FRAME_CONTROL, payload).single()
 
         for (split in 1 until whole.size) {
             val out = frames(
@@ -102,7 +102,7 @@ class FrameCodecTest {
     @Test
     fun `byte at a time delivery works`() {
         val payload = "dribble".toByteArray()
-        val whole = FrameCodec.encodeFrame(Vlp.FRAME_CONTROL, payload).single()
+        val whole = FrameCodec.encodeFrame(ProtocolConstants.FRAME_CONTROL, payload).single()
         val r = FrameCodec.Reassembler()
         val collected = mutableListOf<FrameCodec.Decoded>()
         for (b in whole) collected += r.offer(byteArrayOf(b))
@@ -125,7 +125,7 @@ class FrameCodecTest {
         // A declared 2 GB payload from a hostile peer must not become an allocation. Checking the
         // length before reserving is the difference between a rejected frame and a one-packet
         // denial of service.
-        val bad = byteArrayOf(Vlp.FRAME_CONTROL, 0x7F, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
+        val bad = byteArrayOf(ProtocolConstants.FRAME_CONTROL, 0x7F, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
         val out = FrameCodec.Reassembler().offer(bad)
         assertTrue(
             out.any { it is FrameCodec.Decoded.Invalid && it.reason == FrameCodec.Reason.LENGTH_TOO_LARGE },
@@ -135,7 +135,7 @@ class FrameCodecTest {
     @Test
     fun `a length above the configured cap is rejected`() {
         val r = FrameCodec.Reassembler(maxPayload = 1024)
-        val header = byteArrayOf(Vlp.FRAME_CONTROL, 0, 0, 0x10, 0) // 4096
+        val header = byteArrayOf(ProtocolConstants.FRAME_CONTROL, 0, 0, 0x10, 0) // 4096
         val out = r.offer(header)
         assertTrue(
             out.any { it is FrameCodec.Decoded.Invalid && it.reason == FrameCodec.Reason.LENGTH_TOO_LARGE },
@@ -145,14 +145,14 @@ class FrameCodecTest {
     @Test
     fun `a partial header reports incomplete rather than failing`() {
         val r = FrameCodec.Reassembler()
-        val out = r.offer(byteArrayOf(Vlp.FRAME_CONTROL, 0, 0))
+        val out = r.offer(byteArrayOf(ProtocolConstants.FRAME_CONTROL, 0, 0))
         assertTrue("a partial header is normal, not an error", out.none { it is FrameCodec.Decoded.Invalid })
         assertEquals(3, r.pending())
     }
 
     @Test
     fun `a partial payload reports incomplete`() {
-        val whole = FrameCodec.encodeFrame(Vlp.FRAME_CONTROL, ByteArray(100)).single()
+        val whole = FrameCodec.encodeFrame(ProtocolConstants.FRAME_CONTROL, ByteArray(100)).single()
         val r = FrameCodec.Reassembler()
         val out = r.offer(whole.copyOfRange(0, 50))
         assertTrue(out.contains(FrameCodec.Decoded.Incomplete))
@@ -162,7 +162,7 @@ class FrameCodecTest {
     @Test
     fun `reset clears buffered bytes`() {
         val r = FrameCodec.Reassembler()
-        r.offer(byteArrayOf(Vlp.FRAME_CONTROL, 0, 0, 0, 100))
+        r.offer(byteArrayOf(ProtocolConstants.FRAME_CONTROL, 0, 0, 0, 100))
         assertTrue(r.pending() > 0)
         r.reset()
         assertEquals(0, r.pending())

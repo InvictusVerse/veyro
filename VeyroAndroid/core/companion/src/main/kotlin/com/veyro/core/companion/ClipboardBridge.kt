@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -61,7 +61,7 @@ public class ClipboardBridge(
 
         /** PNG or JPEG by magic bytes, within the protocol cap. Untrusted input check. */
         public fun isAcceptableImage(bytes: ByteArray?): Boolean {
-            if (bytes == null || bytes.size < 4 || bytes.size > LinkMessage.Clip.MAX_IMAGE_BYTES) return false
+            if (bytes == null || bytes.size < 4 || bytes.size > PeerMessage.Clip.MAX_IMAGE_BYTES) return false
             val png = bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()
             val jpeg = bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
             return png || jpeg
@@ -86,18 +86,18 @@ public class ClipboardBridge(
      * sheet's Direct Share row); null sends to every capable PC. Returns how many PCs it reached.
      */
     public suspend fun share(text: String, peerId: String? = null): Int {
-        val trimmed = text.take(LinkMessage.Clip.MAX_TEXT_CHARS)
+        val trimmed = text.take(PeerMessage.Clip.MAX_TEXT_CHARS)
         if (trimmed.isBlank()) return 0
-        return broadcast(LinkMessage.Clip(newId(), LinkMessage.Clip.KIND_TEXT, text = trimmed, apply = true, ts = now()), peerId)
+        return broadcast(PeerMessage.Clip(newId(), PeerMessage.Clip.KIND_TEXT, text = trimmed, apply = true, ts = now()), peerId)
     }
 
     /** The phone's clipboard (text or image): kept in the PC's virtual clipboard. */
     public suspend fun sendClipboard(text: String?, image: ByteArray?): Int {
         val clip = when {
             image != null && isAcceptableImage(image) ->
-                LinkMessage.Clip(newId(), LinkMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString(image), ts = now())
+                PeerMessage.Clip(newId(), PeerMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString(image), ts = now())
             !text.isNullOrBlank() ->
-                LinkMessage.Clip(newId(), LinkMessage.Clip.KIND_TEXT, text = text.take(LinkMessage.Clip.MAX_TEXT_CHARS), ts = now())
+                PeerMessage.Clip(newId(), PeerMessage.Clip.KIND_TEXT, text = text.take(PeerMessage.Clip.MAX_TEXT_CHARS), ts = now())
             else -> return 0
         }
         return broadcast(clip)
@@ -111,7 +111,7 @@ public class ClipboardBridge(
         _history.value = emptyList()
     }
 
-    private suspend fun broadcast(clip: LinkMessage.Clip, onlyPeer: String? = null): Int {
+    private suspend fun broadcast(clip: PeerMessage.Clip, onlyPeer: String? = null): Int {
         var reached = 0
         for (link in current.value) {
             if (onlyPeer != null && !link.peerDeviceId.equals(onlyPeer, ignoreCase = true)) continue
@@ -127,7 +127,7 @@ public class ClipboardBridge(
     private suspend fun serve(link: CompanionLink) {
         try {
             link.incoming.collect { message ->
-                if (message is LinkMessage.Clip) receive(link.peerDeviceId, message)
+                if (message is PeerMessage.Clip) receive(link.peerDeviceId, message)
             }
         } catch (c: CancellationException) {
             throw c
@@ -137,15 +137,15 @@ public class ClipboardBridge(
     }
 
     /** A PC's copy. Untrusted: validated and size-capped. */
-    internal suspend fun receive(peerId: String?, clip: LinkMessage.Clip) {
+    internal suspend fun receive(peerId: String?, clip: PeerMessage.Clip) {
         if (!receiveEnabled.first()) return
         if (clip.id.isEmpty() || clip.id.length > 64) return
         val item = when (clip.kind) {
-            LinkMessage.Clip.KIND_TEXT -> {
-                val text = clip.text?.takeIf { it.isNotEmpty() && it.length <= LinkMessage.Clip.MAX_TEXT_CHARS } ?: return
+            PeerMessage.Clip.KIND_TEXT -> {
+                val text = clip.text?.takeIf { it.isNotEmpty() && it.length <= PeerMessage.Clip.MAX_TEXT_CHARS } ?: return
                 ClipItem(clip.id, peerId, text, null, now())
             }
-            LinkMessage.Clip.KIND_IMAGE -> {
+            PeerMessage.Clip.KIND_IMAGE -> {
                 val bytes = clip.image?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
                 if (!isAcceptableImage(bytes)) return
                 ClipItem(clip.id, peerId, null, bytes, now())

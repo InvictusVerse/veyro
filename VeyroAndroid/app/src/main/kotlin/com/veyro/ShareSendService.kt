@@ -11,7 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.service.VeyroNotificationCard
+import com.veyro.core.service.NotificationCard
 import com.veyro.core.service.VeyroNotifications
 import com.veyro.ui.format.formatEta
 import com.veyro.ui.format.formatSpeed
@@ -177,7 +177,7 @@ public class ShareSendService : Service() {
             text = text,
             success = success,
             autoClearMs = (application as VeyroApplication).container.notificationAutoClearMs.value,
-            pills = if (success) emptyList() else listOf(VeyroNotificationCard.Pill("Open Veyro", open)),
+            pills = if (success) emptyList() else listOf(NotificationCard.Pill("Open Veyro", open)),
             contentIntent = open,
         )
         runCatching { cards.show(ID_RESULT, notification) }

@@ -7,7 +7,7 @@ import com.veyro.core.model.DiscoveryWindowState
 import com.veyro.core.model.PeerDevice
 import com.veyro.core.model.TrustedPeer
 import com.veyro.core.protocol.PresenceRecord
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -331,7 +331,7 @@ public class DiscoveryManagerImpl(
     public fun isMulticastLockHeld(): Boolean = multicastLock.isHeld()
 
     /** For the pairing flow: the bounded window length from the protocol spec. */
-    public fun pairingWindowMillis(): Long = Vlp.PAIRING_WINDOW_MILLIS
+    public fun pairingWindowMillis(): Long = ProtocolConstants.PAIRING_WINDOW_MILLIS
 }
 
 /**

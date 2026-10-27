@@ -54,15 +54,5 @@ include(":core:designsystem")
 include(":core:ui")
 include(":core:testing")
 
-// ── feature modules ────────────────────────────────────────────────────────────────────────
-//
-// `feature/` is for genuine additions on top of the transfer core - things that are separable and
-// optional, and could be built or dropped independently. Clipboard today; Sync and Handoff later.
-//
-// The core product's own screens (Home, Devices, Pairing, Send, Receive, History, Settings) live in
-// `:core:ui` instead. Veyro *is* a file-transfer app, so those are not features bolted onto it -
-// they are the product, and seven modules for seven screens bought isolation nothing needed
-// (ADR-019).
-//
-// A feature module still never depends on another feature module.
-include(":feature:clipboard")
+// No feature modules (ADR-046): every screen, companion features included, lives in `:core:ui`;
+// every companion feature's logic lives in `:core:companion`. One pattern for every feature.

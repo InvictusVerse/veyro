@@ -1,6 +1,6 @@
 // Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/presentation/src/main/java/sefirah/presentation/components/SearchBar.kt, GPL-3.0.
 // Modified for Veyro.
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.interaction.MutableInteractionSource

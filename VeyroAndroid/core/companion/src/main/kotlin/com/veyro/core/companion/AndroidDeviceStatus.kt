@@ -34,7 +34,7 @@ import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -224,7 +224,7 @@ public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
         const val TAG = "DeviceStatusSource"
     }
 
-    override suspend fun current(): LinkMessage.DeviceStatus {
+    override suspend fun current(): PeerMessage.DeviceStatus {
         // A null receiver returns the sticky intent without registering anything.
         val battery = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -246,7 +246,7 @@ public class AndroidDeviceStatusSource(context: Context) : DeviceStatusSource {
         }
         val radio = readNetwork()
         val simReady = simReady()
-        return LinkMessage.DeviceStatus(
+        return PeerMessage.DeviceStatus(
             battery = percent,
             charging = charging,
             ringer = ringer,

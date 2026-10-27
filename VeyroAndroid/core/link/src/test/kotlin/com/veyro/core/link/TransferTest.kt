@@ -905,9 +905,9 @@ class TransferTest {
 
         val tid = "tid-one-offer"
         senderSession.send(
-            LinkMessage.TransferOffer(
+            PeerMessage.TransferOffer(
                 transferId = tid,
-                items = listOf(LinkMessage.Item(0, "test.txt", 100, System.currentTimeMillis())),
+                items = listOf(PeerMessage.Item(0, "test.txt", 100, System.currentTimeMillis())),
                 totalBytes = 100,
                 senderName = "Xiaomi Sender",
             )
@@ -1107,9 +1107,9 @@ class TransferTest {
         }
 
         val tid = "dup-test-id"
-        val offer = LinkMessage.TransferOffer(
+        val offer = PeerMessage.TransferOffer(
             transferId = tid,
-            items = listOf(LinkMessage.Item(0, "f.txt", 10, System.currentTimeMillis())),
+            items = listOf(PeerMessage.Item(0, "f.txt", 10, System.currentTimeMillis())),
             totalBytes = 10,
             senderName = "Sender",
         )
@@ -1132,11 +1132,11 @@ class TransferTest {
         val receiverMailbox = receiverSession.mailbox(tid)
 
         // Receiver sends decisions and item results to sender
-        receiverSession.send(LinkMessage.TransferDecision(transferId = tid, accept = true))
-        receiverSession.send(LinkMessage.ItemResult(transferId = tid, index = 0, ok = true))
+        receiverSession.send(PeerMessage.TransferDecision(transferId = tid, accept = true))
+        receiverSession.send(PeerMessage.ItemResult(transferId = tid, index = 0, ok = true))
 
-        senderSession.send(LinkMessage.Chunk(transferId = tid, index = 0, chunkIndex = 0, dataB64 = "AQID"))
-        senderSession.send(LinkMessage.TransferEnd(transferId = tid, completed = true))
+        senderSession.send(PeerMessage.Chunk(transferId = tid, index = 0, chunkIndex = 0, dataB64 = "AQID"))
+        senderSession.send(PeerMessage.TransferEnd(transferId = tid, completed = true))
 
         val decision = senderMailbox.awaitDecision(1000)
         assertNotNull(decision)
@@ -1147,10 +1147,10 @@ class TransferTest {
         assertTrue(itemResult!!.ok)
 
         val payload1 = receiverMailbox.payloadChannel.receive()
-        assertTrue(payload1 is LinkMessage.Chunk)
+        assertTrue(payload1 is PeerMessage.Chunk)
 
         val payload2 = receiverMailbox.payloadChannel.receive()
-        assertTrue(payload2 is LinkMessage.TransferEnd)
+        assertTrue(payload2 is PeerMessage.TransferEnd)
     }
 
     @Test
@@ -1160,7 +1160,7 @@ class TransferTest {
         val tid = "early-arrival"
         val senderMailbox = senderSession.mailbox(tid)
 
-        receiverSession.send(LinkMessage.TransferDecision(transferId = tid, accept = true))
+        receiverSession.send(PeerMessage.TransferDecision(transferId = tid, accept = true))
 
         // Sender calls awaitDecision AFTER frame has already arrived and been processed
         val decision = senderMailbox.awaitDecision(1000)
@@ -1169,12 +1169,12 @@ class TransferTest {
 
         // Sender sends chunks before receiver loop starts reading
         val receiverMailbox = receiverSession.mailbox(tid)
-        senderSession.send(LinkMessage.Chunk(transferId = tid, index = 0, chunkIndex = 0, dataB64 = "AAAA"))
-        senderSession.send(LinkMessage.Chunk(transferId = tid, index = 0, chunkIndex = 1, dataB64 = "BBBB"))
+        senderSession.send(PeerMessage.Chunk(transferId = tid, index = 0, chunkIndex = 0, dataB64 = "AAAA"))
+        senderSession.send(PeerMessage.Chunk(transferId = tid, index = 0, chunkIndex = 1, dataB64 = "BBBB"))
 
         // Receiver reads from payloadChannel after the chunks have already arrived
-        val c1 = receiverMailbox.payloadChannel.receive() as LinkMessage.Chunk
-        val c2 = receiverMailbox.payloadChannel.receive() as LinkMessage.Chunk
+        val c1 = receiverMailbox.payloadChannel.receive() as PeerMessage.Chunk
+        val c2 = receiverMailbox.payloadChannel.receive() as PeerMessage.Chunk
         assertEquals(0, c1.chunkIndex)
         assertEquals(1, c2.chunkIndex)
     }

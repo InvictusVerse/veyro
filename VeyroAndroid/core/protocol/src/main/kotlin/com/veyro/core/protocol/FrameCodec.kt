@@ -21,7 +21,7 @@ package com.veyro.core.protocol
 public object FrameCodec {
 
     /** Noise transport message limit, minus the 16-byte AEAD tag. */
-    public const val MAX_NOISE_PLAINTEXT: Int = Vlp.MAX_NOISE_PLAINTEXT
+    public const val MAX_NOISE_PLAINTEXT: Int = ProtocolConstants.MAX_NOISE_PLAINTEXT
 
     /** `u8 type || u32BE length`. */
     public const val APP_HEADER_BYTES: Int = 5
@@ -73,7 +73,7 @@ public object FrameCodec {
 
     /** The `u32BE length || message` prefix used for every Noise message on the wire. */
     public fun wirePrefix(messageLength: Int): ByteArray {
-        require(messageLength in 1..Vlp.MAX_NOISE_MESSAGE) {
+        require(messageLength in 1..ProtocolConstants.MAX_NOISE_MESSAGE) {
             "Noise message length out of range: $messageLength"
         }
         return byteArrayOf(
@@ -100,7 +100,7 @@ public object FrameCodec {
      * direction.
      */
     public class Reassembler(
-        private val maxPayload: Int = Vlp.MAX_CONTROL_FRAME_BYTES,
+        private val maxPayload: Int = ProtocolConstants.MAX_CONTROL_FRAME_BYTES,
     ) {
         private var buffer = ByteArray(0)
 
@@ -154,6 +154,6 @@ public object FrameCodec {
         }
 
         private fun isKnownType(type: Byte): Boolean =
-            type == Vlp.FRAME_CONTROL || type == Vlp.FRAME_BULK || type == Vlp.FRAME_KEEPALIVE
+            type == ProtocolConstants.FRAME_CONTROL || type == ProtocolConstants.FRAME_BULK || type == ProtocolConstants.FRAME_KEEPALIVE
     }
 }

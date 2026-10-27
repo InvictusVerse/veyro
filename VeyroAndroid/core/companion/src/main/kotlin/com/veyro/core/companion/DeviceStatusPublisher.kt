@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +30,7 @@ public interface DeviceStatusSource {
     public val changes: Flow<Unit>
 
     /** The current status, battery as a whole percentage. */
-    public suspend fun current(): LinkMessage.DeviceStatus
+    public suspend fun current(): PeerMessage.DeviceStatus
 }
 
 /** Applies a validated `devControl`. Permission checks are made by the caller via [hasPolicyAccess]. */
@@ -83,15 +83,15 @@ public class DeviceStatusPublisher(
         private val RINGER_MODES = setOf(RINGER_NORMAL, RINGER_VIBRATE, RINGER_SILENT)
     }
 
-    private val _peerStatus = MutableStateFlow<Map<String, LinkMessage.DeviceStatus>>(emptyMap())
+    private val _peerStatus = MutableStateFlow<Map<String, PeerMessage.DeviceStatus>>(emptyMap())
 
     /** Each connected capable PC's own status, by device id. A PC that left is absent. */
-    public val peerStatus: StateFlow<Map<String, LinkMessage.DeviceStatus>> = _peerStatus.asStateFlow()
+    public val peerStatus: StateFlow<Map<String, PeerMessage.DeviceStatus>> = _peerStatus.asStateFlow()
 
     /** One PC's session: what it was last sent, so each PC gets every change exactly once. */
     private class Peer {
         val sendLock = Mutex()
-        var lastSent: LinkMessage.DeviceStatus? = null
+        var lastSent: PeerMessage.DeviceStatus? = null
     }
 
     private val ringLock = Mutex()
@@ -122,8 +122,8 @@ public class DeviceStatusPublisher(
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.DeviceStatus -> _peerStatus.update { it + (key to message) }
-                            is LinkMessage.DeviceControl -> handleControl(link, peer, message)
+                            is PeerMessage.DeviceStatus -> _peerStatus.update { it + (key to message) }
+                            is PeerMessage.DeviceControl -> handleControl(link, peer, message)
                             else -> Unit
                         }
                     }
@@ -154,7 +154,7 @@ public class DeviceStatusPublisher(
         }
     }
 
-    private suspend fun handleControl(link: CompanionLink, peer: Peer, control: LinkMessage.DeviceControl) {
+    private suspend fun handleControl(link: CompanionLink, peer: Peer, control: PeerMessage.DeviceControl) {
         try {
             if (!controlAllowed.first()) {
                 VeyroLog.i(TAG) { "Ignored devControl: not allowed in Settings" }

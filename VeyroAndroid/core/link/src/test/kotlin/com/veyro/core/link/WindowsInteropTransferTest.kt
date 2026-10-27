@@ -93,7 +93,7 @@ class WindowsInteropTransferTest {
     }
 
     private class PcReceived(
-        val offer: LinkMessage.TransferOffer,
+        val offer: PeerMessage.TransferOffer,
         val bytes: ByteArray,
         val chunkIndices: List<Int>,
     )
@@ -107,11 +107,11 @@ class WindowsInteropTransferTest {
         pc: PeerConnection,
         resume: Map<Int, List<Int>> = emptyMap(),
     ): PcReceived = withContext(Dispatchers.IO) {
-        val offer = pc.receiveOffer().payload as LinkMessage.TransferOffer
+        val offer = pc.receiveOffer().payload as PeerMessage.TransferOffer
         val token = "A".repeat(64)
         ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
             pc.send(
-                LinkMessage.TransferDecision(
+                PeerMessage.TransferDecision(
                     transferId = offer.transferId, accept = true, resume = resume, route = "LAN_TCP",
                     tcpHost = "127.0.0.1", tcpPort = server.localPort, fallbackHost = "127.0.0.1", authToken = token,
                 ),
@@ -145,7 +145,7 @@ class WindowsInteropTransferTest {
                         else -> error("unexpected ${frame.javaClass.simpleName}")
                     }
                 }
-                pc.send(LinkMessage.TransferEnd(offer.transferId, true))
+                pc.send(PeerMessage.TransferEnd(offer.transferId, true))
                 PcReceived(offer, data, indices)
             }
         }
@@ -219,8 +219,8 @@ class WindowsInteropTransferTest {
             val (phone, pc) = pair()
             val source = file(byteArrayOf(1, 2, 3))
             val pcSide = scope.async {
-                val offer = pc.receiveOffer().payload as LinkMessage.TransferOffer
-                pc.send(LinkMessage.TransferDecision(offer.transferId, false, reason))
+                val offer = pc.receiveOffer().payload as PeerMessage.TransferOffer
+                pc.send(PeerMessage.TransferDecision(offer.transferId, false, reason))
             }
 
             val outcome = withTimeout(10_000) {
@@ -254,10 +254,10 @@ class WindowsInteropTransferTest {
         val source = file(byteArrayOf(9, 9, 9))
         val closedPort = ServerSocket(0).use { it.localPort }
         val pcSide = scope.async {
-            val offer = pc.receiveOffer().payload as LinkMessage.TransferOffer
+            val offer = pc.receiveOffer().payload as PeerMessage.TransferOffer
             val mailbox = pc.mailbox(offer.transferId)
             pc.send(
-                LinkMessage.TransferDecision(
+                PeerMessage.TransferDecision(
                     offer.transferId, true, route = "LAN_TCP", tcpHost = "127.0.0.1",
                     tcpPort = closedPort, fallbackHost = "127.0.0.1", authToken = "t",
                 ),
@@ -270,7 +270,7 @@ class WindowsInteropTransferTest {
         }
 
         assertTrue("send: $outcome", outcome is TransferRunner.SendOutcome.Failed)
-        val cancel = pcSide.await() as LinkMessage.Cancel
+        val cancel = pcSide.await() as PeerMessage.Cancel
         assertEquals("f-1", cancel.transferId)
         assertEquals("error", cancel.reason)
         phone.close(); pc.close()
@@ -288,9 +288,9 @@ class WindowsInteropTransferTest {
         val decision = withContext(Dispatchers.IO) {
             val mailbox = pc.mailbox("u-1")
             pc.send(
-                LinkMessage.TransferOffer(
+                PeerMessage.TransferOffer(
                     transferId = "u-1",
-                    items = listOf(LinkMessage.Item(0, "from-pc.bin", bytes.size.toLong(), 0L)),
+                    items = listOf(PeerMessage.Item(0, "from-pc.bin", bytes.size.toLong(), 0L)),
                     totalBytes = bytes.size.toLong(),
                     senderName = "Office PC",
                     preferredRoutes = listOf("LANTCP"), // what the Windows build advertised
@@ -361,7 +361,7 @@ class WindowsInteropTransferTest {
         }
         val decision = withContext(Dispatchers.IO) {
             val mailbox = pc.mailbox("b-1")
-            pc.send(LinkMessage.TransferOffer("b-1", listOf(LinkMessage.Item(0, "x", 1, 0)), 1, "PC", listOf("LAN_TCP")))
+            pc.send(PeerMessage.TransferOffer("b-1", listOf(PeerMessage.Item(0, "x", 1, 0)), 1, "PC", listOf("LAN_TCP")))
             withTimeout(10_000) { mailbox.awaitDecision(10_000) }
         }
         phoneSide.await()
@@ -371,9 +371,9 @@ class WindowsInteropTransferTest {
         phone.close(); pc.close()
     }
 
-    private fun fiveFileOffer(id: String) = LinkMessage.TransferOffer(
+    private fun fiveFileOffer(id: String) = PeerMessage.TransferOffer(
         transferId = id,
-        items = (0 until 5).map { LinkMessage.Item(it, "IMG_$it.jpg", 1_000L + it, 0L) },
+        items = (0 until 5).map { PeerMessage.Item(it, "IMG_$it.jpg", 1_000L + it, 0L) },
         totalBytes = 5_010L,
         senderName = "Office PC",
         preferredRoutes = listOf("LAN_TCP"),
@@ -407,7 +407,7 @@ class WindowsInteropTransferTest {
         assertTrue(decision!!.accept)
         assertNotNull(decision.tcpPort)
 
-        pc.send(LinkMessage.Cancel("p-1", "test over"))
+        pc.send(PeerMessage.Cancel("p-1", "test over"))
         phone.close(); pc.close()
         driver.cancel()
     }
@@ -430,7 +430,7 @@ class WindowsInteropTransferTest {
         coordinator.respondToOffer("a-1", accept = true, alwaysAccept = true)
         assertTrue(withTimeout(10_000) { first.awaitDecision(10_000) }!!.accept)
         assertEquals(setOf(PC), remembered.toSet())
-        pc.send(LinkMessage.Cancel("a-1", "test over"))
+        pc.send(PeerMessage.Cancel("a-1", "test over"))
         withTimeout(10_000) { while (coordinator.activeTransfer.value?.isTerminal != true) kotlinx.coroutines.delay(20) }
 
         val second = pc.mailbox("a-2")
@@ -439,7 +439,7 @@ class WindowsInteropTransferTest {
         assertTrue("the second offer is accepted without a prompt", decision!!.accept)
         assertNull(coordinator.pendingOffer.value)
 
-        pc.send(LinkMessage.Cancel("a-2", "test over"))
+        pc.send(PeerMessage.Cancel("a-2", "test over"))
         phone.close(); pc.close()
         driver.cancel()
     }
@@ -458,7 +458,7 @@ class WindowsInteropTransferTest {
         assertTrue(withTimeout(10_000) { mailbox.awaitDecision(10_000) }!!.accept)
         assertTrue("nothing stored without the box", remembered.isEmpty())
 
-        pc.send(LinkMessage.Cancel("o-1", "test over"))
+        pc.send(PeerMessage.Cancel("o-1", "test over"))
         phone.close(); pc.close()
         driver.cancel()
     }
@@ -491,7 +491,7 @@ class WindowsInteropTransferTest {
         pc.send(fiveFileOffer("c-1"))
         awaitPending(coordinator)
 
-        pc.send(LinkMessage.Cancel("c-1", "timeout"))
+        pc.send(PeerMessage.Cancel("c-1", "timeout"))
         withTimeout(10_000) { while (coordinator.pendingOffer.value != null) kotlinx.coroutines.delay(20) }
 
         assertNull(coordinator.pendingOffer.value)

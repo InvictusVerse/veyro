@@ -358,12 +358,12 @@ public class NoiseHandshakeEngine(
  */
 public object VlpPrologue {
 
-    public fun session(): ByteArray = build(com.veyro.core.protocol.Vlp.MODE_SESSION)
+    public fun session(): ByteArray = build(com.veyro.core.protocol.ProtocolConstants.MODE_SESSION)
 
-    public fun pairing(): ByteArray = build(com.veyro.core.protocol.Vlp.MODE_PAIRING)
+    public fun pairing(): ByteArray = build(com.veyro.core.protocol.ProtocolConstants.MODE_PAIRING)
 
     private fun build(mode: Byte): ByteArray {
-        val prefix = com.veyro.core.protocol.Vlp.PROLOGUE_PREFIX.toByteArray(Charsets.US_ASCII)
-        return prefix + byteArrayOf(com.veyro.core.protocol.Vlp.VERSION.toByte(), mode)
+        val prefix = com.veyro.core.protocol.ProtocolConstants.PROLOGUE_PREFIX.toByteArray(Charsets.US_ASCII)
+        return prefix + byteArrayOf(com.veyro.core.protocol.ProtocolConstants.VERSION.toByte(), mode)
     }
 }

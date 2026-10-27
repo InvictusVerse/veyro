@@ -1,6 +1,6 @@
 // Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/navigation/transitions/NavigationTransitions.kt, GPL-3.0.
 // Modified for Veyro.
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform

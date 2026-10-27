@@ -19,7 +19,7 @@ import java.io.File
  */
 class MediaStatusMessageVectorTest {
 
-    private val json = LinkJson.codec
+    private val json = PeerMessageJson.codec
 
     private fun vectors(): List<Pair<String, String>> {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -36,10 +36,10 @@ class MediaStatusMessageVectorTest {
     }
 
     private val expectedTypes = mapOf(
-        "mediaState" to LinkMessage.MediaState::class,
-        "mediaCmd" to LinkMessage.MediaCommand::class,
-        "devStatus" to LinkMessage.DeviceStatus::class,
-        "devControl" to LinkMessage.DeviceControl::class,
+        "mediaState" to PeerMessage.MediaState::class,
+        "mediaCmd" to PeerMessage.MediaCommand::class,
+        "devStatus" to PeerMessage.DeviceStatus::class,
+        "devControl" to PeerMessage.DeviceControl::class,
     )
 
     @Test
@@ -48,11 +48,11 @@ class MediaStatusMessageVectorTest {
         assertEquals(6, all.size)
 
         for ((type, text) in all) {
-            val decoded = json.decodeFromString<LinkMessage>(text)
+            val decoded = json.decodeFromString<PeerMessage>(text)
             val expected = expectedTypes.getValue(type)
             assertTrue("vector '$type' decoded to ${decoded::class.simpleName}", expected.isInstance(decoded))
 
-            val reEncoded = json.encodeToString<LinkMessage>(decoded)
+            val reEncoded = json.encodeToString<PeerMessage>(decoded)
             assertEquals(
                 "vector '$type' did not round-trip",
                 json.parseToJsonElement(text) as JsonObject,
@@ -63,9 +63,9 @@ class MediaStatusMessageVectorTest {
 
     @Test
     fun `vectors carry the expected values`() {
-        val decoded = vectors().map { (_, text) -> json.decodeFromString<LinkMessage>(text) }
+        val decoded = vectors().map { (_, text) -> json.decodeFromString<PeerMessage>(text) }
 
-        val state = decoded[0] as LinkMessage.MediaState
+        val state = decoded[0] as PeerMessage.MediaState
         val session = state.sessions.single()
         assertEquals("s1", session.id)
         assertTrue(session.playing && session.canSeek)
@@ -74,13 +74,13 @@ class MediaStatusMessageVectorTest {
         assertNull(session.art)
         assertEquals(40, state.volume)
 
-        val empty = decoded[1] as LinkMessage.MediaState
+        val empty = decoded[1] as PeerMessage.MediaState
         assertTrue(empty.sessions.isEmpty())
         assertNull(empty.volume)
 
-        assertEquals(LinkMessage.MediaCommand(LinkMessage.MediaCommand.SEEK, "s1", 90000L), decoded[2])
-        assertEquals(LinkMessage.MediaCommand(LinkMessage.MediaCommand.VOLUME, null, 25L), decoded[3])
-        assertEquals(LinkMessage.DeviceStatus(battery = 82, charging = true, ringer = "vibrate", dnd = false), decoded[4])
-        assertEquals(LinkMessage.DeviceControl(ring = true), decoded[5])
+        assertEquals(PeerMessage.MediaCommand(PeerMessage.MediaCommand.SEEK, "s1", 90000L), decoded[2])
+        assertEquals(PeerMessage.MediaCommand(PeerMessage.MediaCommand.VOLUME, null, 25L), decoded[3])
+        assertEquals(PeerMessage.DeviceStatus(battery = 82, charging = true, ringer = "vibrate", dnd = false), decoded[4])
+        assertEquals(PeerMessage.DeviceControl(ring = true), decoded[5])
     }
 }

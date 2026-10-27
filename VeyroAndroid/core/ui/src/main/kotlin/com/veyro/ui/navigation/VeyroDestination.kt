@@ -1,4 +1,4 @@
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import kotlinx.serialization.Serializable
 

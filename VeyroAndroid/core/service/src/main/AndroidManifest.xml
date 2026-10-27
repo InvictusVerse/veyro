@@ -16,15 +16,6 @@
 
     <application>
         <!--
-          dataSync, not connectedDevice: this is a bulk data transfer over IP with a bounded
-          lifetime, which is what dataSync describes.
-        -->
-        <service
-            android:name="com.veyro.core.service.VeyroTransferService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
-        <!--
           connectedDevice: keeps the link to the paired PC open for as long as the user wants
           (ADR-036). dataSync would be capped at 6 h/day on Android 15 and could not start at boot.
         -->

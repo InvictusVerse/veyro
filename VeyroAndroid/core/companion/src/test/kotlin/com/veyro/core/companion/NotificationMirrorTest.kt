@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -20,23 +20,23 @@ class NotificationMirrorTest {
 
     private class FakeLink(caps: Capabilities) : CompanionLink {
         val caps = MutableStateFlow(caps)
-        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 16)
-        val sent = mutableListOf<LinkMessage>()
+        val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 16)
+        val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> get() = caps
-        override val incoming: Flow<LinkMessage> get() = inbound
-        override suspend fun send(message: LinkMessage) {
+        override val incoming: Flow<PeerMessage> get() = inbound
+        override suspend fun send(message: PeerMessage) {
             sent += message
         }
-        val notifs get() = sent.filterIsInstance<LinkMessage.Notification>()
+        val notifs get() = sent.filterIsInstance<PeerMessage.Notification>()
     }
 
     private class FakeSource : NotificationSource {
         val availableFlow = MutableStateFlow(true)
         val eventFlow = MutableSharedFlow<NotificationEvent>(extraBufferCapacity = 16)
-        val active = mutableListOf<LinkMessage.Notification>()
+        val active = mutableListOf<PeerMessage.Notification>()
         override val available: Flow<Boolean> get() = availableFlow
         override val events: Flow<NotificationEvent> get() = eventFlow
-        override suspend fun activeNotifications(): List<LinkMessage.Notification> = active.toList()
+        override suspend fun activeNotifications(): List<PeerMessage.Notification> = active.toList()
         override suspend fun isActive(key: String): Boolean = active.any { it.key == key }
     }
 
@@ -56,9 +56,9 @@ class NotificationMirrorTest {
     private val mirrorCaps = Capabilities.of(Capability.FILE_TRANSFER, Capability.NOTIFICATION_MIRROR)
     private val plainCaps = Capabilities.of(Capability.FILE_TRANSFER)
 
-    private fun notif(key: String) = LinkMessage.Notification(
+    private fun notif(key: String) = PeerMessage.Notification(
         key = key,
-        kind = LinkMessage.Notification.KIND_POSTED,
+        kind = PeerMessage.Notification.KIND_POSTED,
         pkg = "com.example.chat",
         title = "t",
     )
@@ -87,7 +87,7 @@ class NotificationMirrorTest {
         runCurrent()
 
         assertEquals(listOf("a", "b"), link.notifs.map { it.key })
-        assertTrue(link.notifs.all { it.kind == LinkMessage.Notification.KIND_ACTIVE })
+        assertTrue(link.notifs.all { it.kind == PeerMessage.Notification.KIND_ACTIVE })
     }
 
     @Test
@@ -102,11 +102,11 @@ class NotificationMirrorTest {
         runCurrent()
 
         assertEquals(
-            listOf("c" to LinkMessage.Notification.KIND_POSTED, "c" to LinkMessage.Notification.KIND_REMOVED),
+            listOf("c" to PeerMessage.Notification.KIND_POSTED, "c" to PeerMessage.Notification.KIND_REMOVED),
             link.notifs.map { it.key to it.kind },
         )
         // A removed frame carries only the key.
-        assertEquals(LinkMessage.Notification("c", LinkMessage.Notification.KIND_REMOVED), link.notifs[1])
+        assertEquals(PeerMessage.Notification("c", PeerMessage.Notification.KIND_REMOVED), link.notifs[1])
     }
 
     @Test
@@ -159,9 +159,9 @@ class NotificationMirrorTest {
         rig.links.value = link
         runCurrent()
 
-        link.inbound.emit(LinkMessage.NotificationActionRequest("ghost", 0))
-        link.inbound.emit(LinkMessage.NotificationReplyRequest("ghost", "hi"))
-        link.inbound.emit(LinkMessage.NotificationDismissRequest("ghost"))
+        link.inbound.emit(PeerMessage.NotificationActionRequest("ghost", 0))
+        link.inbound.emit(PeerMessage.NotificationReplyRequest("ghost", "hi"))
+        link.inbound.emit(PeerMessage.NotificationDismissRequest("ghost"))
         runCurrent()
 
         assertTrue(rig.executor.calls.isEmpty())
@@ -175,9 +175,9 @@ class NotificationMirrorTest {
         rig.links.value = link
         runCurrent()
 
-        link.inbound.emit(LinkMessage.NotificationActionRequest("a", 2))
-        link.inbound.emit(LinkMessage.NotificationReplyRequest("a", "Sure, 1pm"))
-        link.inbound.emit(LinkMessage.NotificationDismissRequest("a"))
+        link.inbound.emit(PeerMessage.NotificationActionRequest("a", 2))
+        link.inbound.emit(PeerMessage.NotificationReplyRequest("a", "Sure, 1pm"))
+        link.inbound.emit(PeerMessage.NotificationDismissRequest("a"))
         runCurrent()
 
         assertEquals(listOf("action:a:2", "reply:a:Sure, 1pm", "dismiss:a"), rig.executor.calls)
@@ -192,7 +192,7 @@ class NotificationMirrorTest {
         runCurrent()
 
         link.inbound.emit(
-            LinkMessage.NotificationReplyRequest("a", "x".repeat(NotificationMirror.MAX_REPLY_CHARS + 1)),
+            PeerMessage.NotificationReplyRequest("a", "x".repeat(NotificationMirror.MAX_REPLY_CHARS + 1)),
         )
         runCurrent()
 
@@ -207,7 +207,7 @@ class NotificationMirrorTest {
         rig.links.value = link
         runCurrent()
 
-        link.inbound.emit(LinkMessage.NotificationDismissRequest("a"))
+        link.inbound.emit(PeerMessage.NotificationDismissRequest("a"))
         runCurrent()
 
         assertTrue(rig.executor.calls.isEmpty())

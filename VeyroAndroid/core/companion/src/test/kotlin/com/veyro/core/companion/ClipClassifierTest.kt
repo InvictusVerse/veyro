@@ -1,14 +1,14 @@
 package com.veyro.core.companion
 
-import com.veyro.core.companion.ClipSmarts.Kind
+import com.veyro.core.companion.ClipClassifier.Kind
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /** What the "Copied on PC" notification offers for a copied text (ADR-043). */
-class ClipSmartsTest {
+class ClipClassifierTest {
 
     private fun check(text: String?, kind: Kind, value: String) {
-        assertEquals("for '$text'", ClipSmarts.Result(kind, value), ClipSmarts.classify(text))
+        assertEquals("for '$text'", ClipClassifier.Result(kind, value), ClipClassifier.classify(text))
     }
 
     @Test

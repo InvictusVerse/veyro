@@ -1,7 +1,7 @@
 // Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/navigation/graphs/RootNavGraph.kt, GPL-3.0.
 // Modified for Veyro.
 // The device routes follow app/src/main/java/com/castle/sefirah/navigation/graphs/DevicesNavGraph.kt.
-package com.veyro.navigation
+package com.veyro.ui.navigation
 
 import android.content.Intent
 import android.net.Uri
@@ -32,8 +32,8 @@ import androidx.navigation.toRoute
 import com.veyro.core.designsystem.components.VeyroDetailScaffold
 import com.veyro.core.link.TransferCoordinator
 import com.veyro.core.model.ActiveTransfer
-import com.veyro.feature.clipboard.ClipboardScreen
-import com.veyro.feature.clipboard.ClipboardViewModel
+import com.veyro.ui.clipboard.ClipboardScreen
+import com.veyro.ui.clipboard.ClipboardViewModel
 import com.veyro.ui.components.ActiveTransferBanner
 import com.veyro.ui.components.ActiveTransferDialog
 import com.veyro.ui.components.TransferBannerModel

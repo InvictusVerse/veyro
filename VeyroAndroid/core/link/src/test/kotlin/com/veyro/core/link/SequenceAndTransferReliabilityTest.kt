@@ -141,7 +141,7 @@ public class SequenceAndTransferReliabilityTest {
         val sendCount = 50
         val jobs = (1..sendCount).map { i ->
             async {
-                connection.send(LinkMessage.Ping("ping-$i"))
+                connection.send(PeerMessage.Ping("ping-$i"))
             }
         }
         jobs.awaitAll()
@@ -152,12 +152,12 @@ public class SequenceAndTransferReliabilityTest {
             val frame = wireFrames.receive()
             assertTrue(frame is Frame.Text)
             val text = (frame as Frame.Text).readText()
-            val wire = LinkJson.codec.decodeFromString(LinkWireFrame.serializer(), text)
+            val wire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), text)
             val sealed = wire.toSealed()
             assertNotNull(sealed)
             val json = FrameCrypto.open(sealed!!, sessionKey)
             assertNotNull(json)
-            val envelope = LinkJson.codec.decodeFromString(LinkEnvelope.serializer(), json!!)
+            val envelope = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), json!!)
             receivedSeqs.add(envelope.seq)
         }
 
@@ -202,7 +202,7 @@ public class SequenceAndTransferReliabilityTest {
         val pingJob = launch {
             repeat(5) {
                 delay(20)
-                sender.send(LinkMessage.Ping("interleaved-$it"))
+                sender.send(PeerMessage.Ping("interleaved-$it"))
             }
         }
 
@@ -260,10 +260,10 @@ public class SequenceAndTransferReliabilityTest {
         // Setup mailbox first to eliminate registration race, then send offer
         val mb = sender.mailbox(tid)
         sender.send(
-            LinkMessage.TransferOffer(
+            PeerMessage.TransferOffer(
                 transferId = tid,
                 items = listOf(
-                    LinkMessage.Item(
+                    PeerMessage.Item(
                         index = 0,
                         relPath = "large_dataset.bin",
                         size = totalBytes,
@@ -280,7 +280,7 @@ public class SequenceAndTransferReliabilityTest {
         assertTrue(decision!!.accept)
 
         sender.send(
-            LinkMessage.ItemBegin(
+            PeerMessage.ItemBegin(
                 transferId = tid,
                 index = 0,
                 size = totalBytes,
@@ -292,7 +292,7 @@ public class SequenceAndTransferReliabilityTest {
         val b64 = Base64.getEncoder().encodeToString(chunkData)
         for (chunkIdx in 0 until 400) {
             sender.send(
-                LinkMessage.Chunk(
+                PeerMessage.Chunk(
                     transferId = tid,
                     index = 0,
                     chunkIndex = chunkIdx,
@@ -301,12 +301,12 @@ public class SequenceAndTransferReliabilityTest {
             )
         }
 
-        sender.send(LinkMessage.ItemEnd(tid, 0, expectedSha))
+        sender.send(PeerMessage.ItemEnd(tid, 0, expectedSha))
         val itemRes = mb.awaitItemResult(0, 10_000L)
         assertNotNull(itemRes)
         assertTrue(itemRes!!.ok)
 
-        sender.send(LinkMessage.TransferEnd(tid, completed = true))
+        sender.send(PeerMessage.TransferEnd(tid, completed = true))
         rxJob.join()
 
         assertTrue(stagesObserved.contains(TransferStage.TRANSFERRING))
@@ -344,10 +344,10 @@ public class SequenceAndTransferReliabilityTest {
 
         val mb = sender.mailbox(tid)
         sender.send(
-            LinkMessage.TransferOffer(
+            PeerMessage.TransferOffer(
                 transferId = tid,
                 items = listOf(
-                    LinkMessage.Item(
+                    PeerMessage.Item(
                         index = 0,
                         relPath = "incomplete.bin",
                         size = totalBytes,
@@ -364,7 +364,7 @@ public class SequenceAndTransferReliabilityTest {
 
         // Send item begin and exactly one chunk
         sender.send(
-            LinkMessage.ItemBegin(
+            PeerMessage.ItemBegin(
                 transferId = tid,
                 index = 0,
                 size = totalBytes,
@@ -374,7 +374,7 @@ public class SequenceAndTransferReliabilityTest {
         )
         val oneChunk = ByteArray(256 * 1024) { 1 }
         sender.send(
-            LinkMessage.Chunk(
+            PeerMessage.Chunk(
                 transferId = tid,
                 index = 0,
                 chunkIndex = 0,
@@ -433,10 +433,10 @@ public class SequenceAndTransferReliabilityTest {
         // Offer transfer
         val tid = "tid-coord-fail"
         sender.send(
-            LinkMessage.TransferOffer(
+            PeerMessage.TransferOffer(
                 transferId = tid,
                 items = listOf(
-                    LinkMessage.Item(
+                    PeerMessage.Item(
                         index = 0,
                         relPath = "abrupt.bin",
                         size = 10_000_000L,
@@ -454,10 +454,10 @@ public class SequenceAndTransferReliabilityTest {
 
         // Send 1 chunk then kill sender
         sender.send(
-            LinkMessage.ItemBegin(tid, 0, 10_000_000L, 40, 256 * 1024),
+            PeerMessage.ItemBegin(tid, 0, 10_000_000L, 40, 256 * 1024),
         )
         sender.send(
-            LinkMessage.Chunk(tid, 0, 0, Base64.getEncoder().encodeToString(ByteArray(1024))),
+            PeerMessage.Chunk(tid, 0, 0, Base64.getEncoder().encodeToString(ByteArray(1024))),
         )
 
         // Force kill session
@@ -508,10 +508,10 @@ public class SequenceAndTransferReliabilityTest {
 
         val mb = sender.mailbox(tid)
         sender.send(
-            LinkMessage.TransferOffer(
+            PeerMessage.TransferOffer(
                 transferId = tid,
                 items = listOf(
-                    LinkMessage.Item(
+                    PeerMessage.Item(
                         index = 0,
                         relPath = "slow_stream.bin",
                         size = totalBytes,
@@ -528,7 +528,7 @@ public class SequenceAndTransferReliabilityTest {
         assertTrue(decision!!.accept)
 
         sender.send(
-            LinkMessage.ItemBegin(
+            PeerMessage.ItemBegin(
                 transferId = tid,
                 index = 0,
                 size = totalBytes,
@@ -540,7 +540,7 @@ public class SequenceAndTransferReliabilityTest {
         val b64 = Base64.getEncoder().encodeToString(chunkData)
         for (idx in 0 until chunkCount) {
             sender.send(
-                LinkMessage.Chunk(
+                PeerMessage.Chunk(
                     transferId = tid,
                     index = 0,
                     chunkIndex = idx,
@@ -549,12 +549,12 @@ public class SequenceAndTransferReliabilityTest {
             )
         }
 
-        sender.send(LinkMessage.ItemEnd(tid, 0, expectedSha))
+        sender.send(PeerMessage.ItemEnd(tid, 0, expectedSha))
         val itemRes = mb.awaitItemResult(0, 5000L)
         assertNotNull(itemRes)
         assertTrue(itemRes!!.ok)
 
-        sender.send(LinkMessage.TransferEnd(tid, completed = true))
+        sender.send(PeerMessage.TransferEnd(tid, completed = true))
         rxJob.join()
 
         assertEquals(chunkCount, writtenCount)
@@ -586,10 +586,10 @@ public class SequenceAndTransferReliabilityTest {
 
         val mb = sender.mailbox(tid)
         sender.send(
-            LinkMessage.TransferOffer(
+            PeerMessage.TransferOffer(
                 transferId = tid,
                 items = listOf(
-                    LinkMessage.Item(index = 0, relPath = "cancel.bin", size = totalBytes, mtime = 0L),
+                    PeerMessage.Item(index = 0, relPath = "cancel.bin", size = totalBytes, mtime = 0L),
                 ),
                 totalBytes = totalBytes,
                 senderName = "CancellingSender",
@@ -599,11 +599,11 @@ public class SequenceAndTransferReliabilityTest {
         val decision = mb.awaitDecision(5000L)
         assertNotNull(decision)
 
-        sender.send(LinkMessage.ItemBegin(tid, 0, totalBytes, 40, 256 * 1024))
-        sender.send(LinkMessage.Chunk(tid, 0, 0, Base64.getEncoder().encodeToString(ByteArray(1024))))
+        sender.send(PeerMessage.ItemBegin(tid, 0, totalBytes, 40, 256 * 1024))
+        sender.send(PeerMessage.Chunk(tid, 0, 0, Base64.getEncoder().encodeToString(ByteArray(1024))))
 
         // Sender cancels
-        sender.send(LinkMessage.Cancel(tid, "user-cancelled"))
+        sender.send(PeerMessage.Cancel(tid, "user-cancelled"))
         rxJob.join()
 
         assertEquals(TransferStage.CANCELLED, lastReportedStage)

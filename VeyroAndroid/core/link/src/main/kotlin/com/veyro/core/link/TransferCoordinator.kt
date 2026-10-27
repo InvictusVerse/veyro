@@ -46,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
  * driver runs a receive loop on every inbound connection - while the sender side is driven by
  * [sendTo], which dials, waits for the connection, and streams.
  *
- * No screen ever sees a `PeerConnection` or a `LinkMessage`; it sees progress, offers and outcomes.
+ * No screen ever sees a `PeerConnection` or a `PeerMessage`; it sees progress, offers and outcomes.
  * That is what keeps the UI testable against a fake and the protocol out of the UI.
  */
 public class TransferCoordinator(
@@ -722,7 +722,7 @@ public class TransferCoordinator(
         }
     }
 
-    private suspend fun authorize(session: PeerConnection, offer: LinkMessage.TransferOffer): Boolean {
+    private suspend fun authorize(session: PeerConnection, offer: PeerMessage.TransferOffer): Boolean {
         val transferId = offer.transferId
         val peerId = session.peerDeviceId?.let { DeviceId.parseOrNull(it) ?: DeviceId(it) }
         VeyroLog.i(TAG) { "[$transferId] Authorizing transfer from ${offer.senderName} (peerId=$peerId, ${offer.items.size} items, ${offer.totalBytes} bytes)" }

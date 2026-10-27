@@ -11,7 +11,7 @@ import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -49,7 +49,7 @@ public class AndroidNotificationSource(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Origin>?): Boolean = size > 500
     }
 
-    private fun remember(wire: LinkMessage.Notification): LinkMessage.Notification {
+    private fun remember(wire: PeerMessage.Notification): PeerMessage.Notification {
         val pkg = wire.pkg
         val title = wire.title
         if (pkg != null && title != null) synchronized(origins) { origins[wire.key] = Origin(pkg, title) }
@@ -65,7 +65,7 @@ public class AndroidNotificationSource(
         withContext(dispatchers.default) {
             when (raw) {
                 is RawNotificationEvent.Posted ->
-                    mapper.toWire(raw.sbn, LinkMessage.Notification.KIND_POSTED)
+                    mapper.toWire(raw.sbn, PeerMessage.Notification.KIND_POSTED)
                         ?.let { NotificationEvent.Posted(remember(it)) }
                 is RawNotificationEvent.Removed ->
                     if (mapper.isMirrorable(raw.sbn)) NotificationEvent.Removed(raw.sbn.key) else null
@@ -73,7 +73,7 @@ public class AndroidNotificationSource(
         }
     }
 
-    override suspend fun activeNotifications(): List<LinkMessage.Notification> =
+    override suspend fun activeNotifications(): List<PeerMessage.Notification> =
         withContext(dispatchers.io) {
             val listener = ListenerBridge.listener.value ?: return@withContext emptyList()
             val all = try {
@@ -83,7 +83,7 @@ public class AndroidNotificationSource(
                 VeyroLog.w(TAG) { "Active notifications unavailable: ${e.javaClass.simpleName}" }
                 emptyArray()
             }
-            all.mapNotNull { mapper.toWire(it, LinkMessage.Notification.KIND_ACTIVE)?.let(::remember) }
+            all.mapNotNull { mapper.toWire(it, PeerMessage.Notification.KIND_ACTIVE)?.let(::remember) }
         }
 
     override suspend fun isActive(key: String): Boolean = resolve(key) != null

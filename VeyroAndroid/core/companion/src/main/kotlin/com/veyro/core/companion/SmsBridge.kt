@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -40,22 +40,22 @@ public interface SmsSource {
     public val changes: Flow<Unit>
 
     /** SIMs able to send SMS; empty without `READ_PHONE_STATE`. */
-    public suspend fun sims(): List<LinkMessage.SimInfo>
+    public suspend fun sims(): List<PeerMessage.SimInfo>
 
     /** Up to [limit] threads, newest first. Empty without `READ_SMS`. */
-    public suspend fun threads(limit: Int): List<LinkMessage.SmsThread>
+    public suspend fun threads(limit: Int): List<PeerMessage.SmsThread>
 
     /** One thread's summary, or null when unknown or unreadable. */
-    public suspend fun thread(threadId: Long): LinkMessage.SmsThread?
+    public suspend fun thread(threadId: Long): PeerMessage.SmsThread?
 
     /** Up to [limit] messages of [threadId], newest first, strictly older than [beforeTs] if set. */
-    public suspend fun messages(threadId: Long, beforeTs: Long?, limit: Int): List<LinkMessage.SmsMessage>
+    public suspend fun messages(threadId: Long, beforeTs: Long?, limit: Int): List<PeerMessage.SmsMessage>
 
     /** The highest message id in the store right now, 0 when empty or unreadable. */
     public suspend fun maxId(): Long
 
     /** Messages with an id greater than [id], ascending by id. */
-    public suspend fun messagesAfter(id: Long): List<LinkMessage.SmsMessage>
+    public suspend fun messagesAfter(id: Long): List<PeerMessage.SmsMessage>
 }
 
 /** One text handed to the radio: how many parts it was split into and one result per part. */
@@ -149,10 +149,10 @@ public class SmsBridge(
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.SmsThreadsRequest -> link.send(threads(on.value, message))
-                            is LinkMessage.SmsMessagesRequest -> link.send(messages(on.value, message))
+                            is PeerMessage.SmsThreadsRequest -> link.send(threads(on.value, message))
+                            is PeerMessage.SmsMessagesRequest -> link.send(messages(on.value, message))
                             // Concurrent, so a slow radio never blocks history requests.
-                            is LinkMessage.SmsSend -> launch { link.send(send(on.value, message)) }
+                            is PeerMessage.SmsSend -> launch { link.send(send(on.value, message)) }
                             else -> Unit
                         }
                     }
@@ -176,7 +176,7 @@ public class SmsBridge(
                 source.changes.collect { signals.trySend(Unit) }
             }
             val sims = safely(emptyList()) { source.sims() }
-            link.send(LinkMessage.SimList(sims))
+            link.send(PeerMessage.SimList(sims))
             var mark = safely(0L) { source.maxId() }
             VeyroLog.i(TAG) { "SMS serving started; ${sims.size} SIM(s)" }
             while (true) {
@@ -188,7 +188,7 @@ public class SmsBridge(
                 for (message in fresh.sortedBy { it.id }) {
                     if (message.id <= mark) continue
                     val thread = safely(null) { source.thread(message.threadId) }
-                    link.send(LinkMessage.SmsNew(message = message, thread = thread))
+                    link.send(PeerMessage.SmsNew(message = message, thread = thread))
                     mark = message.id
                 }
                 if (fresh.isNotEmpty()) VeyroLog.d(TAG) { "Pushed ${fresh.size} new SMS" }
@@ -196,30 +196,30 @@ public class SmsBridge(
         }
     }
 
-    private suspend fun threads(on: Boolean, request: LinkMessage.SmsThreadsRequest): LinkMessage.SmsThreads {
-        if (!on) return LinkMessage.SmsThreads(emptyList())
+    private suspend fun threads(on: Boolean, request: PeerMessage.SmsThreadsRequest): PeerMessage.SmsThreads {
+        if (!on) return PeerMessage.SmsThreads(emptyList())
         val limit = request.limit.coerceIn(1, MAX_LIMIT)
         val threads = safely(emptyList()) { source.threads(limit) }.take(limit)
         VeyroLog.d(TAG) { "smsThreads: ${threads.size}" }
-        return LinkMessage.SmsThreads(threads)
+        return PeerMessage.SmsThreads(threads)
     }
 
-    private suspend fun messages(on: Boolean, request: LinkMessage.SmsMessagesRequest): LinkMessage.SmsMessages {
-        if (!on) return LinkMessage.SmsMessages(threadId = request.threadId, messages = emptyList())
+    private suspend fun messages(on: Boolean, request: PeerMessage.SmsMessagesRequest): PeerMessage.SmsMessages {
+        if (!on) return PeerMessage.SmsMessages(threadId = request.threadId, messages = emptyList())
         val limit = request.limit.coerceIn(1, MAX_LIMIT)
         // One extra row tells whether an older page exists.
         val rows = safely(emptyList()) { source.messages(request.threadId, request.beforeTs, limit + 1) }
         val page = rows.take(limit)
         VeyroLog.d(TAG) { "smsMessages: ${page.size}" }
-        return LinkMessage.SmsMessages(threadId = request.threadId, messages = page, more = rows.size > limit)
+        return PeerMessage.SmsMessages(threadId = request.threadId, messages = page, more = rows.size > limit)
     }
 
     /**
      * Refusals are checked in privacy order: switched off first (tells the PC nothing), then the
      * request's own shape, then the permission. One result per `clientId`, always.
      */
-    private suspend fun send(on: Boolean, request: LinkMessage.SmsSend): LinkMessage.SmsSendResult {
-        fun fail(error: String) = LinkMessage.SmsSendResult(clientId = request.clientId, ok = false, error = error)
+    private suspend fun send(on: Boolean, request: PeerMessage.SmsSend): PeerMessage.SmsSendResult {
+        fun fail(error: String) = PeerMessage.SmsSendResult(clientId = request.clientId, ok = false, error = error)
         if (!on) return fail(ERR_DISABLED)
         val addresses = validate(request.addresses, request.body) ?: return fail(ERR_INVALID)
         if (!sender.canSend()) return fail(ERR_PERMISSION)
@@ -249,7 +249,7 @@ public class SmsBridge(
 
         VeyroLog.i(TAG) { "smsSend to ${addresses.size} address(es): $outcome" }
         return if (outcome == PART_OK) {
-            LinkMessage.SmsSendResult(clientId = request.clientId, ok = true)
+            PeerMessage.SmsSendResult(clientId = request.clientId, ok = true)
         } else {
             fail(outcome)
         }

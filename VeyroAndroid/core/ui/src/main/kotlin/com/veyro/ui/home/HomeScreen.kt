@@ -46,7 +46,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.veyro.core.designsystem.components.PullRefresh
 import com.veyro.core.designsystem.icons.VeyroIcons
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.DeviceId
 import com.veyro.core.network.DiagnosisAdvice
 import com.veyro.ui.home.components.ActionTile
@@ -229,9 +229,9 @@ public fun HomeScreen(
                             pcName = state.selectedPc?.name ?: "PC",
                             volume = volume,
                             muted = muted,
-                            onVolumeChange = { viewModel.mediaCommand(LinkMessage.MediaCommand.VOLUME, null, it.toLong()) },
+                            onVolumeChange = { viewModel.mediaCommand(PeerMessage.MediaCommand.VOLUME, null, it.toLong()) },
                             onToggleMute = {
-                                viewModel.mediaCommand(LinkMessage.MediaCommand.MUTE, null, if (muted) 0L else 1L)
+                                viewModel.mediaCommand(PeerMessage.MediaCommand.MUTE, null, if (muted) 0L else 1L)
                             },
                         )
                     }

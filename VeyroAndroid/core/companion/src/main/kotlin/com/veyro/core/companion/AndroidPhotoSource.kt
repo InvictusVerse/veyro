@@ -15,7 +15,7 @@ import android.util.Size
 import android.webkit.MimeTypeMap
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.link.OutgoingFile
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -101,19 +101,19 @@ public class AndroidPhotoSource(
 
     override fun canRead(): Boolean = isGranted(appContext)
 
-    override suspend fun photos(limit: Int): List<LinkMessage.PhotoInfo> = read(emptyList()) {
-        val out = ArrayList<LinkMessage.PhotoInfo>()
+    override suspend fun photos(limit: Int): List<PeerMessage.PhotoInfo> = read(emptyList()) {
+        val out = ArrayList<PeerMessage.PhotoInfo>()
         // Sorted by date taken so the newest come first; rows without one (some screenshots) sort
         // last in SQL, so the final order is by the derived timestamp.
         query(PROJECTION, SCOPE, null, "$TAKEN DESC, $ID DESC")?.use { c ->
             var scanned = 0
             while (c.moveToNext() && scanned++ < MAX_SCAN_ROWS) out += info(c)
         }
-        out.sortedWith(compareByDescending<LinkMessage.PhotoInfo> { it.ts }.thenByDescending { it.id }).take(limit)
+        out.sortedWith(compareByDescending<PeerMessage.PhotoInfo> { it.ts }.thenByDescending { it.id }).take(limit)
     }
 
-    override suspend fun photosAfter(id: Long): List<LinkMessage.PhotoInfo> = read(emptyList()) {
-        val out = ArrayList<LinkMessage.PhotoInfo>()
+    override suspend fun photosAfter(id: Long): List<PeerMessage.PhotoInfo> = read(emptyList()) {
+        val out = ArrayList<PeerMessage.PhotoInfo>()
         query(PROJECTION, "$SCOPE AND $ID > ?", arrayOf(id.toString()), "$ID ASC")?.use { c ->
             while (out.size < MAX_NEW_PER_PASS && c.moveToNext()) out += info(c)
         }
@@ -189,11 +189,11 @@ public class AndroidPhotoSource(
     private fun inScope(id: Long): Boolean =
         query(arrayOf(ID), "$SCOPE AND $ID = ?", arrayOf(id.toString()), null)?.use { it.moveToFirst() } == true
 
-    private fun info(c: Cursor): LinkMessage.PhotoInfo {
+    private fun info(c: Cursor): PeerMessage.PhotoInfo {
         val taken = if (c.isNull(2)) 0L else c.getLong(2)
         val added = if (c.isNull(3)) 0L else c.getLong(3)
         val path = c.getString(8).orEmpty()
-        return LinkMessage.PhotoInfo(
+        return PeerMessage.PhotoInfo(
             id = c.getLong(0),
             name = c.getString(1).orEmpty(),
             ts = if (taken > 0L) taken else added * 1000L,

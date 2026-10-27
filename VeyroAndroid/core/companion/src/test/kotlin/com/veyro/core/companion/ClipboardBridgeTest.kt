@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,14 +22,14 @@ import java.util.Base64
 class ClipboardBridgeTest {
 
     private class FakeLink(caps: Capabilities, override val peerDeviceId: String = "PC-A") : CompanionLink {
-        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 64)
-        val sent = mutableListOf<LinkMessage>()
+        val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 64)
+        val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> = MutableStateFlow(caps)
-        override val incoming: Flow<LinkMessage> get() = inbound
-        override suspend fun send(message: LinkMessage) {
+        override val incoming: Flow<PeerMessage> get() = inbound
+        override suspend fun send(message: PeerMessage) {
             sent += message
         }
-        val clips get() = sent.filterIsInstance<LinkMessage.Clip>()
+        val clips get() = sent.filterIsInstance<PeerMessage.Clip>()
     }
 
     private class Rig(
@@ -81,8 +81,8 @@ class ClipboardBridgeTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)
         assertEquals(0, rig.bridge.share("   "))
-        rig.bridge.share("x".repeat(LinkMessage.Clip.MAX_TEXT_CHARS + 10))
-        assertEquals(LinkMessage.Clip.MAX_TEXT_CHARS, a.clips.single().text!!.length)
+        rig.bridge.share("x".repeat(PeerMessage.Clip.MAX_TEXT_CHARS + 10))
+        assertEquals(PeerMessage.Clip.MAX_TEXT_CHARS, a.clips.single().text!!.length)
     }
 
     @Test
@@ -96,8 +96,8 @@ class ClipboardBridgeTest {
 
         val clips = a.clips
         assertTrue(clips.none { it.apply })
-        assertEquals(LinkMessage.Clip.KIND_TEXT, clips[0].kind)
-        assertEquals(LinkMessage.Clip.KIND_IMAGE, clips[1].kind)
+        assertEquals(PeerMessage.Clip.KIND_TEXT, clips[0].kind)
+        assertEquals(PeerMessage.Clip.KIND_IMAGE, clips[1].kind)
         assertArrayEquals(PNG, Base64.getDecoder().decode(clips[1].image))
         assertEquals("fallback", clips[2].text)
     }
@@ -112,9 +112,9 @@ class ClipboardBridgeTest {
     fun `PC copies land newest first with a notification, once per id`() = runTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)
-        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = "first"))
-        a.inbound.emit(LinkMessage.Clip("2", LinkMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString(PNG)))
-        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = "first"))
+        a.inbound.emit(PeerMessage.Clip("1", PeerMessage.Clip.KIND_TEXT, text = "first"))
+        a.inbound.emit(PeerMessage.Clip("2", PeerMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString(PNG)))
+        a.inbound.emit(PeerMessage.Clip("1", PeerMessage.Clip.KIND_TEXT, text = "first"))
         runCurrent()
 
         val history = rig.bridge.history.value
@@ -128,12 +128,12 @@ class ClipboardBridgeTest {
     fun `invalid or oversized items from the PC are dropped`() = runTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)
-        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = ""))
-        a.inbound.emit(LinkMessage.Clip("2", LinkMessage.Clip.KIND_TEXT, text = "x".repeat(LinkMessage.Clip.MAX_TEXT_CHARS + 1)))
-        a.inbound.emit(LinkMessage.Clip("3", LinkMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString("<svg/>".toByteArray())))
-        a.inbound.emit(LinkMessage.Clip("4", LinkMessage.Clip.KIND_IMAGE, image = "%%% not base64"))
-        a.inbound.emit(LinkMessage.Clip("5", "file", text = "x"))
-        a.inbound.emit(LinkMessage.Clip("", LinkMessage.Clip.KIND_TEXT, text = "no id"))
+        a.inbound.emit(PeerMessage.Clip("1", PeerMessage.Clip.KIND_TEXT, text = ""))
+        a.inbound.emit(PeerMessage.Clip("2", PeerMessage.Clip.KIND_TEXT, text = "x".repeat(PeerMessage.Clip.MAX_TEXT_CHARS + 1)))
+        a.inbound.emit(PeerMessage.Clip("3", PeerMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString("<svg/>".toByteArray())))
+        a.inbound.emit(PeerMessage.Clip("4", PeerMessage.Clip.KIND_IMAGE, image = "%%% not base64"))
+        a.inbound.emit(PeerMessage.Clip("5", "file", text = "x"))
+        a.inbound.emit(PeerMessage.Clip("", PeerMessage.Clip.KIND_TEXT, text = "no id"))
         runCurrent()
         assertTrue(rig.bridge.history.value.isEmpty())
         assertTrue(rig.shown.isEmpty())
@@ -144,7 +144,7 @@ class ClipboardBridgeTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)
         rig.enabled.value = false
-        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = "secret"))
+        a.inbound.emit(PeerMessage.Clip("1", PeerMessage.Clip.KIND_TEXT, text = "secret"))
         runCurrent()
         assertTrue(rig.bridge.history.value.isEmpty())
         assertFalse(rig.shown.isNotEmpty())
@@ -154,7 +154,7 @@ class ClipboardBridgeTest {
     fun `history keeps the newest 50, and remove and clear work`() = runTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)
-        repeat(60) { a.inbound.emit(LinkMessage.Clip("id$it", LinkMessage.Clip.KIND_TEXT, text = "t$it")) }
+        repeat(60) { a.inbound.emit(PeerMessage.Clip("id$it", PeerMessage.Clip.KIND_TEXT, text = "t$it")) }
         runCurrent()
         val history = rig.bridge.history.value
         assertEquals(ClipboardBridge.MAX_ITEMS, history.size)
@@ -172,7 +172,7 @@ class ClipboardBridgeTest {
         assertTrue(ClipboardBridge.isAcceptableImage(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0, 0)))
         assertFalse(ClipboardBridge.isAcceptableImage(null))
         assertFalse(ClipboardBridge.isAcceptableImage("GIF89a".toByteArray()))
-        val huge = ByteArray(LinkMessage.Clip.MAX_IMAGE_BYTES + 1).also { PNG.copyInto(it) }
+        val huge = ByteArray(PeerMessage.Clip.MAX_IMAGE_BYTES + 1).also { PNG.copyInto(it) }
         assertFalse(ClipboardBridge.isAcceptableImage(huge))
     }
 

@@ -548,7 +548,7 @@ public class ConnectionManager(
 
         VeyroLog.i(TAG) { "[$connId] Inbound pairing exchange started with ${preamble.name}, awaiting PairHello" }
         val envelope = session.receiveHandshake(PAIR_EXCHANGE_TIMEOUT_MS)
-        val hello = envelope?.payload as? LinkMessage.PairHello
+        val hello = envelope?.payload as? PeerMessage.PairHello
         if (hello == null) {
             // Either the PIN was wrong - every frame then fails its MAC and never reaches us - or
             // the peer gave up. Indistinguishable from here, deliberately.
@@ -599,7 +599,7 @@ public class ConnectionManager(
         // Sealed, always. The secret must not cross the network in the clear, and the bootstrap key
         // is available to seal it with.
         session.sendSealed(
-            LinkMessage.PairOk(
+            PeerMessage.PairOk(
                 deviceId = selfId,
                 deviceName = localDeviceName(),
                 platform = Platform.ANDROID.toWire(),
@@ -782,7 +782,7 @@ public class ConnectionManager(
         VeyroLog.i(TAG) { "[$connId] Client preamble sent (id=$selfId, name=$selfName, pair=$pairMode)" }
         ws.send(
             Frame.Text(
-                LinkJson.codec.encodeToString(
+                PeerMessageJson.codec.encodeToString(
                     LinkPreamble.serializer(),
                     LinkPreamble(selfId, selfName, pair = pairMode, pk = selfPk),
                 ),
@@ -898,7 +898,7 @@ public class ConnectionManager(
         val localPk = localPublicKey()
         VeyroLog.i(TAG) { "[$connId] Outbound PairHello sent to $peerName under bootstrap key" }
         session.send(
-            LinkMessage.PairHello(
+            PeerMessage.PairHello(
                 deviceId = selfId,
                 deviceName = localDeviceName(),
                 platform = Platform.ANDROID.toWire(),
@@ -910,7 +910,7 @@ public class ConnectionManager(
         val envelope = session.receiveHandshake(PAIR_EXCHANGE_TIMEOUT_MS)
 
         return when (val payload = envelope?.payload) {
-            is LinkMessage.PairOk -> {
+            is PeerMessage.PairOk -> {
                 val secret = runCatching { Base64.getDecoder().decode(payload.sessionSecretB64) }
                     .getOrNull()
                     ?.takeIf { it.size == 32 }
@@ -980,7 +980,7 @@ public class ConnectionManager(
                 DialOutcome.Paired(peer)
             }
 
-            is LinkMessage.PairFail -> {
+            is PeerMessage.PairFail -> {
                 VeyroLog.w(TAG) { "[$connId] Pairing rejected by peer: ${payload.reason}" }
                 session.close("pair-fail")
                 _events.value = ConnectionEvent.Failed(payload.reason)
@@ -1004,7 +1004,7 @@ public class ConnectionManager(
     private enum class InboundDecision { ACCEPT, DECLINE, ABANDONED, TIMEOUT }
 
     private sealed interface OutboundAnswer {
-        data class Reply(val payload: LinkMessage) : OutboundAnswer
+        data class Reply(val payload: PeerMessage) : OutboundAnswer
         data object Cancelled : OutboundAnswer
         data object Lost : OutboundAnswer
         data object TimedOut : OutboundAnswer
@@ -1083,7 +1083,7 @@ public class ConnectionManager(
             pairing.heartbeatPaused = true
             val readJob = pairing.start()
             pairing.send(
-                LinkMessage.PairHello(
+                PeerMessage.PairHello(
                     deviceId = selfId,
                     deviceName = localDeviceName(),
                     platform = Platform.ANDROID.toWire(),
@@ -1099,8 +1099,8 @@ public class ConnectionManager(
             _pendingOutbound.value = null
             return when (answer) {
                 is OutboundAnswer.Reply -> when (val payload = answer.payload) {
-                    is LinkMessage.PairOk -> completeOutboundConfirm(pairing, readJob, payload, dialled, pkB, connId)
-                    is LinkMessage.PairFail -> {
+                    is PeerMessage.PairOk -> completeOutboundConfirm(pairing, readJob, payload, dialled, pkB, connId)
+                    is PeerMessage.PairFail -> {
                         val failure = when (payload.reason) {
                             "declined" -> CodePairingFailure.DECLINED
                             "timeout" -> CodePairingFailure.TIMEOUT
@@ -1125,7 +1125,7 @@ public class ConnectionManager(
                 }
                 OutboundAnswer.Cancelled -> {
                     VeyroLog.i(TAG) { "[$connId] Confirm pairing cancelled on this device" }
-                    runCatching { pairing.send(LinkMessage.PairFail("cancelled")) }
+                    runCatching { pairing.send(PeerMessage.PairFail("cancelled")) }
                     pairing.close("cancelled")
                     _events.value = ConnectionEvent.Failed("Pairing cancelled")
                     DialOutcome.Failed(CodePairingFailure.CANCELLED)
@@ -1148,7 +1148,7 @@ public class ConnectionManager(
             withContext(NonCancellable) {
                 val open = session
                 if (open != null) {
-                    runCatching { open.send(LinkMessage.PairFail("cancelled")) }
+                    runCatching { open.send(PeerMessage.PairFail("cancelled")) }
                     open.close("cancelled")
                 } else {
                     runCatching { ws.close(CloseReason(CloseReason.Codes.NORMAL, "cancelled")) }
@@ -1166,11 +1166,11 @@ public class ConnectionManager(
         cancel: CompletableDeferred<Unit>,
     ): OutboundAnswer = coroutineScope {
         val reply = async {
-            var result: LinkMessage? = null
+            var result: PeerMessage? = null
             while (result == null) {
                 val envelope = session.handshakeOrNull(Long.MAX_VALUE) ?: break
                 val payload = envelope.payload
-                if (payload is LinkMessage.PairOk || payload is LinkMessage.PairFail) result = payload
+                if (payload is PeerMessage.PairOk || payload is PeerMessage.PairFail) result = payload
             }
             result
         }
@@ -1189,7 +1189,7 @@ public class ConnectionManager(
     private suspend fun completeOutboundConfirm(
         session: PeerConnection,
         readJob: Job,
-        payload: LinkMessage.PairOk,
+        payload: PeerMessage.PairOk,
         dialled: DeviceId,
         pkB: ByteArray,
         connId: String,
@@ -1308,7 +1308,7 @@ public class ConnectionManager(
         val readJob = session.start()
 
         // A pairHello that verifies under K proves the initiator holds the private key behind pkA.
-        val hello = session.handshakeOrNull(CONFIRM_HELLO_TIMEOUT_MS)?.payload as? LinkMessage.PairHello
+        val hello = session.handshakeOrNull(CONFIRM_HELLO_TIMEOUT_MS)?.payload as? PeerMessage.PairHello
         val helloPk = decodeKey(hello?.publicKeyB64)
         if (hello == null || DeviceId.parseOrNull(hello.deviceId) != claimed || helloPk == null || !helloPk.contentEquals(pkA)) {
             VeyroLog.w(TAG) { "[$connId] Confirm pairing failed: no matching pairHello under the confirm key" }
@@ -1342,13 +1342,13 @@ public class ConnectionManager(
             InboundDecision.ACCEPT -> finishInboundPairing(session, readJob, hello, claimed, pkA, connId)
             InboundDecision.DECLINE -> {
                 VeyroLog.i(TAG) { "[$connId] Confirm pairing declined by the user" }
-                runCatching { session.send(LinkMessage.PairFail("declined")) }
+                runCatching { session.send(PeerMessage.PairFail("declined")) }
                 session.close("declined")
                 _events.value = ConnectionEvent.Failed("Pairing declined")
             }
             InboundDecision.TIMEOUT -> {
                 VeyroLog.i(TAG) { "[$connId] Confirm pairing timed out" }
-                runCatching { session.send(LinkMessage.PairFail("timeout")) }
+                runCatching { session.send(PeerMessage.PairFail("timeout")) }
                 session.close("timeout")
                 _events.value = ConnectionEvent.Failed("Pairing timed out")
             }
@@ -1369,7 +1369,7 @@ public class ConnectionManager(
         val peerGaveUp = async {
             while (true) {
                 val envelope = session.handshakeOrNull(Long.MAX_VALUE) ?: break
-                if (envelope.payload is LinkMessage.PairFail) break
+                if (envelope.payload is PeerMessage.PairFail) break
             }
         }
         try {
@@ -1389,7 +1389,7 @@ public class ConnectionManager(
     private suspend fun finishInboundPairing(
         session: PeerConnection,
         readJob: Job,
-        hello: LinkMessage.PairHello,
+        hello: PeerMessage.PairHello,
         peerDeviceId: DeviceId,
         peerPk: ByteArray,
         connId: String,
@@ -1409,13 +1409,13 @@ public class ConnectionManager(
             throw e
         } catch (t: Throwable) {
             VeyroLog.e(TAG, t) { "[$connId] Trust persistence failed: could not save trusted peer (${t.message})" }
-            runCatching { session.send(LinkMessage.PairFail("error")) }
+            runCatching { session.send(PeerMessage.PairFail("error")) }
             session.close("persistence-failed")
             _events.value = ConnectionEvent.Failed("Could not save pairing on this device")
             return
         }
         session.sendSealed(
-            LinkMessage.PairOk(
+            PeerMessage.PairOk(
                 deviceId = localDeviceId(),
                 deviceName = localDeviceName(),
                 platform = Platform.ANDROID.toWire(),
@@ -1458,7 +1458,7 @@ public class ConnectionManager(
             return null
         }
         val message = runCatching {
-            LinkJson.codec.decodeFromString(LinkPairNonce.serializer(), frame.readText())
+            PeerMessageJson.codec.decodeFromString(LinkPairNonce.serializer(), frame.readText())
         }.getOrNull()
         if (message == null || message.t != LinkPairNonce.TYPE) {
             VeyroLog.w(TAG) { "[$connId] Confirm pairing: malformed pairNonce" }
@@ -1472,7 +1472,7 @@ public class ConnectionManager(
     }
 
     private suspend fun sendPairNonce(ws: DefaultWebSocketSession, nonce: ByteArray) {
-        ws.send(Frame.Text(LinkJson.codec.encodeToString(LinkPairNonce.serializer(), LinkPairNonce(n = b64(nonce)))))
+        ws.send(Frame.Text(PeerMessageJson.codec.encodeToString(LinkPairNonce.serializer(), LinkPairNonce(n = b64(nonce)))))
     }
 
     private suspend fun PeerConnection.handshakeOrNull(timeoutMs: Long): LinkEnvelope? = try {
@@ -1566,7 +1566,7 @@ public class ConnectionManager(
         val session = connectionFor(peerDeviceId)
         if (session != null) {
             runCatching {
-                session.send(LinkMessage.Unpair)
+                session.send(PeerMessage.Unpair)
                 session.flush()
             }.onFailure { VeyroLog.w(TAG) { "Could not tell the peer about the unpair: ${it.javaClass.simpleName}" } }
         }
@@ -1580,7 +1580,7 @@ public class ConnectionManager(
         scope.launch {
             val unpaired = merge(
                 session.incoming
-                    .filter { it.payload is LinkMessage.Unpair && it.from == peerDeviceId }
+                    .filter { it.payload is PeerMessage.Unpair && it.from == peerDeviceId }
                     .map { true },
                 session.closed.map { false },
             ).first()
@@ -1704,7 +1704,7 @@ public class ConnectionManager(
      */
     private suspend fun sendHello(session: PeerConnection, selfId: String) {
         session.send(
-            LinkMessage.Hello(
+            PeerMessage.Hello(
                 deviceId = selfId,
                 deviceName = localDeviceName(),
                 platform = Platform.ANDROID.toWire(),
@@ -1770,7 +1770,7 @@ public class ConnectionManager(
 
         val text = frame.readText()
         val preamble = try {
-            LinkJson.codec.decodeFromString(LinkPreamble.serializer(), text)
+            PeerMessageJson.codec.decodeFromString(LinkPreamble.serializer(), text)
         } catch (t: Throwable) {
             VeyroLog.w(TAG) { "[$connId] Handshake failed: malformed preamble JSON (${t.message})" }
             ws.close(CloseReason(CloseReason.Codes.PROTOCOL_ERROR, "bad-preamble"))
@@ -1821,7 +1821,7 @@ public class ConnectionManager(
 
         val text = frame.readText()
         return try {
-            LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), text)
+            PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), text)
         } catch (t: Throwable) {
             VeyroLog.w(TAG) { "[$connId] Handshake failed: malformed ack JSON (${t.message})" }
             null
@@ -1831,7 +1831,7 @@ public class ConnectionManager(
     private suspend fun sendAck(ws: DefaultWebSocketSession, ack: LinkPreambleAck, connId: String) {
         VeyroLog.i(TAG) { "[$connId] Server acknowledgement sent: mode=${ack.mode}, reason=${ack.reason}" }
         ws.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreambleAck.serializer(), ack)),
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), ack)),
         )
     }
 

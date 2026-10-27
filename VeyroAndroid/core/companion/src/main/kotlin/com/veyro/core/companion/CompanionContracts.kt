@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.link.PeerConnection
 import com.veyro.core.model.Capabilities
 import kotlinx.coroutines.Job
@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 
 /** A change to the phone's notifications, already filtered and mapped to wire form. */
 public sealed interface NotificationEvent {
-    public data class Posted(val notification: LinkMessage.Notification) : NotificationEvent
+    public data class Posted(val notification: PeerMessage.Notification) : NotificationEvent
     public data class Removed(val key: String) : NotificationEvent
 }
 
@@ -32,7 +32,7 @@ public interface NotificationSource {
     public val events: Flow<NotificationEvent>
 
     /** Every mirrorable notification currently showing. Empty when [available] is false. */
-    public suspend fun activeNotifications(): List<LinkMessage.Notification>
+    public suspend fun activeNotifications(): List<PeerMessage.Notification>
 
     /**
      * Whether [key] names a notification that is showing right now and passes the mirror filter.
@@ -53,8 +53,8 @@ public interface NotificationActionExecutor {
 /** The part of a paired session the mirror needs. */
 public interface CompanionLink {
     public val peerCapabilities: Flow<Capabilities>
-    public val incoming: Flow<LinkMessage>
-    public suspend fun send(message: LinkMessage)
+    public val incoming: Flow<PeerMessage>
+    public suspend fun send(message: PeerMessage)
 
     /** The peer's device id as the session authenticated it, when known. Display lookups only. */
     public val peerDeviceId: String? get() = null
@@ -67,8 +67,8 @@ public interface CompanionLink {
 public data class PeerConnectionLink(public val connection: PeerConnection) : CompanionLink {
     override val peerDeviceId: String? get() = connection.peerDeviceId
     override val peerCapabilities: Flow<Capabilities> get() = connection.peerCapabilities
-    override val incoming: Flow<LinkMessage> get() = connection.incoming.map { it.payload }
-    override suspend fun send(message: LinkMessage): Unit = connection.send(message)
+    override val incoming: Flow<PeerMessage> get() = connection.incoming.map { it.payload }
+    override suspend fun send(message: PeerMessage): Unit = connection.send(message)
 }
 
 public fun PeerConnection.asCompanionLink(): CompanionLink = PeerConnectionLink(this)

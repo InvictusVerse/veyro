@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -32,7 +32,7 @@ public interface MediaSource {
     public val changes: Flow<Unit>
 
     /** The current full snapshot. Empty sessions when [available] is false. */
-    public suspend fun snapshot(): LinkMessage.MediaState
+    public suspend fun snapshot(): PeerMessage.MediaState
 }
 
 /** Carries out a validated `mediaCmd` against the phone. */
@@ -74,26 +74,26 @@ public class MediaMirror(
         public const val MIN_INTERVAL_MS: Long = 500L
 
         private val SESSION_ACTIONS = setOf(
-            LinkMessage.MediaCommand.PLAY,
-            LinkMessage.MediaCommand.PAUSE,
-            LinkMessage.MediaCommand.TOGGLE,
-            LinkMessage.MediaCommand.NEXT,
-            LinkMessage.MediaCommand.PREV,
-            LinkMessage.MediaCommand.SEEK,
+            PeerMessage.MediaCommand.PLAY,
+            PeerMessage.MediaCommand.PAUSE,
+            PeerMessage.MediaCommand.TOGGLE,
+            PeerMessage.MediaCommand.NEXT,
+            PeerMessage.MediaCommand.PREV,
+            PeerMessage.MediaCommand.SEEK,
         )
     }
 
-    private val _peerMedia = MutableStateFlow<Map<String, LinkMessage.MediaState>>(emptyMap())
+    private val _peerMedia = MutableStateFlow<Map<String, PeerMessage.MediaState>>(emptyMap())
 
     /** Each connected capable PC's media sessions, by device id. A PC that left is absent. */
-    public val peerMedia: StateFlow<Map<String, LinkMessage.MediaState>> = _peerMedia.asStateFlow()
+    public val peerMedia: StateFlow<Map<String, PeerMessage.MediaState>> = _peerMedia.asStateFlow()
 
     /** Capable links by device id, for [sendMediaCommand]. */
     private val activeLinks = ConcurrentHashMap<String, CompanionLink>()
 
     /** One PC's session: the snapshot last sent to it while publishing; its commands are checked against it. */
     private class Peer {
-        @Volatile var published: LinkMessage.MediaState? = null
+        @Volatile var published: PeerMessage.MediaState? = null
     }
 
     private var job: Job? = null
@@ -103,7 +103,7 @@ public class MediaMirror(
     public fun start(): Job = job?.takeIf { it.isActive } ?: scope.launch { run() }.also { job = it }
 
     /** Sends [command] to the PC [peerId]. False when that PC is not connected or not capable. */
-    public suspend fun sendMediaCommand(peerId: String, command: LinkMessage.MediaCommand): Boolean {
+    public suspend fun sendMediaCommand(peerId: String, command: PeerMessage.MediaCommand): Boolean {
         val link = activeLinks[peerId] ?: return false
         return try {
             link.send(command)
@@ -136,8 +136,8 @@ public class MediaMirror(
                 launch {
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.MediaState -> _peerMedia.update { it + (key to message) }
-                            is LinkMessage.MediaCommand -> handleCommand(peer, message)
+                            is PeerMessage.MediaState -> _peerMedia.update { it + (key to message) }
+                            is PeerMessage.MediaCommand -> handleCommand(peer, message)
                             else -> Unit
                         }
                     }
@@ -151,7 +151,7 @@ public class MediaMirror(
                         } else if (peer.published != null) {
                             // Sharing was switched off mid-session: tell the PC to drop our sessions.
                             peer.published = null
-                            link.send(LinkMessage.MediaState(sessions = emptyList()))
+                            link.send(PeerMessage.MediaState(sessions = emptyList()))
                         }
                     }
             }
@@ -193,7 +193,7 @@ public class MediaMirror(
         }
     }
 
-    private suspend fun handleCommand(peer: Peer, command: LinkMessage.MediaCommand) {
+    private suspend fun handleCommand(peer: Peer, command: PeerMessage.MediaCommand) {
         val snapshot = peer.published
         if (snapshot == null) {
             VeyroLog.d(TAG) { "Ignored mediaCmd: phone media is not being shared" }
@@ -201,11 +201,11 @@ public class MediaMirror(
         }
         try {
             when (command.action) {
-                LinkMessage.MediaCommand.VOLUME -> {
+                PeerMessage.MediaCommand.VOLUME -> {
                     val value = command.value ?: return
                     executor.setVolume(value.coerceIn(0L, 100L).toInt())
                 }
-                LinkMessage.MediaCommand.MUTE -> {
+                PeerMessage.MediaCommand.MUTE -> {
                     val value = command.value ?: return
                     executor.setMuted(value != 0L)
                 }
@@ -217,7 +217,7 @@ public class MediaMirror(
                         return
                     }
                     var position: Long? = null
-                    if (command.action == LinkMessage.MediaCommand.SEEK) {
+                    if (command.action == PeerMessage.MediaCommand.SEEK) {
                         val target = command.value ?: return
                         if (!session.canSeek) return
                         val max = session.durationMs?.takeIf { it > 0 } ?: Long.MAX_VALUE

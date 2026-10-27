@@ -231,7 +231,7 @@ class PersistentSessionTransferTest {
         // The PC dials a second connection just for this transfer.
         val transferWire = Wire()
         transferWire.toPhone.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(pcId.value, "Office PC", platform = "windows"))),
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(pcId.value, "Office PC", platform = "windows"))),
         )
         val inboundJob = scope.launch {
             phone.manager.handleInbound(transferWire.phoneEnd, remoteHost = "127.0.0.1", localHost = "127.0.0.1")

@@ -2,7 +2,7 @@ package com.veyro.di
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.veyro.feature.clipboard.ClipboardViewModel
+import com.veyro.ui.clipboard.ClipboardViewModel
 import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.history.HistoryViewModel
 import com.veyro.ui.home.HomeViewModel

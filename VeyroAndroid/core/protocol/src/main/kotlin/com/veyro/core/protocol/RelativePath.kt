@@ -75,8 +75,8 @@ public object RelativePath {
             return Result.Rejected(Reason.EMPTY, "path is empty")
         }
 
-        if (raw.toByteArray(Charsets.UTF_8).size > Vlp.MAX_RELATIVE_PATH_BYTES) {
-            return Result.Rejected(Reason.TOO_LONG, "exceeds ${Vlp.MAX_RELATIVE_PATH_BYTES} bytes")
+        if (raw.toByteArray(Charsets.UTF_8).size > ProtocolConstants.MAX_RELATIVE_PATH_BYTES) {
+            return Result.Rejected(Reason.TOO_LONG, "exceeds ${ProtocolConstants.MAX_RELATIVE_PATH_BYTES} bytes")
         }
 
         if (raw.contains('\u0000')) {

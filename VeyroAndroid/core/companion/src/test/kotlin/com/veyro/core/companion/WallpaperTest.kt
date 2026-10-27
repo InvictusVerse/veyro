@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -73,14 +73,14 @@ class WallpaperTest {
     private class FakeLink(caps: Capabilities) : CompanionLink {
         override val peerDeviceId: String = PC_ID
         val caps = MutableStateFlow(caps)
-        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 16)
-        val sent = mutableListOf<LinkMessage>()
+        val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 16)
+        val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> get() = caps
-        override val incoming: Flow<LinkMessage> get() = inbound
-        override suspend fun send(message: LinkMessage) {
+        override val incoming: Flow<PeerMessage> get() = inbound
+        override suspend fun send(message: PeerMessage) {
             sent += message
         }
-        val wallpapers get() = sent.filterIsInstance<LinkMessage.Wallpaper>()
+        val wallpapers get() = sent.filterIsInstance<PeerMessage.Wallpaper>()
     }
 
     private class FakeSource : WallpaperSource {
@@ -161,12 +161,12 @@ class WallpaperTest {
         runCurrent()
         assertTrue(link.wallpapers.isEmpty())
 
-        link.inbound.emit(LinkMessage.Wallpaper(jpeg = b64(JPEG_B)))
+        link.inbound.emit(PeerMessage.Wallpaper(jpeg = b64(JPEG_B)))
         runCurrent()
         assertArrayEquals(JPEG_B, rig.bridge.peerWallpapers.value[PC_ID])
         assertArrayEquals(JPEG_B, rig.cache.saved[PC_ID])
 
-        link.inbound.emit(LinkMessage.Wallpaper(jpeg = null))
+        link.inbound.emit(PeerMessage.Wallpaper(jpeg = null))
         runCurrent()
         assertNull(rig.bridge.peerWallpapers.value[PC_ID])
         assertTrue(rig.cache.saved.containsKey(PC_ID) && rig.cache.saved[PC_ID] == null)
@@ -180,7 +180,7 @@ class WallpaperTest {
         val link = FakeLink(wallpaperCaps)
         rig.links.value = link
         runCurrent()
-        link.inbound.emit(LinkMessage.Wallpaper(jpeg = Base64.getEncoder().encodeToString("<svg/>".toByteArray())))
+        link.inbound.emit(PeerMessage.Wallpaper(jpeg = Base64.getEncoder().encodeToString("<svg/>".toByteArray())))
         runCurrent()
         rig.links.value = null
         runCurrent()

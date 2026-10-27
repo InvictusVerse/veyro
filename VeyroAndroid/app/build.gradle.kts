@@ -62,9 +62,6 @@ dependencies {
     implementation(project(":core:service"))
     implementation(project(":core:companion"))
 
-    // ── features ───────────────────────────────────────────────────────────────────────────
-    // Only genuine add-ons live here now; the product's own screens are in :core:ui (ADR-019).
-    implementation(project(":feature:clipboard"))
 
     // ── android ────────────────────────────────────────────────────────────────────────────
     implementation(libs.androidx.core.ktx)

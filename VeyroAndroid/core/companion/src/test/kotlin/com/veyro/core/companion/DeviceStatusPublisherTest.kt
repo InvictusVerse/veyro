@@ -1,6 +1,6 @@
 package com.veyro.core.companion
 
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,22 +22,22 @@ class DeviceStatusPublisherTest {
 
     private class FakeLink(caps: Capabilities) : CompanionLink {
         val caps = MutableStateFlow(caps)
-        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 16)
-        val sent = mutableListOf<LinkMessage>()
+        val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 16)
+        val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> get() = caps
-        override val incoming: Flow<LinkMessage> get() = inbound
+        override val incoming: Flow<PeerMessage> get() = inbound
         override val peerDeviceId: String = "PC-ID"
-        override suspend fun send(message: LinkMessage) {
+        override suspend fun send(message: PeerMessage) {
             sent += message
         }
-        val statuses get() = sent.filterIsInstance<LinkMessage.DeviceStatus>()
+        val statuses get() = sent.filterIsInstance<PeerMessage.DeviceStatus>()
     }
 
     private class FakeSource : DeviceStatusSource {
         val changeFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
-        var current = LinkMessage.DeviceStatus(battery = 82, charging = false, ringer = "normal", dnd = false)
+        var current = PeerMessage.DeviceStatus(battery = 82, charging = false, ringer = "normal", dnd = false)
         override val changes: Flow<Unit> get() = changeFlow
-        override suspend fun current(): LinkMessage.DeviceStatus = current
+        override suspend fun current(): PeerMessage.DeviceStatus = current
     }
 
     private class FakeController : DeviceController {
@@ -152,7 +152,7 @@ class DeviceStatusPublisherTest {
     fun `keeps the PC status until disconnect`() = runTest {
         val rig = rig()
         val link = connect(rig)
-        link.inbound.emit(LinkMessage.DeviceStatus(battery = 55, charging = true))
+        link.inbound.emit(PeerMessage.DeviceStatus(battery = 55, charging = true))
         runCurrent()
         assertEquals(55, rig.publisher.peerStatus.value["PC-ID"]?.battery)
 
@@ -166,7 +166,7 @@ class DeviceStatusPublisherTest {
         val rig = rig()
         val link = connect(rig)
 
-        link.inbound.emit(LinkMessage.DeviceControl(ring = true))
+        link.inbound.emit(PeerMessage.DeviceControl(ring = true))
         runCurrent()
         assertEquals(listOf("ring:Desk PC"), rig.controller.calls)
 
@@ -184,10 +184,10 @@ class DeviceStatusPublisherTest {
         val rig = rig()
         val link = connect(rig)
 
-        link.inbound.emit(LinkMessage.DeviceControl(ring = true))
+        link.inbound.emit(PeerMessage.DeviceControl(ring = true))
         runCurrent()
         advanceTimeBy(5_000)
-        link.inbound.emit(LinkMessage.DeviceControl(ring = false))
+        link.inbound.emit(PeerMessage.DeviceControl(ring = false))
         runCurrent()
         advanceTimeBy(DeviceStatusPublisher.RING_TIMEOUT_MS * 2)
         runCurrent()
@@ -200,7 +200,7 @@ class DeviceStatusPublisherTest {
         val rig = rig(allowed = false)
         val link = connect(rig)
 
-        link.inbound.emit(LinkMessage.DeviceControl(ring = true, ringer = "silent", dnd = true))
+        link.inbound.emit(PeerMessage.DeviceControl(ring = true, ringer = "silent", dnd = true))
         runCurrent()
         advanceTimeBy(DeviceStatusPublisher.RING_TIMEOUT_MS * 2)
         runCurrent()
@@ -215,14 +215,14 @@ class DeviceStatusPublisherTest {
         rig.controller.policyAccess = false
         val link = connect(rig)
 
-        link.inbound.emit(LinkMessage.DeviceControl(ring = true, ringer = "silent", dnd = true))
+        link.inbound.emit(PeerMessage.DeviceControl(ring = true, ringer = "silent", dnd = true))
         runCurrent()
         assertEquals(listOf("ring:Desk PC"), rig.controller.calls)
 
         rig.controller.calls.clear()
         rig.controller.policyAccess = true
-        link.inbound.emit(LinkMessage.DeviceControl(ringer = "vibrate", dnd = false))
-        link.inbound.emit(LinkMessage.DeviceControl(ringer = "loud"))
+        link.inbound.emit(PeerMessage.DeviceControl(ringer = "vibrate", dnd = false))
+        link.inbound.emit(PeerMessage.DeviceControl(ringer = "loud"))
         runCurrent()
         assertEquals(listOf("ringer:vibrate", "dnd:false"), rig.controller.calls)
     }
@@ -233,7 +233,7 @@ class DeviceStatusPublisherTest {
         val link = connect(rig)
 
         rig.source.current = rig.source.current.copy(ringer = "vibrate")
-        link.inbound.emit(LinkMessage.DeviceControl(ringer = "vibrate"))
+        link.inbound.emit(PeerMessage.DeviceControl(ringer = "vibrate"))
         runCurrent()
 
         assertEquals(listOf("normal", "vibrate"), link.statuses.map { it.ringer })

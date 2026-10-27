@@ -66,8 +66,8 @@ public object BeaconCodec {
             "payload of ${payload.size} bytes exceeds the beacon limit"
         }
         val out = ByteArray(HEADER_BYTES + payload.size)
-        Vlp.UDP_MAGIC.copyInto(out, 0)
-        out[4] = Vlp.VERSION.toByte()
+        ProtocolConstants.UDP_MAGIC.copyInto(out, 0)
+        out[4] = ProtocolConstants.VERSION.toByte()
         out[5] = type.wire
         out[6] = ((payload.size shr 8) and 0xFF).toByte()
         out[7] = (payload.size and 0xFF).toByte()
@@ -90,14 +90,14 @@ public object BeaconCodec {
         if (length > MAX_FRAME_BYTES) {
             return Result.Invalid(Reason.TOO_LARGE, "$length bytes")
         }
-        for (i in Vlp.UDP_MAGIC.indices) {
-            if (bytes[i] != Vlp.UDP_MAGIC[i]) {
+        for (i in ProtocolConstants.UDP_MAGIC.indices) {
+            if (bytes[i] != ProtocolConstants.UDP_MAGIC[i]) {
                 // Almost every packet on a busy multicast group is something else entirely, so
                 // this is the normal path, not an error worth logging.
                 return Result.Invalid(Reason.BAD_MAGIC, "not a Veyro beacon")
             }
         }
-        if (bytes[4].toInt() != Vlp.VERSION) {
+        if (bytes[4].toInt() != ProtocolConstants.VERSION) {
             return Result.Invalid(Reason.BAD_VERSION, "version ${bytes[4].toInt()}")
         }
         val type = Type.fromWire(bytes[5])
@@ -136,8 +136,8 @@ public object BeaconCodec {
     /** A query with no payload: the smallest legal frame. */
     public fun encodeBareQuery(): ByteArray {
         val out = ByteArray(HEADER_BYTES)
-        Vlp.UDP_MAGIC.copyInto(out, 0)
-        out[4] = Vlp.VERSION.toByte()
+        ProtocolConstants.UDP_MAGIC.copyInto(out, 0)
+        out[4] = ProtocolConstants.VERSION.toByte()
         out[5] = Type.QUERY.wire
         // length stays 0
         return out

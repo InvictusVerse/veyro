@@ -84,7 +84,7 @@ public class TransferRunner(
             activeReceivers[transferId]?.notifyCancel("User cancelled")
             activeSessions[transferId]?.let { session ->
                 CoroutineScope(dispatchers.io).launch {
-                    runCatching { session.send(LinkMessage.Cancel(transferId, "User cancelled")) }
+                    runCatching { session.send(PeerMessage.Cancel(transferId, "User cancelled")) }
                 }
             }
             activeJobs[transferId]?.cancel()
@@ -93,7 +93,7 @@ public class TransferRunner(
             activeReceivers.values.forEach { it.notifyCancel("User cancelled") }
             activeSessions.forEach { (id, session) ->
                 CoroutineScope(dispatchers.io).launch {
-                    runCatching { session.send(LinkMessage.Cancel(id, "User cancelled")) }
+                    runCatching { session.send(PeerMessage.Cancel(id, "User cancelled")) }
                 }
             }
             activeJobs.values.forEach { it.cancel() }
@@ -176,7 +176,7 @@ public class TransferRunner(
     }
 
     internal fun resolveSenderTargetHost(
-        decision: LinkMessage.TransferDecision,
+        decision: PeerMessage.TransferDecision,
         session: PeerConnection,
     ): TargetHostResolution {
         val rawTcpHost = decision.tcpHost?.trim()
@@ -215,12 +215,12 @@ public class TransferRunner(
     /**
      * Resolves the LAN fallback host when P2P was attempted but failed.
      *
-     * Prefers [LinkMessage.TransferDecision.fallbackHost] (the LAN address the receiver
-     * populated for exactly this scenario) over [LinkMessage.TransferDecision.tcpHost]
+     * Prefers [PeerMessage.TransferDecision.fallbackHost] (the LAN address the receiver
+     * populated for exactly this scenario) over [PeerMessage.TransferDecision.tcpHost]
      * (which may be a P2P-only address like 192.168.49.1 that is unreachable on LAN).
      */
     internal fun resolveSenderFallbackHost(
-        decision: LinkMessage.TransferDecision,
+        decision: PeerMessage.TransferDecision,
         session: PeerConnection,
     ): TargetHostResolution {
         val rawFallback = decision.fallbackHost?.trim()
@@ -284,7 +284,7 @@ public class TransferRunner(
 
     private suspend fun tellPeerFailed(session: PeerConnection, transferId: String, reason: String) {
         if (!session.isConnected) return
-        runCatching { session.send(LinkMessage.Cancel(transferId, reason)) }
+        runCatching { session.send(PeerMessage.Cancel(transferId, reason)) }
             .onFailure { VeyroLog.w(TAG) { "[$transferId] Could not send cancel after failure (${it.javaClass.simpleName})" } }
     }
 
@@ -320,7 +320,7 @@ public class TransferRunner(
             }
 
             session.send(
-                LinkMessage.TransferOffer(
+                PeerMessage.TransferOffer(
                     transferId = transferId,
                     items = files.map { it.toLinkItem() },
                     totalBytes = totalBytes,
@@ -468,9 +468,9 @@ public class TransferRunner(
             tcpSender.startInboundReader(this) { frame ->
                 when (frame) {
                     is TcpFrame.ItemResult -> mailbox.deliverItemResult(
-                        LinkMessage.ItemResult(transferId, frame.itemIndex, frame.ok, frame.errorMessage),
+                        PeerMessage.ItemResult(transferId, frame.itemIndex, frame.ok, frame.errorMessage),
                     )
-                    is TcpFrame.Cancel -> mailbox.deliverCancel(LinkMessage.Cancel(transferId, frame.reason))
+                    is TcpFrame.Cancel -> mailbox.deliverCancel(PeerMessage.Cancel(transferId, frame.reason))
                     else -> Unit
                 }
             }
@@ -498,7 +498,7 @@ public class TransferRunner(
             val cancelWatcher = launch {
                 while (session.isConnected && !cancelled && !remoteCancelled) {
                     val msg = mailbox.payloadChannel.receiveCatching().getOrNull()
-                    if (msg is LinkMessage.Cancel && msg.transferId == transferId) {
+                    if (msg is PeerMessage.Cancel && msg.transferId == transferId) {
                         VeyroLog.w(TAG) { "[$transferId] Peer cancelled transfer over WebSocket: ${msg.reason}" }
                         remoteCancelled = true
                         tcpSender.closeSocketImmediately()
@@ -513,7 +513,7 @@ public class TransferRunner(
                         VeyroLog.w(TAG) { "[$transferId] Transfer cancelled before streaming item #${item.index}" }
                         if (cancelled) {
                             tcpSender.sendCancel(transferId, "cancelled")
-                            runCatching { session.send(LinkMessage.Cancel(transferId, "cancelled")) }
+                            runCatching { session.send(PeerMessage.Cancel(transferId, "cancelled")) }
                         }
                         onProgress?.invoke(sent, totalBytes, item, TransferStage.CANCELLED, 0L, null)
                         return@withContext SendOutcome.Cancelled
@@ -537,7 +537,7 @@ public class TransferRunner(
                     // Send ItemBegin over raw TCP and WebSocket
                     tcpSender.sendItemBegin(transferId, item.index, item.sizeBytes, chunkCount, CHUNK_SIZE)
                     session.send(
-                        LinkMessage.ItemBegin(
+                        PeerMessage.ItemBegin(
                             transferId = transferId,
                             index = item.index,
                             size = item.sizeBytes,
@@ -547,7 +547,7 @@ public class TransferRunner(
                     )
 
                     // Resume: `decision.resume` lists, per item, the chunks the receiver still
-                    // NEEDS (LinkMessages.TransferDecision; both receivers fill it with their
+                    // NEEDS (PeerMessages.TransferDecision; both receivers fill it with their
                     // missing chunks). This used to be read as "already have", which sent exactly
                     // the chunks a resuming receiver did not ask for.
                     val needed = decision.resume?.get(item.index)
@@ -568,7 +568,7 @@ public class TransferRunner(
                                 VeyroLog.w(TAG) { "[$transferId] Transfer cancelled during chunk streaming" }
                                 if (cancelled) {
                                     tcpSender.sendCancel(transferId, "cancelled")
-                                    runCatching { session.send(LinkMessage.Cancel(transferId, "cancelled")) }
+                                    runCatching { session.send(PeerMessage.Cancel(transferId, "cancelled")) }
                                 }
                                 onProgress?.invoke(sent, totalBytes, item, TransferStage.CANCELLED, 0L, null)
                                 return@withContext SendOutcome.Cancelled
@@ -628,7 +628,7 @@ public class TransferRunner(
 
                     try {
                         tcpSender.sendItemEnd(transferId, item.index, hash, metrics)
-                        session.send(LinkMessage.ItemEnd(transferId, item.index, hash))
+                        session.send(PeerMessage.ItemEnd(transferId, item.index, hash))
                     } catch (t: Throwable) {
                         if (t is kotlinx.coroutines.CancellationException) throw t
                         onProgress?.invoke(sent, totalBytes, item, TransferStage.FAILED, 0L, null)
@@ -661,7 +661,7 @@ public class TransferRunner(
 
                 tcpSender.sendTransferEnd(transferId, completed = allOk, metrics = metrics)
                 try {
-                    session.send(LinkMessage.TransferEnd(transferId, completed = allOk))
+                    session.send(PeerMessage.TransferEnd(transferId, completed = allOk))
                 } catch (t: Throwable) {
                     if (t is kotlinx.coroutines.CancellationException) throw t
                     VeyroLog.w(TAG, t) { "[$transferId] Failed to send TransferEnd: ${t.message}" }
@@ -695,20 +695,20 @@ public class TransferRunner(
     public suspend fun receive(
         session: PeerConnection,
         destinationDir: File,
-        authorize: suspend (LinkMessage.TransferOffer) -> Boolean,
+        authorize: suspend (PeerMessage.TransferOffer) -> Boolean,
     ): ReceiveResult = receive(session = session, destinationDir = destinationDir, publisher = null, authorize = authorize, onProgress = null)
 
     public suspend fun receive(
         session: PeerConnection,
         destinationDir: File,
         publisher: TransferStoragePublisher? = null,
-        authorize: suspend (LinkMessage.TransferOffer) -> Boolean = { true },
+        authorize: suspend (PeerMessage.TransferOffer) -> Boolean = { true },
         /** Wire reason for a refused offer, by transfer id; asked only after [authorize] said no. */
         declineReason: (transferId: String) -> String = { DeclineReason.DECLINED.wire },
         onProgress: ((bytesReceived: Long, totalBytes: Long, item: TransferItem?, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)? = null,
     ): ReceiveResult = withContext(dispatchers.io) {
         val offerEnvelope = session.receiveOffer()
-        val offer = offerEnvelope.payload as LinkMessage.TransferOffer
+        val offer = offerEnvelope.payload as PeerMessage.TransferOffer
         val transferId = offer.transferId
         val mailbox = session.mailbox(transferId)
 
@@ -721,7 +721,7 @@ public class TransferRunner(
             val reason = declineReason(transferId)
             VeyroLog.w(TAG) { "[$transferId] Receiver declined offer from ${offer.senderName} (reason=$reason)" }
             session.send(
-                LinkMessage.TransferDecision(
+                PeerMessage.TransferDecision(
                     transferId = transferId,
                     accept = false,
                     reason = reason,
@@ -807,7 +807,7 @@ public class TransferRunner(
                 tcpReceiver.close()
                 // Never an accept without an endpoint: say why instead (04-PROTOCOL.md 6.4).
                 session.send(
-                    LinkMessage.TransferDecision(
+                    PeerMessage.TransferDecision(
                         transferId = transferId,
                         accept = false,
                         reason = DeclineReason.ERROR.wire,
@@ -829,7 +829,7 @@ public class TransferRunner(
         }
 
         session.send(
-            LinkMessage.TransferDecision(
+            PeerMessage.TransferDecision(
                 transferId = transferId,
                 accept = true,
                 resume = resume.takeIf { it.isNotEmpty() },
@@ -865,7 +865,7 @@ public class TransferRunner(
         // Legacy chunk mode, only for an offer without a known route: the per-item WebSocket
         // messages seen so far, handed to the WebSocket receiver if the sender starts streaming
         // base64 chunks there instead of dialling the endpoint.
-        val legacyBacklog: MutableList<LinkMessage>? = if (knownRoute) null else mutableListOf()
+        val legacyBacklog: MutableList<PeerMessage>? = if (knownRoute) null else mutableListOf()
         val switchedToLegacy = CompletableDeferred<Unit>()
 
         // Monitor control messages (Cancel and TransferEnd) on WebSocket in background
@@ -873,18 +873,18 @@ public class TransferRunner(
             while (session.isConnected) {
                 val msg = mailbox.payloadChannel.receiveCatching().getOrNull() ?: break
                 when (msg) {
-                    is LinkMessage.Cancel -> {
+                    is PeerMessage.Cancel -> {
                         VeyroLog.w(TAG) { "[$transferId] Cancel received on WebSocket: ${msg.reason}" }
                         tcpReceiver.notifyCancel(msg.reason)
                         break
                     }
-                    is LinkMessage.TransferEnd -> {
+                    is PeerMessage.TransferEnd -> {
                         VeyroLog.i(TAG) { "[$transferId] TransferEnd received on WebSocket (completed=${msg.completed})" }
                         tcpReceiver.notifyTransferEnd(msg.completed)
                         break
                     }
-                    is LinkMessage.ItemBegin, is LinkMessage.ItemEnd -> legacyBacklog?.add(msg)
-                    is LinkMessage.Chunk -> if (legacyBacklog != null) {
+                    is PeerMessage.ItemBegin, is PeerMessage.ItemEnd -> legacyBacklog?.add(msg)
+                    is PeerMessage.Chunk -> if (legacyBacklog != null) {
                         VeyroLog.w(TAG) { "[$transferId] Sender streams chunks on the WebSocket; switching to the legacy chunk path" }
                         legacyBacklog.add(msg)
                         switchedToLegacy.complete(Unit)
@@ -922,7 +922,7 @@ public class TransferRunner(
                         // Report genuine receiver-side progress over WebSocket
                         runCatching {
                             session.send(
-                                LinkMessage.TransferProgressNotice(
+                                PeerMessage.TransferProgressNotice(
                                     transferId = transferId,
                                     bytesReceived = bytesWritten,
                                     totalBytes = total,
@@ -936,7 +936,7 @@ public class TransferRunner(
                 onItemVerified = { itemResult ->
                     VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-result-send] Sending ItemResult for #${itemResult.itemIndex} over WebSocket (ok=${itemResult.isVerified})" }
                     session.send(
-                        LinkMessage.ItemResult(
+                        PeerMessage.ItemResult(
                             transferId = transferId,
                             index = itemResult.itemIndex,
                             ok = itemResult.isVerified,
@@ -1013,13 +1013,13 @@ public class TransferRunner(
     private suspend fun receiveOverWebSocket(
         session: PeerConnection,
         mailbox: TransferMailbox,
-        offer: LinkMessage.TransferOffer,
+        offer: PeerMessage.TransferOffer,
         destinationDir: File,
         publisher: TransferStoragePublisher?,
         startedAt: Long,
         onProgress: ((bytesReceived: Long, totalBytes: Long, item: TransferItem?, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)?,
         /** Messages already taken off the mailbox before the switch to this path, in order. */
-        backlog: List<LinkMessage> = emptyList(),
+        backlog: List<PeerMessage> = emptyList(),
     ): ReceiveResult {
         val transferId = offer.transferId
         val speedCalculator = RollingSpeedCalculator()
@@ -1030,9 +1030,9 @@ public class TransferRunner(
         var lastProgress = 0L
         var totalBytesReceived = 0L
 
-        suspend fun processMessage(msg: LinkMessage): Boolean {
+        suspend fun processMessage(msg: PeerMessage): Boolean {
             when (msg) {
-                is LinkMessage.ItemBegin -> {
+                is PeerMessage.ItemBegin -> {
                     val domainItem = domainItems.firstOrNull { it.index == msg.index }
                     if (domainItem != null) {
                         val part = PartFile.open(
@@ -1045,7 +1045,7 @@ public class TransferRunner(
                     }
                 }
 
-                is LinkMessage.Chunk -> {
+                is PeerMessage.Chunk -> {
                     val part = parts[msg.index]
                     if (part != null) {
                         val data = Base64.getDecoder().decode(msg.dataB64)
@@ -1068,7 +1068,7 @@ public class TransferRunner(
                     }
                 }
 
-                is LinkMessage.ItemEnd -> {
+                is PeerMessage.ItemEnd -> {
                     val part = parts[msg.index]
                     val domainItem = domainItems.firstOrNull { it.index == msg.index }
                     if (part != null && domainItem != null) {
@@ -1111,7 +1111,7 @@ public class TransferRunner(
                         results.add(itemRes)
 
                         session.send(
-                            LinkMessage.ItemResult(
+                            PeerMessage.ItemResult(
                                 transferId = transferId,
                                 index = msg.index,
                                 ok = finalVerification == VerificationResult.VERIFIED,
@@ -1121,11 +1121,11 @@ public class TransferRunner(
                     }
                 }
 
-                is LinkMessage.TransferEnd -> {
+                is PeerMessage.TransferEnd -> {
                     return true
                 }
 
-                is LinkMessage.Cancel -> {
+                is PeerMessage.Cancel -> {
                     onProgress?.invoke(0L, totalBytes, null, TransferStage.CANCELLED, 0L, null)
                     cancelled = true
                     return true

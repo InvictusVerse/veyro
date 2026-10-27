@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.link.OutgoingFile
 import com.veyro.core.model.Capability
 import kotlinx.coroutines.CancellationException
@@ -47,10 +47,10 @@ public interface PhotoSource {
     public fun canRead(): Boolean
 
     /** Up to [limit] in-scope photos, newest first. */
-    public suspend fun photos(limit: Int): List<LinkMessage.PhotoInfo>
+    public suspend fun photos(limit: Int): List<PeerMessage.PhotoInfo>
 
     /** In-scope photos with an id greater than [id], ascending by id. */
-    public suspend fun photosAfter(id: Long): List<LinkMessage.PhotoInfo>
+    public suspend fun photosAfter(id: Long): List<PeerMessage.PhotoInfo>
 
     /** Every in-scope id right now, for detecting removals. */
     public suspend fun ids(): Set<Long>
@@ -147,17 +147,17 @@ public class PhotoBridge(
                 val on = known.on
                 on.value = enabled.first()
                 launch { enabled.collect { on.value = it } }
-                val thumbs = Channel<LinkMessage.PhotoThumbRequest>(PENDING_THUMB_REQUESTS, BufferOverflow.DROP_OLDEST)
-                val fetches = Channel<LinkMessage.PhotoFetch>(PENDING_FETCHES, BufferOverflow.DROP_OLDEST)
+                val thumbs = Channel<PeerMessage.PhotoThumbRequest>(PENDING_THUMB_REQUESTS, BufferOverflow.DROP_OLDEST)
+                val fetches = Channel<PeerMessage.PhotoFetch>(PENDING_FETCHES, BufferOverflow.DROP_OLDEST)
                 launch { for (request in thumbs) serveThumbs(link, known, request) }
                 launch { for (request in fetches) fetch(link, known, request) }
                 launch {
                     // Never blocks: the session's incoming buffer drops what a slow collector misses.
                     link.incoming.collect { message ->
                         when (message) {
-                            is LinkMessage.PhotosRequest -> launch { link.send(list(message, known)) }
-                            is LinkMessage.PhotoThumbRequest -> thumbs.trySend(message)
-                            is LinkMessage.PhotoFetch -> fetches.trySend(message)
+                            is PeerMessage.PhotosRequest -> launch { link.send(list(message, known)) }
+                            is PeerMessage.PhotoThumbRequest -> thumbs.trySend(message)
+                            is PeerMessage.PhotoFetch -> fetches.trySend(message)
                             else -> Unit
                         }
                     }
@@ -172,8 +172,8 @@ public class PhotoBridge(
         }
     }
 
-    private suspend fun list(request: LinkMessage.PhotosRequest, known: Known): LinkMessage.Photos {
-        if (!available(known)) return LinkMessage.Photos(emptyList())
+    private suspend fun list(request: PeerMessage.PhotosRequest, known: Known): PeerMessage.Photos {
+        if (!available(known)) return PeerMessage.Photos(emptyList())
         val limit = request.limit.coerceIn(1, MAX_LIMIT)
         val items = safely(emptyList()) { source.photos(limit) }.take(limit)
         known.mutex.withLock {
@@ -183,10 +183,10 @@ public class PhotoBridge(
             if (top != null) known.mark = maxOf(known.mark ?: top, top)
         }
         VeyroLog.d(TAG) { "photos: ${items.size}" }
-        return LinkMessage.Photos(items)
+        return PeerMessage.Photos(items)
     }
 
-    private suspend fun serveThumbs(link: CompanionLink, known: Known, request: LinkMessage.PhotoThumbRequest) {
+    private suspend fun serveThumbs(link: CompanionLink, known: Known, request: PeerMessage.PhotoThumbRequest) {
         val size = request.size.coerceIn(MIN_THUMB_SIZE, MAX_THUMB_SIZE)
         val ids = request.ids.take(MAX_THUMB_IDS)
         val readable = available(known)
@@ -195,7 +195,7 @@ public class PhotoBridge(
             val jpeg = if (readable) safely(null) { encodeThumbnail(id, size) } else null
             if (jpeg != null) served++
             // One frame per id, in order; send suspends while the socket is backed up.
-            link.send(LinkMessage.PhotoThumb(id = id, jpeg = jpeg))
+            link.send(PeerMessage.PhotoThumb(id = id, jpeg = jpeg))
         }
         VeyroLog.d(TAG) { "photoThumb: $served of ${ids.size} with an image" }
     }
@@ -212,7 +212,7 @@ public class PhotoBridge(
         }
     }
 
-    private suspend fun fetch(link: CompanionLink, known: Known, request: LinkMessage.PhotoFetch) {
+    private suspend fun fetch(link: CompanionLink, known: Known, request: PeerMessage.PhotoFetch) {
         if (!available(known)) return
         val file = safely(null) { source.original(request.id) } ?: run {
             VeyroLog.i(TAG) { "photoFetch for an unknown or out-of-scope photo; ignored" }
@@ -262,7 +262,7 @@ public class PhotoBridge(
         var top: Long = mark
         for (item in fresh) {
             if (item.id <= top) continue
-            link.send(LinkMessage.PhotoNew(item))
+            link.send(PeerMessage.PhotoNew(item))
             known.ids += item.id
             top = item.id
         }
@@ -274,7 +274,7 @@ public class PhotoBridge(
             if (present != null) {
                 val gone = known.ids.filterNot { it in present }
                 for (id in gone) {
-                    link.send(LinkMessage.PhotoRemoved(id))
+                    link.send(PeerMessage.PhotoRemoved(id))
                     known.ids -= id
                 }
                 removed = gone.size

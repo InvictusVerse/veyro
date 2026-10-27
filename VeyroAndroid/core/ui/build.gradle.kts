@@ -1,5 +1,7 @@
 plugins {
     alias(libs.plugins.veyro.android.library.compose)
+    // Type-safe navigation routes (@Serializable destinations) live here with the screens.
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -16,9 +18,10 @@ android {
  * bought module-level isolation that nothing needed and cost seven build files, seven namespaces and
  * seven places to look for a screen.
  *
- * `feature/` is now reserved for genuine additions on top of the transfer core - Clipboard today,
- * Sync and Handoff later. Those are separable, optional, and may be built or dropped
- * independently, which is exactly when a separate module earns its keep.
+ * Every screen lives here, companion features included (Clipboard, navigation, the top bar); their
+ * logic lives in `:core:companion`, and `:app` only wires and hosts them. There are no `feature/`
+ * modules any more: one pattern for every feature (logic in companion, screen here) was clearer
+ * than one module per add-on.
  *
  * ## This module sits ABOVE `:core:data`, not below it
  *

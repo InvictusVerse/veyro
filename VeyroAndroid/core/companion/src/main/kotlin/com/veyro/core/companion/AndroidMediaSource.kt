@@ -19,7 +19,7 @@ import android.os.Looper
 import android.os.SystemClock
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -130,7 +130,7 @@ public class AndroidMediaSource(
         // Registration and every callback then run on the main thread, so [callbacks] needs no lock.
         .flowOn(dispatchers.main)
 
-    override suspend fun snapshot(): LinkMessage.MediaState = withContext(dispatchers.default) {
+    override suspend fun snapshot(): PeerMessage.MediaState = withContext(dispatchers.default) {
         val sessions = if (ListenerBridge.listener.value == null) {
             emptyList()
         } else {
@@ -138,7 +138,7 @@ public class AndroidMediaSource(
         }
         synchronized(artCache) { artCache.keys.retainAll(sessions.map { it.id }.toSet()) }
         val audio = audioManager
-        LinkMessage.MediaState(
+        PeerMessage.MediaState(
             sessions = sessions,
             volume = audio?.let { volumePercent(it) },
             muted = audio?.isStreamMute(AudioManager.STREAM_MUSIC),
@@ -150,13 +150,13 @@ public class AndroidMediaSource(
             val controller = controllers().firstOrNull { idOf(it) == id } ?: return@withContext
             val controls = controller.transportControls
             when (action) {
-                LinkMessage.MediaCommand.PLAY -> controls.play()
-                LinkMessage.MediaCommand.PAUSE -> controls.pause()
-                LinkMessage.MediaCommand.TOGGLE ->
+                PeerMessage.MediaCommand.PLAY -> controls.play()
+                PeerMessage.MediaCommand.PAUSE -> controls.pause()
+                PeerMessage.MediaCommand.TOGGLE ->
                     if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) controls.pause() else controls.play()
-                LinkMessage.MediaCommand.NEXT -> controls.skipToNext()
-                LinkMessage.MediaCommand.PREV -> controls.skipToPrevious()
-                LinkMessage.MediaCommand.SEEK -> positionMs?.let { controls.seekTo(it) }
+                PeerMessage.MediaCommand.NEXT -> controls.skipToNext()
+                PeerMessage.MediaCommand.PREV -> controls.skipToPrevious()
+                PeerMessage.MediaCommand.SEEK -> positionMs?.let { controls.seekTo(it) }
                 else -> Unit
             }
         }
@@ -199,7 +199,7 @@ public class AndroidMediaSource(
         return (audio.getStreamVolume(AudioManager.STREAM_MUSIC) * 100f / max).roundToInt().coerceIn(0, 100)
     }
 
-    private fun toInfo(controller: MediaController): LinkMessage.MediaSessionInfo {
+    private fun toInfo(controller: MediaController): PeerMessage.MediaSessionInfo {
         val id = idOf(controller)
         val metadata = controller.metadata
         val state = controller.playbackState
@@ -212,7 +212,7 @@ public class AndroidMediaSource(
         }
         val position = state?.position?.takeIf { it >= 0 }
 
-        return LinkMessage.MediaSessionInfo(
+        return PeerMessage.MediaSessionInfo(
             id = id,
             app = labelOf(controller.packageName),
             title = metadata?.text(MediaMetadata.METADATA_KEY_TITLE)

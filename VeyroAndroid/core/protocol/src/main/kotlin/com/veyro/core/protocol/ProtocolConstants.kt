@@ -7,7 +7,7 @@ package com.veyro.core.protocol
  * `ProjectInfo/04-PROTOCOL.md`; if you change one, change both, and bump [VLP_VERSION] if it
  * affects bytes on the wire.
  */
-public object Vlp {
+public object ProtocolConstants {
 
     /**
      * Wire-format version. A single integer, deliberately: there is no minor version and no

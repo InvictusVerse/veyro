@@ -19,7 +19,7 @@ import java.io.File
  */
 class NotificationMessageVectorTest {
 
-    private val json = LinkJson.codec
+    private val json = PeerMessageJson.codec
 
     private fun vectorFile(): File {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -32,10 +32,10 @@ class NotificationMessageVectorTest {
     }
 
     private val expectedTypes = mapOf(
-        "notif" to LinkMessage.Notification::class,
-        "notifAction" to LinkMessage.NotificationActionRequest::class,
-        "notifReply" to LinkMessage.NotificationReplyRequest::class,
-        "notifDismiss" to LinkMessage.NotificationDismissRequest::class,
+        "notif" to PeerMessage.Notification::class,
+        "notifAction" to PeerMessage.NotificationActionRequest::class,
+        "notifReply" to PeerMessage.NotificationReplyRequest::class,
+        "notifDismiss" to PeerMessage.NotificationDismissRequest::class,
     )
 
     @Test
@@ -48,11 +48,11 @@ class NotificationMessageVectorTest {
             val type = vector.jsonObject.getValue("type").jsonPrimitive.content
             val text = vector.jsonObject.getValue("json").jsonPrimitive.content
 
-            val decoded = json.decodeFromString<LinkMessage>(text)
+            val decoded = json.decodeFromString<PeerMessage>(text)
             val expected = expectedTypes.getValue(type)
             assertTrue("vector '$type' decoded to ${decoded::class.simpleName}", expected.isInstance(decoded))
 
-            val reEncoded = json.encodeToString<LinkMessage>(decoded)
+            val reEncoded = json.encodeToString<PeerMessage>(decoded)
             assertEquals(
                 "vector '$type' did not round-trip",
                 json.parseToJsonElement(text) as JsonObject,
@@ -65,11 +65,11 @@ class NotificationMessageVectorTest {
     fun `posted vector carries the expected fields`() {
         val root = json.parseToJsonElement(vectorFile().readText()).jsonObject
         val first = root.getValue("vectors").jsonArray.first().jsonObject.getValue("json").jsonPrimitive.content
-        val n = json.decodeFromString<LinkMessage>(first) as LinkMessage.Notification
+        val n = json.decodeFromString<PeerMessage>(first) as PeerMessage.Notification
 
-        assertEquals(LinkMessage.Notification.KIND_POSTED, n.kind)
-        assertEquals(listOf(LinkMessage.NotificationActionInfo(1, "Mark as read")), n.actions)
-        assertEquals(listOf(LinkMessage.NotificationLine("Sam", "Lunch?")), n.messages)
+        assertEquals(PeerMessage.Notification.KIND_POSTED, n.kind)
+        assertEquals(listOf(PeerMessage.NotificationActionInfo(1, "Mark as read")), n.actions)
+        assertEquals(listOf(PeerMessage.NotificationLine("Sam", "Lunch?")), n.messages)
         assertEquals(true, n.canReply)
         assertEquals(1793011200000L, n.ts)
     }

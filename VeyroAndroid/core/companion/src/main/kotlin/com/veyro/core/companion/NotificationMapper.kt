@@ -8,7 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 
@@ -64,25 +64,25 @@ internal class NotificationMapper(context: Context) {
     }
 
     /** Full wire form, or null when [sbn] is not mirrorable. */
-    fun toWire(sbn: StatusBarNotification, kind: String): LinkMessage.Notification? {
+    fun toWire(sbn: StatusBarNotification, kind: String): PeerMessage.Notification? {
         if (!isMirrorable(sbn)) return null
         val notification = sbn.notification
         val extras = notification.extras
         val app = appInfo(sbn.packageName)
 
-        val actions = mutableListOf<LinkMessage.NotificationActionInfo>()
+        val actions = mutableListOf<PeerMessage.NotificationActionInfo>()
         var canReply = false
         notification.actions?.forEachIndexed { index, action ->
             if (action.remoteInputs.isNullOrEmpty()) {
                 // Original index kept: notifAction names this index in the phone's own array.
                 val label = action.title?.toString()
-                if (!label.isNullOrBlank()) actions += LinkMessage.NotificationActionInfo(index, label)
+                if (!label.isNullOrBlank()) actions += PeerMessage.NotificationActionInfo(index, label)
             } else {
                 canReply = true
             }
         }
 
-        return LinkMessage.Notification(
+        return PeerMessage.Notification(
             key = sbn.key,
             kind = kind,
             pkg = sbn.packageName,
@@ -108,14 +108,14 @@ internal class NotificationMapper(context: Context) {
         getCharSequence(key)?.toString()?.takeIf { it.isNotBlank() }
 
     @Suppress("DEPRECATION") // The typed overloads are API 33+; minSdk is 29.
-    private fun messagesOf(extras: Bundle): List<LinkMessage.NotificationLine>? {
+    private fun messagesOf(extras: Bundle): List<PeerMessage.NotificationLine>? {
         val bundles = extras.getParcelableArray(Notification.EXTRA_MESSAGES) ?: return null
         val lines = bundles.mapNotNull { parcelable ->
             val bundle = parcelable as? Bundle ?: return@mapNotNull null
             val text = bundle.getCharSequence(MESSAGE_KEY_TEXT)?.toString() ?: return@mapNotNull null
             val sender = bundle.getCharSequence(MESSAGE_KEY_SENDER)?.toString()
                 ?: bundle.getParcelable<Person>(MESSAGE_KEY_SENDER_PERSON)?.name?.toString()
-            LinkMessage.NotificationLine(sender = sender, text = text)
+            PeerMessage.NotificationLine(sender = sender, text = text)
         }
         return lines.takeIf { it.isNotEmpty() }
     }

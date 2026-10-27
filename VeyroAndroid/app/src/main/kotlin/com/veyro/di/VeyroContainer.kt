@@ -84,15 +84,15 @@ import com.veyro.storage.AndroidMediaStorePublisher
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import com.veyro.core.model.Platform
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.link.OutgoingFile
 import com.veyro.core.companion.AndroidWallpaperSource
 import com.veyro.core.companion.WallpaperBridge
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import com.veyro.feature.clipboard.ClipKind
-import com.veyro.feature.clipboard.ClipRow
-import com.veyro.feature.clipboard.SendClipOutcome
+import com.veyro.ui.clipboard.ClipKind
+import com.veyro.ui.clipboard.ClipRow
+import com.veyro.ui.clipboard.SendClipOutcome
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -108,7 +108,7 @@ import com.veyro.core.network.LocalAddressProvider
 import com.veyro.core.network.NetworkMonitor
 import com.veyro.core.network.WifiDirectManager
 import com.veyro.core.protocol.PresenceRecord
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
@@ -281,7 +281,7 @@ public class VeyroContainer(context: Context) {
     public suspend fun lockPc(deviceId: String): Boolean {
         val connection = connectionManagerReady.value?.connectionFor(deviceId) ?: return false
         if (Capability.DEVICE_STATUS !in connection.peerCapabilities.value) return false
-        return runCatching { connection.send(LinkMessage.PcLock) }
+        return runCatching { connection.send(PeerMessage.PcLock) }
             .onFailure { VeyroLog.w("Container") { "pcLock not sent: ${it.javaClass.simpleName}" } }
             .isSuccess
     }
@@ -689,7 +689,7 @@ public class VeyroContainer(context: Context) {
             // Only the items still in the history keep a decoded preview.
             thumbnails.keys.retainAll(items.map { it.id }.toSet())
             items.map { item ->
-                val smart = if (item.image != null) null else com.veyro.core.companion.ClipSmarts.classify(item.text)
+                val smart = if (item.image != null) null else com.veyro.core.companion.ClipClassifier.classify(item.text)
                 ClipRow(
                     id = item.id,
                     text = item.text,
@@ -698,11 +698,11 @@ public class VeyroContainer(context: Context) {
                     atMillis = item.atMillis,
                     kind = when (smart?.kind) {
                         null -> ClipKind.IMAGE
-                        com.veyro.core.companion.ClipSmarts.Kind.LINK -> ClipKind.LINK
-                        com.veyro.core.companion.ClipSmarts.Kind.PHONE -> ClipKind.PHONE
-                        com.veyro.core.companion.ClipSmarts.Kind.EMAIL -> ClipKind.EMAIL
-                        com.veyro.core.companion.ClipSmarts.Kind.CODE -> ClipKind.CODE
-                        com.veyro.core.companion.ClipSmarts.Kind.TEXT -> ClipKind.TEXT
+                        com.veyro.core.companion.ClipClassifier.Kind.LINK -> ClipKind.LINK
+                        com.veyro.core.companion.ClipClassifier.Kind.PHONE -> ClipKind.PHONE
+                        com.veyro.core.companion.ClipClassifier.Kind.EMAIL -> ClipKind.EMAIL
+                        com.veyro.core.companion.ClipClassifier.Kind.CODE -> ClipKind.CODE
+                        com.veyro.core.companion.ClipClassifier.Kind.TEXT -> ClipKind.TEXT
                     },
                     value = smart?.value,
                 )
@@ -722,17 +722,17 @@ public class VeyroContainer(context: Context) {
     /** The Clipboard screen's Copy: puts a virtual-clipboard item on the system clipboard. */
     public fun copyClip(id: String): Boolean {
         val item = clipboardBridge.history.value.firstOrNull { it.id == id } ?: return false
-        return ClipboardSupport.copy(appContext, item)
+        return SystemClipboard.copy(appContext, item)
     }
 
     /** "Copy code": a plain string onto the system clipboard. */
-    public fun copyClipText(text: String): Boolean = ClipboardSupport.copyText(appContext, text)
+    public fun copyClipText(text: String): Boolean = SystemClipboard.copyText(appContext, text)
 
     /** "Send clipboard to PC" (ADR-043). Called from the open screen, which is what makes the read legal. */
     public suspend fun sendPhoneClipboard(): SendClipOutcome {
-        val (text, image) = withContext(dispatchers.io) { ClipboardSupport.read(appContext) }
+        val (text, image) = withContext(dispatchers.io) { SystemClipboard.read(appContext) }
         if (text.isNullOrBlank() && image == null) return SendClipOutcome.EMPTY
-        val sendable = withContext(dispatchers.default) { image?.let(ClipboardSupport::fitImage) }
+        val sendable = withContext(dispatchers.default) { image?.let(SystemClipboard::fitImage) }
         if (image != null && sendable == null && text.isNullOrBlank()) return SendClipOutcome.TOO_LARGE
         val reached = clipboardBridge.sendClipboard(if (sendable != null) null else text, sendable)
         return if (reached > 0) SendClipOutcome.SENT else SendClipOutcome.NO_PC
@@ -868,7 +868,7 @@ public class VeyroContainer(context: Context) {
         }
 
         return PresenceRecord(
-            version = Vlp.VERSION,
+            version = ProtocolConstants.VERSION,
             deviceId = identity.deviceId,
             platform = Platform.ANDROID,
             capabilities = Capabilities.ANDROID_CURRENT,
@@ -906,7 +906,7 @@ public class VeyroContainer(context: Context) {
         return Diagnostics.builder()
             .section("App") {
                 fact("Package", appContext.packageName)
-                fact("Protocol version", Vlp.VERSION.toString())
+                fact("Protocol version", ProtocolConstants.VERSION.toString())
             }
             .section("Device") {
                 fact("Model", "${Build.MANUFACTURER} ${Build.MODEL}")

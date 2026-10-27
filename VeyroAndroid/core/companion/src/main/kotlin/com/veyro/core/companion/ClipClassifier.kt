@@ -5,7 +5,7 @@ package com.veyro.core.companion
  * (ADR-043): Open for a link, Call for a phone number, Email for an address, Copy code for a
  * one-time code. Pure and local: nothing is looked up, nothing leaves the phone.
  */
-public object ClipSmarts {
+public object ClipClassifier {
 
     public enum class Kind { LINK, PHONE, EMAIL, CODE, TEXT }
 

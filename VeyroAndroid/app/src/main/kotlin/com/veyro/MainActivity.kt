@@ -29,7 +29,7 @@ import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.designsystem.theme.VeyroTheme
 import com.veyro.core.link.OutgoingFile
 import com.veyro.di.VeyroViewModelFactory
-import com.veyro.navigation.VeyroNavHost
+import com.veyro.ui.navigation.VeyroNavHost
 import com.veyro.ui.components.InboundPairingDialog
 import com.veyro.ui.components.InboundTransferDialog
 
@@ -170,7 +170,7 @@ public class MainActivity : ComponentActivity() {
     private fun readSendRequest(intent: Intent?) {
         if (intent?.action == ACTION_OPEN_CLIPBOARD) {
             intent.action = Intent.ACTION_MAIN
-            com.veyro.di.ClipboardSupport.unseen.set(0)
+            com.veyro.di.SystemClipboard.unseen.set(0)
             openClipboard = true
             return
         }

@@ -107,7 +107,7 @@ public data class LinkEnvelope(
     val from: String,
     val seq: Long = 0,
     val ts: Long,
-    val payload: LinkMessage,
+    val payload: PeerMessage,
 )
 
 /**
@@ -124,7 +124,7 @@ public data class LinkEnvelope(
  * can talk to each other at all.
  */
 @Serializable
-public sealed interface LinkMessage {
+public sealed interface PeerMessage {
 
     /** Sent by the pairing initiator, under the PIN-derived bootstrap key. */
     @Serializable
@@ -136,7 +136,7 @@ public sealed interface LinkMessage {
         val appVersion: String,
         val protocolVersion: Int = LINK_PROTOCOL_VERSION,
         val publicKeyB64: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /**
      * The target's answer, carrying the long-lived session secret.
@@ -154,11 +154,11 @@ public sealed interface LinkMessage {
         val platform: String,
         val sessionSecretB64: String,
         val publicKeyB64: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("pairFail")
-    public data class PairFail(val reason: String) : LinkMessage
+    public data class PairFail(val reason: String) : PeerMessage
 
     /** First message of an established session. Confirms both sides can decrypt. */
     @Serializable
@@ -169,7 +169,7 @@ public sealed interface LinkMessage {
         val platform: String,
         val capabilities: Int = 0,
         val maxChunk: Int = 4 * 1024 * 1024,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("helloAck")
@@ -179,7 +179,7 @@ public sealed interface LinkMessage {
         val platform: String,
         val capabilities: Int = 0,
         val chunkSize: Int = 4 * 1024 * 1024,
-    ) : LinkMessage
+    ) : PeerMessage
 
     // ── Transfer ───────────────────────────────────────────────────────────────────────────
 
@@ -194,7 +194,7 @@ public sealed interface LinkMessage {
         val senderWifiP2pAddress: String? = null,
         /** Set when this offer answers a `photoFetch`; the receiver accepts it without a prompt. */
         val requestId: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("decision")
@@ -211,7 +211,7 @@ public sealed interface LinkMessage {
         val authToken: String? = null,
         val p2pSsid: String? = null,
         val p2pPassphrase: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /**
      * Genuine receiver-side progress notification reported over WebSocket.
@@ -224,7 +224,7 @@ public sealed interface LinkMessage {
         val totalBytes: Long,
         val currentItemIndex: Int = 0,
         val speedBps: Long = 0L,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("itemBegin")
@@ -234,7 +234,7 @@ public sealed interface LinkMessage {
         val size: Long,
         val chunkCount: Int,
         val chunkSize: Int,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("itemEnd")
@@ -242,7 +242,7 @@ public sealed interface LinkMessage {
         val transferId: String,
         val index: Int,
         val sha256: String,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("itemResult")
@@ -251,7 +251,7 @@ public sealed interface LinkMessage {
         val index: Int,
         val ok: Boolean,
         val error: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("transferEnd")
@@ -259,7 +259,7 @@ public sealed interface LinkMessage {
         val transferId: String,
         val completed: Boolean,
         val failedIndices: List<Int> = emptyList(),
-    ) : LinkMessage
+    ) : PeerMessage
 
     /**
      * One chunk of file data, base64 in the JSON envelope.
@@ -276,19 +276,19 @@ public sealed interface LinkMessage {
         val index: Int,
         val chunkIndex: Int,
         val dataB64: String,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("cancel")
-    public data class Cancel(val transferId: String, val reason: String) : LinkMessage
+    public data class Cancel(val transferId: String, val reason: String) : PeerMessage
 
     @Serializable
     @SerialName("ping")
-    public data class Ping(val nonce: String) : LinkMessage
+    public data class Ping(val nonce: String) : PeerMessage
 
     @Serializable
     @SerialName("pong")
-    public data class Pong(val nonce: String) : LinkMessage
+    public data class Pong(val nonce: String) : PeerMessage
 
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────────
     //
@@ -317,7 +317,7 @@ public sealed interface LinkMessage {
         val canReply: Boolean? = null,
         /** App icon as PNG, at most 96x96 and 16 KiB, base64. Absent if unavailable or too big. */
         val iconPng: String? = null,
-    ) : LinkMessage {
+    ) : PeerMessage {
         public companion object {
             public const val KIND_POSTED: String = "posted"
             public const val KIND_ACTIVE: String = "active"
@@ -328,17 +328,17 @@ public sealed interface LinkMessage {
     /** PC to phone: invoke action [index] (index into the phone's own `Notification.actions`). */
     @Serializable
     @SerialName("notifAction")
-    public data class NotificationActionRequest(val key: String, val index: Int) : LinkMessage
+    public data class NotificationActionRequest(val key: String, val index: Int) : PeerMessage
 
     /** PC to phone: send [text] through the notification's RemoteInput reply action. */
     @Serializable
     @SerialName("notifReply")
-    public data class NotificationReplyRequest(val key: String, val text: String) : LinkMessage
+    public data class NotificationReplyRequest(val key: String, val text: String) : PeerMessage
 
     /** PC to phone: dismiss the notification on the phone. */
     @Serializable
     @SerialName("notifDismiss")
-    public data class NotificationDismissRequest(val key: String) : LinkMessage
+    public data class NotificationDismissRequest(val key: String) : PeerMessage
 
     // ── Companion: media control (ADR-026), gated by MEDIA_CONTROL (0x0200) ──────────────────
     //
@@ -354,7 +354,7 @@ public sealed interface LinkMessage {
         /** Sender's master volume 0..100, if the sender can report it. */
         val volume: Int? = null,
         val muted: Boolean? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /**
      * Drive a session on the receiver. [action]: `play` | `pause` | `toggle` | `next` | `prev` |
@@ -367,7 +367,7 @@ public sealed interface LinkMessage {
         val action: String,
         val id: String? = null,
         val value: Long? = null,
-    ) : LinkMessage {
+    ) : PeerMessage {
         public companion object {
             public const val PLAY: String = "play"
             public const val PAUSE: String = "pause"
@@ -420,7 +420,7 @@ public sealed interface LinkMessage {
         val bluetooth: Boolean? = null,
         /** Mobile data in use for the internet connection. */
         val mobileData: Boolean? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /**
      * Either direction: "I removed you". The receiver deletes its trust record for the sender and
@@ -429,7 +429,7 @@ public sealed interface LinkMessage {
      */
     @Serializable
     @SerialName("unpair")
-    public data object Unpair : LinkMessage
+    public data object Unpair : PeerMessage
 
     /**
      * Either direction: one clipboard item (ADR-043, 04-PROTOCOL.md 6.5), gated by CLIPBOARD.
@@ -452,7 +452,7 @@ public sealed interface LinkMessage {
         val image: String? = null,
         val apply: Boolean = false,
         val ts: Long = 0,
-    ) : LinkMessage {
+    ) : PeerMessage {
         public companion object {
             public const val KIND_TEXT: String = "text"
             public const val KIND_IMAGE: String = "image"
@@ -464,7 +464,7 @@ public sealed interface LinkMessage {
     /** Phone to PC: lock the PC (Phone Link "Lock PC"). Gated by DEVICE_STATUS (ADR-038). */
     @Serializable
     @SerialName("pcLock")
-    public data object PcLock : LinkMessage
+    public data object PcLock : PeerMessage
 
     /**
      * Either direction: the sender's wallpaper, sent on connect and when it changes.
@@ -472,7 +472,7 @@ public sealed interface LinkMessage {
      */
     @Serializable
     @SerialName("wallpaper")
-    public data class Wallpaper(val jpeg: String? = null) : LinkMessage
+    public data class Wallpaper(val jpeg: String? = null) : PeerMessage
 
     /** PC to phone. Each set field is a request; the phone applies what it is permitted to. */
     @Serializable
@@ -482,7 +482,7 @@ public sealed interface LinkMessage {
         val ring: Boolean? = null,
         val ringer: String? = null,
         val dnd: Boolean? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     // ── Companion: SMS (ADR-027), gated by MESSAGING (0x0800) ───────────────────────────────
     //
@@ -492,11 +492,11 @@ public sealed interface LinkMessage {
     /** PC to phone: list recent threads, newest first. */
     @Serializable
     @SerialName("smsThreadsReq")
-    public data class SmsThreadsRequest(val limit: Int = 50) : LinkMessage
+    public data class SmsThreadsRequest(val limit: Int = 50) : PeerMessage
 
     @Serializable
     @SerialName("smsThreads")
-    public data class SmsThreads(val threads: List<SmsThread>) : LinkMessage
+    public data class SmsThreads(val threads: List<SmsThread>) : PeerMessage
 
     /** PC to phone: one page of a thread, newest first, strictly older than [beforeTs] if set. */
     @Serializable
@@ -505,7 +505,7 @@ public sealed interface LinkMessage {
         val threadId: Long,
         val beforeTs: Long? = null,
         val limit: Int = 50,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("smsMessages")
@@ -514,12 +514,12 @@ public sealed interface LinkMessage {
         val messages: List<SmsMessage>,
         /** True if older messages exist before the last one in [messages]. */
         val more: Boolean = false,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /** Phone to PC: a message arrived or was sent (by any app) since the session started. */
     @Serializable
     @SerialName("smsNew")
-    public data class SmsNew(val message: SmsMessage, val thread: SmsThread? = null) : LinkMessage
+    public data class SmsNew(val message: SmsMessage, val thread: SmsThread? = null) : PeerMessage
 
     /** PC to phone: send a text. [clientId] is echoed in [SmsSendResult]. */
     @Serializable
@@ -530,7 +530,7 @@ public sealed interface LinkMessage {
         val body: String,
         /** Subscription id from [SimList]; absent means the phone's default SMS SIM. */
         val sim: Int? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("smsSendResult")
@@ -539,12 +539,12 @@ public sealed interface LinkMessage {
         val ok: Boolean,
         /** `permission` | `disabled` | `invalid` | `radio` | `no-service` | `failed` */
         val error: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /** Phone to PC, on connect: SIMs that can send SMS. */
     @Serializable
     @SerialName("simList")
-    public data class SimList(val sims: List<SimInfo>) : LinkMessage
+    public data class SimList(val sims: List<SimInfo>) : PeerMessage
 
     @Serializable
     public data class SmsThread(
@@ -588,7 +588,7 @@ public sealed interface LinkMessage {
         val direction: String? = null,
         val number: String? = null,
         val name: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /**
      * PC to phone. [action]: `decline` | `silence` | `answer` | `end` | `dial` (needs [number]).
@@ -600,15 +600,15 @@ public sealed interface LinkMessage {
         val action: String,
         val callId: String? = null,
         val number: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     @Serializable
     @SerialName("callLogReq")
-    public data class CallLogRequest(val limit: Int = 100) : LinkMessage
+    public data class CallLogRequest(val limit: Int = 100) : PeerMessage
 
     @Serializable
     @SerialName("callLog")
-    public data class CallLog(val entries: List<CallLogEntry>) : LinkMessage
+    public data class CallLog(val entries: List<CallLogEntry>) : PeerMessage
 
     @Serializable
     public data class CallLogEntry(
@@ -630,16 +630,16 @@ public sealed interface LinkMessage {
     /** PC to phone: newest-first photo list. */
     @Serializable
     @SerialName("photosReq")
-    public data class PhotosRequest(val limit: Int = 2000) : LinkMessage
+    public data class PhotosRequest(val limit: Int = 2000) : PeerMessage
 
     @Serializable
     @SerialName("photos")
-    public data class Photos(val items: List<PhotoInfo>) : LinkMessage
+    public data class Photos(val items: List<PhotoInfo>) : PeerMessage
 
     /** PC to phone: thumbnails for up to 50 ids. Answered by one [PhotoThumb] per id. */
     @Serializable
     @SerialName("photoThumbReq")
-    public data class PhotoThumbRequest(val ids: List<Long>, val size: Int = 256) : LinkMessage
+    public data class PhotoThumbRequest(val ids: List<Long>, val size: Int = 256) : PeerMessage
 
     @Serializable
     @SerialName("photoThumb")
@@ -647,21 +647,21 @@ public sealed interface LinkMessage {
         val id: Long,
         /** JPEG, longest side <= requested size (max 512), <= 48 KiB, base64. Absent if unreadable. */
         val jpeg: String? = null,
-    ) : LinkMessage
+    ) : PeerMessage
 
     /** PC to phone: send the original. The phone answers with a TransferOffer carrying [requestId]. */
     @Serializable
     @SerialName("photoFetch")
-    public data class PhotoFetch(val id: Long, val requestId: String) : LinkMessage
+    public data class PhotoFetch(val id: Long, val requestId: String) : PeerMessage
 
     /** Phone to PC: a photo was added (camera, screenshot) since the list was sent. */
     @Serializable
     @SerialName("photoNew")
-    public data class PhotoNew(val item: PhotoInfo) : LinkMessage
+    public data class PhotoNew(val item: PhotoInfo) : PeerMessage
 
     @Serializable
     @SerialName("photoRemoved")
-    public data class PhotoRemoved(val id: Long) : LinkMessage
+    public data class PhotoRemoved(val id: Long) : PeerMessage
 
     @Serializable
     public data class PhotoInfo(
@@ -703,10 +703,10 @@ public sealed interface LinkMessage {
 }
 
 /** The single JSON codec for the link protocol. */
-public object LinkJson {
+public object PeerMessageJson {
     public val codec: Json = Json {
         // Unknown keys ignored, never rejected: a newer peer adding a field must not break an
-        // older one (see the LinkMessage note on forward compatibility).
+        // older one (see the PeerMessage note on forward compatibility).
         ignoreUnknownKeys = true
         encodeDefaults = true
         classDiscriminator = "t"
@@ -714,7 +714,7 @@ public object LinkJson {
     }
 }
 
-public fun TransferItem.toLinkItem(): LinkMessage.Item = LinkMessage.Item(
+public fun TransferItem.toLinkItem(): PeerMessage.Item = PeerMessage.Item(
     index = index,
     relPath = relativePath,
     size = sizeBytes,

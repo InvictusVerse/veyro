@@ -1,4 +1,4 @@
-package com.veyro.feature.clipboard
+package com.veyro.ui.clipboard
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.ViewModel

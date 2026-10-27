@@ -221,7 +221,7 @@ class ConnectionManagerTest {
 
     private suspend fun dialIn(manager: ConnectionManager, ws: FakeDefaultWebSocketSession, id: String) {
         ws.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(id, "Office PC", platform = "windows"))),
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(id, "Office PC", platform = "windows"))),
         )
         manager.handleInbound(ws)
     }
@@ -240,7 +240,7 @@ class ConnectionManagerTest {
         val transferWs = FakeDefaultWebSocketSession()
         val transferJob = launch { dialIn(manager, transferWs, officePc.deviceId.value) }
 
-        val ack = LinkJson.codec.decodeFromString(
+        val ack = PeerMessageJson.codec.decodeFromString(
             LinkPreambleAck.serializer(),
             (transferWs.outgoingChannel.receive() as Frame.Text).readText(),
         )
@@ -343,7 +343,7 @@ class ConnectionManagerTest {
         client = client,
     )
 
-    private fun firstAck(ws: FakeDefaultWebSocketSession): LinkPreambleAck = LinkJson.codec.decodeFromString(
+    private fun firstAck(ws: FakeDefaultWebSocketSession): LinkPreambleAck = PeerMessageJson.codec.decodeFromString(
         LinkPreambleAck.serializer(),
         (ws.outgoingChannel.tryReceive().getOrNull() as Frame.Text).readText(),
     )
@@ -436,7 +436,7 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val fakeSession = FakeDefaultWebSocketSession()
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
 
         val job = launch { manager.handleInbound(fakeSession) }
@@ -457,7 +457,7 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val fakeSession = FakeDefaultWebSocketSession()
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
 
         val job = launch { manager.handleInbound(fakeSession) }
@@ -473,7 +473,7 @@ class ConnectionManagerTest {
 
         // Receiver must have sent LinkPreambleAck with mode="pairing"
         val outFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val ack = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
         assertEquals(LinkPreambleAck.MODE_PAIRING, ack.mode)
 
         // Cancel to finish job
@@ -486,7 +486,7 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val fakeSession = FakeDefaultWebSocketSession()
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
 
         val job = launch { manager.handleInbound(fakeSession) }
@@ -502,7 +502,7 @@ class ConnectionManagerTest {
 
         // Receiver sent declined ack
         val outFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val ack = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
         assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
         assertEquals("declined", ack.reason)
     }
@@ -512,7 +512,7 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val fakeSession = FakeDefaultWebSocketSession()
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
 
         val job = launch { manager.handleInbound(fakeSession) }
@@ -531,7 +531,7 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val session1 = FakeDefaultWebSocketSession()
         session1.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
         val job1 = launch { manager.handleInbound(session1) }
         assertEquals("...", manager.pendingInbound.value?.pin)
@@ -539,7 +539,7 @@ class ConnectionManagerTest {
         // Peer retries with new session
         val session2 = FakeDefaultWebSocketSession()
         session2.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
         val job2 = launch { manager.handleInbound(session2) }
 
@@ -551,7 +551,7 @@ class ConnectionManagerTest {
         // Approve second session
         manager.respondToInbound(true)
         val outFrame = session2.outgoingChannel.receive() as Frame.Text
-        val ack = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
         assertEquals(LinkPreambleAck.MODE_PAIRING, ack.mode)
 
         manager.cancelInboundPairing()
@@ -563,19 +563,19 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val session1 = FakeDefaultWebSocketSession()
         session1.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-1", "Phone 1")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-1", "Phone 1")))
         )
         val job1 = launch { manager.handleInbound(session1) }
 
         val session2 = FakeDefaultWebSocketSession()
         session2.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-2", "Phone 2")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-2", "Phone 2")))
         )
         val job2 = launch { manager.handleInbound(session2) }
         job2.join()
 
         val outFrame2 = session2.outgoingChannel.receive() as Frame.Text
-        val ack2 = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame2.readText())
+        val ack2 = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame2.readText())
         assertEquals(LinkPreambleAck.MODE_BUSY, ack2.mode)
         assertEquals("pairing-in-progress", ack2.reason)
 
@@ -588,7 +588,7 @@ class ConnectionManagerTest {
         val manager = testManager(ConnectionClient())
         val fakeSession = FakeDefaultWebSocketSession()
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
         )
 
         val job = launch { manager.handleInbound(fakeSession) }
@@ -616,14 +616,14 @@ class ConnectionManagerTest {
 
         // 1. Send preamble from initiator
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Initiator Phone")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Initiator Phone")))
         )
         val job = launch { manager.handleInbound(fakeSession) }
 
         // 2. User consents
         manager.respondToInbound(true)
         val ackFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val ack = LinkJson.codec.decodeFromString(LinkPreambleAck.serializer(), ackFrame.readText())
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), ackFrame.readText())
         assertEquals(LinkPreambleAck.MODE_PAIRING, ack.mode)
 
         val pin = manager.pendingInbound.value?.pin
@@ -631,7 +631,7 @@ class ConnectionManagerTest {
 
         // 3. Initiator sends PairHello with matching public key
         val bootstrapKey = PairingRegistry().deriveInitiatorKey(pin!!, peerId, localId)
-        val hello = LinkMessage.PairHello(
+        val hello = PeerMessage.PairHello(
             deviceId = peerId,
             deviceName = "Initiator Phone",
             platform = "android",
@@ -646,23 +646,23 @@ class ConnectionManagerTest {
             payload = hello,
         )
         val sealedHello = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
             bootstrapKey,
             encrypt = false,
             peerId,
         )
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
         )
 
         // 4. Target sends sealed PairOk
         val pairOkFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val pairOkWire = LinkJson.codec.decodeFromString(LinkWireFrame.serializer(), pairOkFrame.readText())
+        val pairOkWire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), pairOkFrame.readText())
         val openedOkJson = FrameCrypto.open(pairOkWire.toSealed()!!, bootstrapKey)
         assertNotNull(openedOkJson)
-        val okEnv = LinkJson.codec.decodeFromString(LinkEnvelope.serializer(), openedOkJson!!)
-        assertTrue(okEnv.payload is LinkMessage.PairOk)
-        val pairOk = okEnv.payload as LinkMessage.PairOk
+        val okEnv = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), openedOkJson!!)
+        assertTrue(okEnv.payload is PeerMessage.PairOk)
+        val pairOk = okEnv.payload as PeerMessage.PairOk
         assertEquals(localId, pairOk.deviceId)
         assertNotNull(pairOk.publicKeyB64)
 
@@ -694,7 +694,7 @@ class ConnectionManagerTest {
         val fakeSession = FakeDefaultWebSocketSession()
 
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Attacker Phone")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Attacker Phone")))
         )
         val job = launch { manager.handleInbound(fakeSession) }
 
@@ -704,7 +704,7 @@ class ConnectionManagerTest {
         assertNotNull(pin)
 
         val bootstrapKey = PairingRegistry().deriveInitiatorKey(pin!!, peerId, localId)
-        val hello = LinkMessage.PairHello(
+        val hello = PeerMessage.PairHello(
             deviceId = peerId,
             deviceName = "Attacker Phone",
             platform = "android",
@@ -719,13 +719,13 @@ class ConnectionManagerTest {
             payload = hello,
         )
         val sealedHello = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
             bootstrapKey,
             encrypt = false,
             peerId,
         )
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
         )
 
         job.join()
@@ -748,7 +748,7 @@ class ConnectionManagerTest {
         val fakeSession = FakeDefaultWebSocketSession()
 
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Initiator Phone")))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Initiator Phone")))
         )
         val job = launch { manager.handleInbound(fakeSession) }
 
@@ -758,7 +758,7 @@ class ConnectionManagerTest {
         assertNotNull(pin)
 
         val bootstrapKey = PairingRegistry().deriveInitiatorKey(pin!!, peerId, localId)
-        val hello = LinkMessage.PairHello(
+        val hello = PeerMessage.PairHello(
             deviceId = peerId,
             deviceName = "Initiator Phone",
             platform = "android",
@@ -773,13 +773,13 @@ class ConnectionManagerTest {
             payload = hello,
         )
         val sealedHello = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
             bootstrapKey,
             encrypt = false,
             peerId,
         )
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
         )
 
         job.join()
@@ -813,12 +813,12 @@ class ConnectionManagerTest {
 
         // Preamble sent from initiator
         val preambleFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val preamble = LinkJson.codec.decodeFromString(LinkPreamble.serializer(), preambleFrame.readText())
+        val preamble = PeerMessageJson.codec.decodeFromString(LinkPreamble.serializer(), preambleFrame.readText())
         assertEquals(localId, preamble.id)
 
         // Remote target replies with MODE_PAIRING ack
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
         )
 
         // Initiator user submits PIN
@@ -826,17 +826,17 @@ class ConnectionManagerTest {
 
         // Initiator sends PairHello
         val pairHelloFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val helloWire = LinkJson.codec.decodeFromString(LinkWireFrame.serializer(), pairHelloFrame.readText())
+        val helloWire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), pairHelloFrame.readText())
         val openedHelloJson = FrameCrypto.open(helloWire.toSealed()!!, bootstrapKey)
         assertNotNull(openedHelloJson)
-        val helloEnv = LinkJson.codec.decodeFromString(LinkEnvelope.serializer(), openedHelloJson!!)
-        val helloMsg = helloEnv.payload as LinkMessage.PairHello
+        val helloEnv = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), openedHelloJson!!)
+        val helloMsg = helloEnv.payload as PeerMessage.PairHello
         assertEquals(localId, helloMsg.deviceId)
         assertNotNull(helloMsg.publicKeyB64)
 
         // Target responds with sealed PairOk
         val secret = ByteArray(32) { 7 }
-        val pairOk = LinkMessage.PairOk(
+        val pairOk = PeerMessage.PairOk(
             deviceId = targetId,
             deviceName = "Target Phone",
             platform = "android",
@@ -851,13 +851,13 @@ class ConnectionManagerTest {
             payload = pairOk,
         )
         val sealedOk = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
             bootstrapKey,
             encrypt = true,
             targetId,
         )
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
         )
 
         connectJob.join()
@@ -898,14 +898,14 @@ class ConnectionManagerTest {
 
         fakeSession.outgoingChannel.receive() // preamble
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
         )
         manager.submitPin(pin)
         fakeSession.outgoingChannel.receive() // PairHello
 
         // Target responds with mismatched publicKeyB64
         val secret = ByteArray(32) { 7 }
-        val pairOk = LinkMessage.PairOk(
+        val pairOk = PeerMessage.PairOk(
             deviceId = targetId,
             deviceName = "Target Phone",
             platform = "android",
@@ -920,13 +920,13 @@ class ConnectionManagerTest {
             payload = pairOk,
         )
         val sealedOk = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
             bootstrapKey,
             encrypt = true,
             targetId,
         )
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
         )
 
         connectJob.join()
@@ -959,13 +959,13 @@ class ConnectionManagerTest {
 
         fakeSession.outgoingChannel.receive()
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
         )
         manager.submitPin(pin)
         fakeSession.outgoingChannel.receive()
 
         val secret = ByteArray(32) { 7 }
-        val pairOk = LinkMessage.PairOk(
+        val pairOk = PeerMessage.PairOk(
             deviceId = targetId,
             deviceName = "Target Phone",
             platform = "android",
@@ -980,13 +980,13 @@ class ConnectionManagerTest {
             payload = pairOk,
         )
         val sealedOk = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
             bootstrapKey,
             encrypt = true,
             targetId,
         )
         fakeSession.incomingChannel.send(
-            Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
         )
 
         connectJob.join()
@@ -1007,7 +1007,7 @@ class ConnectionManagerTest {
         /** The id the frame is bound to; the dialled id, since that is who the phone expects. */
         sender: String = deviceId,
     ): Frame.Text {
-        val pairOk = LinkMessage.PairOk(
+        val pairOk = PeerMessage.PairOk(
             deviceId = deviceId,
             deviceName = name,
             platform = "windows",
@@ -1022,17 +1022,17 @@ class ConnectionManagerTest {
             payload = pairOk,
         )
         val sealed = FrameCrypto.seal(
-            LinkJson.codec.encodeToString(LinkEnvelope.serializer(), env),
+            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), env),
             key,
             encrypt = true,
             sender,
         )
-        return Frame.Text(LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire()))
+        return Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire()))
     }
 
     private val pairingAck: Frame.Text
         get() = Frame.Text(
-            LinkJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)),
+            PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)),
         )
 
     @Test
@@ -1060,7 +1060,7 @@ class ConnectionManagerTest {
 
         // PairHello must be sealed under the key derived from the scanned code.
         val helloFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val helloWire = LinkJson.codec.decodeFromString(LinkWireFrame.serializer(), helloFrame.readText())
+        val helloWire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), helloFrame.readText())
         assertNotNull(FrameCrypto.open(helloWire.toSealed()!!, key))
 
         fakeSession.incomingChannel.send(sealedPairOk(key, pcId, pcPk))

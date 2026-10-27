@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.veyro.core.designsystem.components.FlowingPageIndicator
 import com.veyro.core.designsystem.components.WavySlider
 import com.veyro.core.designsystem.icons.VeyroIcons
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import kotlinx.coroutines.delay
 import java.util.Base64
 import java.util.Locale
@@ -58,7 +58,7 @@ import java.util.Locale
  */
 @Composable
 internal fun MediaCard(
-    sessions: List<LinkMessage.MediaSessionInfo>,
+    sessions: List<PeerMessage.MediaSessionInfo>,
     onCommand: (action: String, id: String?, value: Long?) -> Unit,
 ) {
     if (sessions.isEmpty()) return
@@ -100,7 +100,7 @@ internal fun MediaCard(
 
 @Composable
 private fun PlaybackSession(
-    session: LinkMessage.MediaSessionInfo,
+    session: PeerMessage.MediaSessionInfo,
     onCommand: (action: String, id: String?, value: Long?) -> Unit,
 ) {
     Card(shape = MaterialTheme.shapes.large) {
@@ -165,7 +165,7 @@ private fun PlaybackSession(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(
-                        onClick = { onCommand(LinkMessage.MediaCommand.PREV, session.id, null) },
+                        onClick = { onCommand(PeerMessage.MediaCommand.PREV, session.id, null) },
                         enabled = session.canPrev,
                     ) {
                         Icon(
@@ -176,7 +176,7 @@ private fun PlaybackSession(
                     }
 
                     FilledIconButton(
-                        onClick = { onCommand(LinkMessage.MediaCommand.TOGGLE, session.id, null) },
+                        onClick = { onCommand(PeerMessage.MediaCommand.TOGGLE, session.id, null) },
                         modifier = Modifier.size(width = 72.dp, height = 48.dp),
                     ) {
                         Icon(
@@ -186,7 +186,7 @@ private fun PlaybackSession(
                     }
 
                     IconButton(
-                        onClick = { onCommand(LinkMessage.MediaCommand.NEXT, session.id, null) },
+                        onClick = { onCommand(PeerMessage.MediaCommand.NEXT, session.id, null) },
                         enabled = session.canNext,
                     ) {
                         Icon(
@@ -203,7 +203,7 @@ private fun PlaybackSession(
 
 @Composable
 private fun SeekBar(
-    session: LinkMessage.MediaSessionInfo,
+    session: PeerMessage.MediaSessionInfo,
     durationMs: Long,
     onCommand: (action: String, id: String?, value: Long?) -> Unit,
 ) {
@@ -230,7 +230,7 @@ private fun SeekBar(
         value = dragging ?: (position.toFloat() / durationMs).coerceIn(0f, 1f),
         onValueChange = { dragging = it },
         onValueChangeFinished = {
-            dragging?.let { onCommand(LinkMessage.MediaCommand.SEEK, session.id, (it * durationMs).toLong()) }
+            dragging?.let { onCommand(PeerMessage.MediaCommand.SEEK, session.id, (it * durationMs).toLong()) }
             dragging = null
         },
         enabled = session.canSeek,

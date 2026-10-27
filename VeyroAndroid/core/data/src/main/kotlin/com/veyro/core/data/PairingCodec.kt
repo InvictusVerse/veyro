@@ -4,7 +4,7 @@ import com.veyro.core.model.DeviceId
 import com.veyro.core.model.encoding.hexToBytesOrNull
 import com.veyro.core.model.encoding.toHex
 import com.veyro.core.protocol.Base64Url
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 
 /**
  * The pairing payload, as specified in `04-PROTOCOL.md` section 8.
@@ -53,7 +53,7 @@ public object PairingCodec {
         host: String? = null,
     ): String = buildString {
         append(SCHEME)
-        append("?v=").append(Vlp.VERSION)
+        append("?v=").append(ProtocolConstants.VERSION)
         append("&id=").append(deviceId.value)
         append("&pk=").append(Base64Url.encode(staticPublicKey))
         name?.takeIf { it.isNotBlank() }?.let { append("&n=").append(percentEncode(it)) }
@@ -80,7 +80,7 @@ public object PairingCodec {
         }
 
         val version = params["v"]?.toIntOrNull() ?: return null
-        if (version != Vlp.VERSION) return null
+        if (version != ProtocolConstants.VERSION) return null
 
         val deviceId = DeviceId.parseOrNull(params["id"]) ?: return null
         val key = Base64Url.decodeOrNull(params["pk"])?.takeIf { it.size == 32 } ?: return null

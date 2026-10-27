@@ -3,7 +3,7 @@ package com.veyro.core.transfer
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.model.VerificationResult
 import com.veyro.core.protocol.RelativePath
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -83,7 +83,7 @@ public class PartFile private constructor(
             destinationDir: File,
             relativePath: String,
             sizeBytes: Long,
-            chunkSize: Int = Vlp.DEFAULT_CHUNK_SIZE,
+            chunkSize: Int = ProtocolConstants.DEFAULT_CHUNK_SIZE,
         ): PartFile {
             val validation = RelativePath.validate(relativePath)
             if (validation is RelativePath.Result.Rejected) {
@@ -112,8 +112,8 @@ public class PartFile private constructor(
 
             return PartFile(
                 finalFile = target,
-                partFile = File(target.parentFile, target.name + Vlp.PART_SUFFIX),
-                metaFile = File(target.parentFile, target.name + Vlp.META_SUFFIX),
+                partFile = File(target.parentFile, target.name + ProtocolConstants.PART_SUFFIX),
+                metaFile = File(target.parentFile, target.name + ProtocolConstants.META_SUFFIX),
                 sizeBytes = sizeBytes,
                 chunkSize = chunkSize,
             )

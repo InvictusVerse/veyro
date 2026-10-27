@@ -2,7 +2,7 @@ package com.veyro.ui.home
 
 import com.veyro.core.data.DeviceRepository
 import com.veyro.core.data.DiscoverySubscription
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
@@ -104,7 +104,7 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = repo,
             networkMonitor = QuietNetwork,
-            pcStatus = MutableStateFlow(mapOf(laptop.deviceId.value to LinkMessage.DeviceStatus(battery = 80, charging = true))),
+            pcStatus = MutableStateFlow(mapOf(laptop.deviceId.value to PeerMessage.DeviceStatus(battery = 80, charging = true))),
             connectedPeerIds = MutableStateFlow(setOf(laptop.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office, laptop, trusted(3, "Old").copy(revoked = true))),
         )
@@ -196,7 +196,7 @@ class HomeViewModelTest {
         val vm = HomeViewModel(
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
-            pcStatus = MutableStateFlow(mapOf(office.deviceId.value to LinkMessage.DeviceStatus(battery = 64, charging = true, wifi = 3))),
+            pcStatus = MutableStateFlow(mapOf(office.deviceId.value to PeerMessage.DeviceStatus(battery = 64, charging = true, wifi = 3))),
             connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value)),
             trustedPeers = MutableStateFlow(listOf(office)),
             peerCapabilities = MutableStateFlow(mapOf(office.deviceId.value to Capabilities.of(Capability.FILE_TRANSFER, Capability.DEVICE_STATUS))),
@@ -219,7 +219,7 @@ class HomeViewModelTest {
             deviceRepository = FakeRepository(),
             networkMonitor = QuietNetwork,
             // A stale status from before the disconnect must not be shown for it.
-            pcStatus = MutableStateFlow(mapOf(office.deviceId.value to LinkMessage.DeviceStatus(battery = 64, wifi = 3))),
+            pcStatus = MutableStateFlow(mapOf(office.deviceId.value to PeerMessage.DeviceStatus(battery = 64, wifi = 3))),
             trustedPeers = MutableStateFlow(listOf(office)),
             peerCapabilities = MutableStateFlow(mapOf(office.deviceId.value to Capabilities.of(Capability.DEVICE_STATUS))),
         )
@@ -300,7 +300,7 @@ class HomeViewModelTest {
         val laptop = trusted(2, "Laptop")
         val laptopJpeg = byteArrayOf(2)
         val selected = mutableListOf<String>()
-        val commands = mutableListOf<Pair<String, LinkMessage.MediaCommand>>()
+        val commands = mutableListOf<Pair<String, PeerMessage.MediaCommand>>()
         val disconnected = mutableListOf<String>()
         val locked = mutableListOf<String>()
         val vm = HomeViewModel(
@@ -309,11 +309,11 @@ class HomeViewModelTest {
             connectedPeerIds = MutableStateFlow(setOf(office.deviceId.value, laptop.deviceId.value)),
             pcStatus = MutableStateFlow(
                 mapOf(
-                    office.deviceId.value to LinkMessage.DeviceStatus(battery = 90),
-                    laptop.deviceId.value to LinkMessage.DeviceStatus(battery = 15, wifi = 2),
+                    office.deviceId.value to PeerMessage.DeviceStatus(battery = 90),
+                    laptop.deviceId.value to PeerMessage.DeviceStatus(battery = 15, wifi = 2),
                 ),
             ),
-            pcMedia = MutableStateFlow(mapOf(laptop.deviceId.value to LinkMessage.MediaState(sessions = emptyList(), volume = 33))),
+            pcMedia = MutableStateFlow(mapOf(laptop.deviceId.value to PeerMessage.MediaState(sessions = emptyList(), volume = 33))),
             peerCapabilities = MutableStateFlow(
                 mapOf(
                     office.deviceId.value to Capabilities.of(Capability.FILE_TRANSFER),
@@ -349,7 +349,7 @@ class HomeViewModelTest {
 
         vm.lockSelectedPc()
         assertEquals(listOf(laptop.deviceId.value), locked)
-        vm.mediaCommand(LinkMessage.MediaCommand.VOLUME, value = 50)
+        vm.mediaCommand(PeerMessage.MediaCommand.VOLUME, value = 50)
         assertEquals(laptop.deviceId.value, commands.single().first)
 
         // Disconnecting one PC from its card names that PC only.

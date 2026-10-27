@@ -89,7 +89,7 @@ public class FileSettingsStore(
         state.asStateFlow().map { it.notificationMirrorEnabled }
 
     override suspend fun setDeviceName(name: String) {
-        // The name goes into an mDNS TXT record, which is size-limited (Vlp.MAX_DISPLAY_NAME_BYTES).
+        // The name goes into an mDNS TXT record, which is size-limited (ProtocolConstants.MAX_DISPLAY_NAME_BYTES).
         // Truncating here rather than at the advertiser means what the user sees in Settings is what
         // peers will actually see, instead of a silent difference.
         val trimmed = name.trim().ifEmpty { defaultDeviceName }

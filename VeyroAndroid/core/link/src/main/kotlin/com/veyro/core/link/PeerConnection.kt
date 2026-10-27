@@ -265,7 +265,7 @@ public class PeerConnection(
         }
     }
 
-    public suspend fun send(message: LinkMessage): Unit = sendInternal(message, encryptFrames)
+    public suspend fun send(message: PeerMessage): Unit = sendInternal(message, encryptFrames)
 
     /**
      * Sends one frame sealed regardless of session mode.
@@ -274,9 +274,9 @@ public class PeerConnection(
      * plaintext pairing mode. The secret must not cross the network in the clear, and the bootstrap
      * key is available to seal it with.
      */
-    public suspend fun sendSealed(message: LinkMessage): Unit = sendInternal(message, encrypt = true)
+    public suspend fun sendSealed(message: PeerMessage): Unit = sendInternal(message, encrypt = true)
 
-    private suspend fun sendInternal(message: LinkMessage, encrypt: Boolean) {
+    private suspend fun sendInternal(message: PeerMessage, encrypt: Boolean) {
         sendMutex.withLock {
             val seq = seqOut.incrementAndGet()
             lastOutboundAt = System.currentTimeMillis()
@@ -287,19 +287,19 @@ public class PeerConnection(
                 ts = lastOutboundAt,
                 payload = message,
             )
-            val payloadJson = LinkJson.codec.encodeToString(LinkEnvelope.serializer(), envelope)
+            val payloadJson = PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), envelope)
             val sealed = FrameCrypto.seal(payloadJson, key, encrypt, localDeviceId)
-            val wireText = LinkJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire())
+            val wireText = PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire())
 
             // Sampled logging for outbound sends (first chunk, last chunk, or every 20 chunks)
-            if (message is LinkMessage.Chunk) {
+            if (message is PeerMessage.Chunk) {
                 if (message.chunkIndex == 0 || message.chunkIndex % 20 == 0) {
                     val qSize = outboundQueueBytes() ?: -1L
                     VeyroLog.i(tag) {
                         "[diagnostics:sender-wire] transfer=${message.transferId} chunk #${message.chunkIndex} (seq=$seq, payloadBytes=${message.dataB64.length}, wireBytes=${wireText.length}, inFlightQueue=${qSize}B)"
                     }
                 }
-            } else if (message !is LinkMessage.Ping && message !is LinkMessage.Pong) {
+            } else if (message !is PeerMessage.Ping && message !is PeerMessage.Pong) {
                 VeyroLog.i(tag) {
                     "[diagnostics:sender-ctrl] send ${message.javaClass.simpleName} (seq=$seq, wireBytes=${wireText.length})"
                 }
@@ -329,7 +329,7 @@ public class PeerConnection(
         lastInboundAt = System.currentTimeMillis()
 
         val wire = try {
-            LinkJson.codec.decodeFromString(LinkWireFrame.serializer(), text)
+            PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), text)
         } catch (t: Throwable) {
             VeyroLog.d(tag) { "Bad wire JSON: ${t.message}" }
             return
@@ -358,7 +358,7 @@ public class PeerConnection(
         }
 
         val envelope = try {
-            LinkJson.codec.decodeFromString(LinkEnvelope.serializer(), json)
+            PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), json)
         } catch (t: Throwable) {
             VeyroLog.d(tag) { "Envelope decode failed: ${t.message}" }
             return
@@ -372,18 +372,18 @@ public class PeerConnection(
         }
         lastSeqByPeer[envelope.from] = envelope.seq
 
-        if (envelope.payload is LinkMessage.Ping) {
+        if (envelope.payload is PeerMessage.Ping) {
             scope.launch {
                 runCatching {
-                    send(LinkMessage.Pong((envelope.payload as LinkMessage.Ping).nonce))
+                    send(PeerMessage.Pong((envelope.payload as PeerMessage.Ping).nonce))
                 }
             }
             return
         }
 
         // Sampled logging for inbound chunk receives
-        if (envelope.payload is LinkMessage.Chunk) {
-            val chunk = envelope.payload as LinkMessage.Chunk
+        if (envelope.payload is PeerMessage.Chunk) {
+            val chunk = envelope.payload as PeerMessage.Chunk
             val count = acceptedPayloadFrames.incrementAndGet()
             if (chunk.chunkIndex == 0 || chunk.chunkIndex % 20 == 0) {
                 VeyroLog.i(tag) {
@@ -397,7 +397,7 @@ public class PeerConnection(
 
         // Route message by type and transfer ID
         when (val payload = envelope.payload) {
-            is LinkMessage.TransferOffer -> {
+            is PeerMessage.TransferOffer -> {
                 if (completedTransfers.contains(payload.transferId)) {
                     VeyroLog.w(tag) { "Dropping TransferOffer for completed transfer ${payload.transferId}" }
                     return
@@ -409,7 +409,7 @@ public class PeerConnection(
                 offerChannel.trySend(envelope)
             }
 
-            is LinkMessage.TransferDecision -> {
+            is PeerMessage.TransferDecision -> {
                 if (completedTransfers.contains(payload.transferId)) {
                     VeyroLog.d(tag) { "Dropping TransferDecision for completed transfer ${payload.transferId}" }
                     return
@@ -417,7 +417,7 @@ public class PeerConnection(
                 mailbox(payload.transferId).deliverDecision(payload)
             }
 
-            is LinkMessage.ItemResult -> {
+            is PeerMessage.ItemResult -> {
                 if (completedTransfers.contains(payload.transferId)) {
                     VeyroLog.d(tag) { "Dropping ItemResult for completed transfer ${payload.transferId}" }
                     return
@@ -425,52 +425,52 @@ public class PeerConnection(
                 mailbox(payload.transferId).deliverItemResult(payload)
             }
 
-            is LinkMessage.TransferProgressNotice -> {
+            is PeerMessage.TransferProgressNotice -> {
                 if (completedTransfers.contains(payload.transferId)) return
                 mailbox(payload.transferId).deliverPayload(payload)
             }
 
-            is LinkMessage.ItemBegin -> {
+            is PeerMessage.ItemBegin -> {
                 if (completedTransfers.contains(payload.transferId)) return
                 mailbox(payload.transferId).deliverPayload(payload)
             }
 
-            is LinkMessage.Chunk -> {
+            is PeerMessage.Chunk -> {
                 if (completedTransfers.contains(payload.transferId)) return
                 mailbox(payload.transferId).deliverPayload(payload)
             }
 
-            is LinkMessage.ItemEnd -> {
+            is PeerMessage.ItemEnd -> {
                 if (completedTransfers.contains(payload.transferId)) return
                 mailbox(payload.transferId).deliverPayload(payload)
             }
 
-            is LinkMessage.TransferEnd -> {
+            is PeerMessage.TransferEnd -> {
                 if (completedTransfers.contains(payload.transferId)) return
                 mailbox(payload.transferId).deliverPayload(payload)
             }
 
-            is LinkMessage.Cancel -> {
+            is PeerMessage.Cancel -> {
                 mailboxes[payload.transferId]?.deliverCancel(payload)
             }
 
-            is LinkMessage.Hello -> {
+            is PeerMessage.Hello -> {
                 _peerCapabilities.value = Capabilities(payload.capabilities)
                 handshakeChannel.trySend(envelope)
             }
 
-            is LinkMessage.HelloAck -> {
+            is PeerMessage.HelloAck -> {
                 _peerCapabilities.value = Capabilities(payload.capabilities)
                 handshakeChannel.trySend(envelope)
             }
 
-            is LinkMessage.PairHello,
-            is LinkMessage.PairOk,
-            is LinkMessage.PairFail -> {
+            is PeerMessage.PairHello,
+            is PeerMessage.PairOk,
+            is PeerMessage.PairFail -> {
                 handshakeChannel.trySend(envelope)
             }
 
-            is LinkMessage.Pong -> {
+            is PeerMessage.Pong -> {
                 // Heartbeat response handled
             }
 
@@ -497,7 +497,7 @@ public class PeerConnection(
             // Only ping if outbound has been idle; if active transfer is streaming frames,
             // the connection is actively proven alive and ping avoids interleaving.
             if (now - lastOutboundAt >= HEARTBEAT_INTERVAL_MS) {
-                runCatching { send(LinkMessage.Ping(UUID.randomUUID().toString())) }
+                runCatching { send(PeerMessage.Ping(UUID.randomUUID().toString())) }
             }
         }
     }
@@ -561,36 +561,36 @@ private fun decodeBase64(value: String): ByteArray? =
  * SharedFlow replay issues.
  */
 public class TransferMailbox(public val transferId: String) {
-    private val decisionDeferred = CompletableDeferred<LinkMessage.TransferDecision>()
-    private val itemResults = ConcurrentHashMap<Int, CompletableDeferred<LinkMessage.ItemResult>>()
-    private val payloads = Channel<LinkMessage>(capacity = 64)
+    private val decisionDeferred = CompletableDeferred<PeerMessage.TransferDecision>()
+    private val itemResults = ConcurrentHashMap<Int, CompletableDeferred<PeerMessage.ItemResult>>()
+    private val payloads = Channel<PeerMessage>(capacity = 64)
 
     @Volatile public var isCancelled: Boolean = false
         private set
 
-    public val payloadChannel: ReceiveChannel<LinkMessage> get() = payloads
+    public val payloadChannel: ReceiveChannel<PeerMessage> get() = payloads
 
-    internal fun deliverDecision(decision: LinkMessage.TransferDecision) {
+    internal fun deliverDecision(decision: PeerMessage.TransferDecision) {
         decisionDeferred.complete(decision)
     }
 
-    internal fun deliverItemResult(result: LinkMessage.ItemResult) {
+    internal fun deliverItemResult(result: PeerMessage.ItemResult) {
         val deferred = itemResults.computeIfAbsent(result.index) { CompletableDeferred() }
         deferred.complete(result)
     }
 
-    internal suspend fun deliverPayload(message: LinkMessage) {
+    internal suspend fun deliverPayload(message: PeerMessage) {
         if (isCancelled) return
         runCatching { payloads.send(message) }
     }
 
-    internal fun deliverCancel(cancel: LinkMessage.Cancel) {
+    internal fun deliverCancel(cancel: PeerMessage.Cancel) {
         isCancelled = true
-        decisionDeferred.complete(LinkMessage.TransferDecision(cancel.transferId, accept = false, reason = cancel.reason))
+        decisionDeferred.complete(PeerMessage.TransferDecision(cancel.transferId, accept = false, reason = cancel.reason))
         payloads.trySend(cancel)
     }
 
-    public suspend fun awaitDecision(timeoutMs: Long): LinkMessage.TransferDecision? {
+    public suspend fun awaitDecision(timeoutMs: Long): PeerMessage.TransferDecision? {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!decisionDeferred.isCompleted && System.currentTimeMillis() < deadline) {
             if (decisionDeferred.isCompleted) break
@@ -599,7 +599,7 @@ public class TransferMailbox(public val transferId: String) {
         return if (decisionDeferred.isCompleted) decisionDeferred.await() else null
     }
 
-    public suspend fun awaitItemResult(index: Int, timeoutMs: Long): LinkMessage.ItemResult? {
+    public suspend fun awaitItemResult(index: Int, timeoutMs: Long): PeerMessage.ItemResult? {
         val deferred = itemResults.computeIfAbsent(index) { CompletableDeferred() }
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!deferred.isCompleted && System.currentTimeMillis() < deadline) {

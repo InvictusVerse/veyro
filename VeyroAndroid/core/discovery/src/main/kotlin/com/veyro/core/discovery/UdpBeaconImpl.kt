@@ -9,7 +9,7 @@ import com.veyro.core.network.InterfaceClassifier
 import com.veyro.core.network.LocalAddressProvider
 import com.veyro.core.protocol.BeaconCodec
 import com.veyro.core.protocol.PresenceRecord
-import com.veyro.core.protocol.Vlp
+import com.veyro.core.protocol.ProtocolConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -93,7 +93,7 @@ public class UdpBeaconImpl(
 
         val opened = withContext(dispatchers.io) {
             try {
-                MulticastSocket(Vlp.UDP_DISCOVERY_PORT).apply {
+                MulticastSocket(ProtocolConstants.UDP_DISCOVERY_PORT).apply {
                     reuseAddress = true
                     soTimeout = RECEIVE_TIMEOUT_MILLIS
                     // Do not loop our own multicast back: we would otherwise discover ourselves.
@@ -101,7 +101,7 @@ public class UdpBeaconImpl(
                     joinGroupOnUsableInterfaces(this)
                 }
             } catch (t: Throwable) {
-                VeyroLog.w(TAG, t) { "Could not open the beacon socket on ${Vlp.UDP_DISCOVERY_PORT}" }
+                VeyroLog.w(TAG, t) { "Could not open the beacon socket on ${ProtocolConstants.UDP_DISCOVERY_PORT}" }
                 null
             }
         } ?: return
@@ -216,7 +216,7 @@ public class UdpBeaconImpl(
                 val frame = BeaconCodec.encode(BeaconCodec.Type.ANNOUNCE, record)
                 sendEverywhere(current, frame)
             }
-            delay(Vlp.UDP_BEACON_INTERVAL_MILLIS)
+            delay(ProtocolConstants.UDP_BEACON_INTERVAL_MILLIS)
         }
     }
 
@@ -239,8 +239,8 @@ public class UdpBeaconImpl(
                     DatagramPacket(
                         frame,
                         frame.size,
-                        InetAddress.getByName(Vlp.UDP_MULTICAST_GROUP),
-                        Vlp.UDP_DISCOVERY_PORT,
+                        InetAddress.getByName(ProtocolConstants.UDP_MULTICAST_GROUP),
+                        ProtocolConstants.UDP_DISCOVERY_PORT,
                     ),
                 )
             }.onFailure { VeyroLog.d(TAG) { "Multicast send failed: ${it.message}" } }
@@ -252,7 +252,7 @@ public class UdpBeaconImpl(
                             frame,
                             frame.size,
                             InetAddress.getByName(broadcast),
-                            Vlp.UDP_DISCOVERY_PORT,
+                            ProtocolConstants.UDP_DISCOVERY_PORT,
                         ),
                     )
                 }.onFailure { VeyroLog.d(TAG) { "Broadcast to $broadcast failed: ${it.message}" } }
@@ -269,8 +269,8 @@ public class UdpBeaconImpl(
      */
     private fun joinGroupOnUsableInterfaces(socket: MulticastSocket) {
         val group = InetSocketAddress(
-            InetAddress.getByName(Vlp.UDP_MULTICAST_GROUP),
-            Vlp.UDP_DISCOVERY_PORT,
+            InetAddress.getByName(ProtocolConstants.UDP_MULTICAST_GROUP),
+            ProtocolConstants.UDP_DISCOVERY_PORT,
         )
         var joined = 0
         val interfaces = runCatching { NetworkInterface.getNetworkInterfaces()?.toList() }
@@ -291,7 +291,7 @@ public class UdpBeaconImpl(
         if (joined == 0) {
             // Fall back to the default interface. Better than nothing, and the diagnosis layer
             // will report MULTICAST_BLOCKED if it turns out nothing arrives.
-            runCatching { socket.joinGroup(InetAddress.getByName(Vlp.UDP_MULTICAST_GROUP)) }
+            runCatching { socket.joinGroup(InetAddress.getByName(ProtocolConstants.UDP_MULTICAST_GROUP)) }
             VeyroLog.d(TAG) { "Joined the multicast group on the default interface only" }
         } else {
             VeyroLog.d(TAG) { "Joined the multicast group on $joined interface(s)" }

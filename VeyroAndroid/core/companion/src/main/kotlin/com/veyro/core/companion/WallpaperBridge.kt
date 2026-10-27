@@ -1,7 +1,7 @@
 package com.veyro.core.companion
 
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.link.LinkMessage
+import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
 import kotlinx.coroutines.CancellationException
@@ -154,7 +154,7 @@ public class WallpaperBridge(
             coroutineScope {
                 launch {
                     link.incoming.collect { message ->
-                        if (message is LinkMessage.Wallpaper) receive(link.peerDeviceId, message)
+                        if (message is PeerMessage.Wallpaper) receive(link.peerDeviceId, message)
                     }
                 }
                 link.peerCapabilities
@@ -177,14 +177,14 @@ public class WallpaperBridge(
             .collect { on ->
                 val jpeg = if (on) runCatching { source.currentJpeg() }.getOrNull() else null
                 if (sentOnce && jpeg.contentEqualsNullable(lastSent)) return@collect
-                link.send(LinkMessage.Wallpaper(jpeg = jpeg?.let { Base64.getEncoder().encodeToString(it) }))
+                link.send(PeerMessage.Wallpaper(jpeg = jpeg?.let { Base64.getEncoder().encodeToString(it) }))
                 VeyroLog.i(TAG) { if (jpeg != null) "Wallpaper sent" else "Wallpaper unavailable; sent none" }
                 lastSent = jpeg
                 sentOnce = true
             }
     }
 
-    private suspend fun receive(peerId: String?, message: LinkMessage.Wallpaper) {
+    private suspend fun receive(peerId: String?, message: PeerMessage.Wallpaper) {
         val id = peerId?.let { DeviceId.parseOrNull(it)?.value ?: it } ?: return
         val bytes = message.jpeg?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
         when {
