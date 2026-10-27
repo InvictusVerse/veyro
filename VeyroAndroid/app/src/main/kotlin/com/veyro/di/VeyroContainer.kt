@@ -90,6 +90,7 @@ import com.veyro.core.companion.AndroidWallpaperSource
 import com.veyro.core.companion.WallpaperBridge
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import com.veyro.feature.clipboard.ClipKind
 import com.veyro.feature.clipboard.ClipRow
 import com.veyro.feature.clipboard.SendClipOutcome
 import kotlinx.coroutines.flow.flowOn
@@ -609,12 +610,22 @@ public class VeyroContainer(context: Context) {
             // Only the items still in the history keep a decoded preview.
             thumbnails.keys.retainAll(items.map { it.id }.toSet())
             items.map { item ->
+                val smart = if (item.image != null) null else com.veyro.core.companion.ClipSmarts.classify(item.text)
                 ClipRow(
                     id = item.id,
                     text = item.text,
                     thumbnail = item.image?.let { bytes -> thumbnails.getOrPut(item.id) { decodePreview(bytes) } },
                     source = clipSourceName(item.peerId),
                     atMillis = item.atMillis,
+                    kind = when (smart?.kind) {
+                        null -> ClipKind.IMAGE
+                        com.veyro.core.companion.ClipSmarts.Kind.LINK -> ClipKind.LINK
+                        com.veyro.core.companion.ClipSmarts.Kind.PHONE -> ClipKind.PHONE
+                        com.veyro.core.companion.ClipSmarts.Kind.EMAIL -> ClipKind.EMAIL
+                        com.veyro.core.companion.ClipSmarts.Kind.CODE -> ClipKind.CODE
+                        com.veyro.core.companion.ClipSmarts.Kind.TEXT -> ClipKind.TEXT
+                    },
+                    value = smart?.value,
                 )
             }
         }.flowOn(dispatchers.default)
@@ -634,6 +645,9 @@ public class VeyroContainer(context: Context) {
         val item = clipboardBridge.history.value.firstOrNull { it.id == id } ?: return false
         return ClipboardSupport.copy(appContext, item)
     }
+
+    /** "Copy code": a plain string onto the system clipboard. */
+    public fun copyClipText(text: String): Boolean = ClipboardSupport.copyText(appContext, text)
 
     /** "Send clipboard to PC" (ADR-043). Called from the open screen, which is what makes the read legal. */
     public suspend fun sendPhoneClipboard(): SendClipOutcome {

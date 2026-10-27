@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR-043: the pill behind the inline buttons on the clipboard notification. A neutral
+     translucent fill reads on both the light and the dark notification shade. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33888888">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <solid android:color="#26888888" />
+        </shape>
+    </item>
+</ripple>

@@ -13,6 +13,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.view.View
+import android.widget.RemoteViews
+import com.veyro.R
 import androidx.core.content.FileProvider
 import com.veyro.core.companion.ClipboardBridge
 import com.veyro.MainActivity
@@ -169,35 +172,65 @@ internal class AndroidClipNotifier(
             ClipSmarts.Kind.TEXT -> smart.value.let { if (it.length > 300) it.take(300) + "..." else it }
         }
 
+        // The action that fits what was copied. Null for plain text and images: Copy is enough.
+        val primary: Pair<String, PendingIntent>? = when (smart?.kind) {
+            ClipSmarts.Kind.LINK -> view(Uri.parse(smart.value))?.let { "Open" to it }
+            ClipSmarts.Kind.PHONE -> "Call" to activity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + smart.value)), REQ_PRIMARY)
+            ClipSmarts.Kind.EMAIL -> "Email" to activity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + smart.value)), REQ_PRIMARY)
+            ClipSmarts.Kind.CODE -> "Copy code" to broadcast(ClipboardSupport.ACTION_COPY_VALUE, item.id, REQ_PRIMARY)
+            else -> null
+        }
+        val copy = broadcast(ClipboardSupport.ACTION_COPY, item.id, REQ_COPY)
+        val copyLabel = if (smart?.kind == ClipSmarts.Kind.CODE) "Copy all" else "Copy"
+        val picture = item.image?.let(::preview)
+        val shownTitle = if (count > 1) "$title  ·  $count new" else title
+
+        // Collapsed: text and the buttons side by side, so nothing needs expanding.
+        val small = RemoteViews(context.packageName, R.layout.notification_clip_small).apply {
+            setTextViewText(R.id.clip_title, shownTitle)
+            setTextViewText(R.id.clip_text, body)
+            setTextViewText(R.id.clip_copy, copyLabel)
+            setOnClickPendingIntent(R.id.clip_copy, copy)
+            if (primary != null) {
+                setTextViewText(R.id.clip_primary, primary.first)
+                setOnClickPendingIntent(R.id.clip_primary, primary.second)
+                setViewVisibility(R.id.clip_primary, View.VISIBLE)
+            }
+            if (picture != null) {
+                setImageViewBitmap(R.id.clip_thumb, picture)
+                setViewVisibility(R.id.clip_thumb, View.VISIBLE)
+            }
+        }
+        // Expanded: more text or the picture; the system draws the actions below it.
+        val big = RemoteViews(context.packageName, R.layout.notification_clip_big).apply {
+            setTextViewText(R.id.clip_title, shownTitle)
+            setTextViewText(R.id.clip_text, body)
+            if (picture != null) {
+                setImageViewBitmap(R.id.clip_picture, picture)
+                setViewVisibility(R.id.clip_picture, View.VISIBLE)
+            }
+        }
+
         val builder = Notification.Builder(context, ClipboardSupport.CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setContentTitle(title)
             .setContentText(body)
-            .setContentIntent(openVeyro())
+            .setStyle(Notification.DecoratedCustomViewStyle())
+            .setCustomContentView(small)
+            .setCustomBigContentView(big)
+            // Tapping the notification itself copies (the code, for a code); it no longer opens Veyro.
+            .setContentIntent(if (smart?.kind == ClipSmarts.Kind.CODE) primary!!.second else copy)
             .setDeleteIntent(broadcast(ClipboardSupport.ACTION_DISMISS, item.id, REQ_DISMISS))
             .setAutoCancel(true)
             // The heart of "one notification": replaced in place, alerting only the first time.
             .setOnlyAlertOnce(true)
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_STATUS)
-        if (count > 1) builder.setSubText("$count new")
 
-        val picture = item.image?.let(::preview)
-        if (picture != null) {
-            builder.setLargeIcon(picture).setStyle(Notification.BigPictureStyle().bigPicture(picture).bigLargeIcon(null as android.graphics.Bitmap?))
-        } else {
-            builder.setStyle(Notification.BigTextStyle().bigText(body))
-        }
-
-        // The primary action first: it is the one visible on a collapsed notification.
-        when (smart?.kind) {
-            ClipSmarts.Kind.LINK -> view(Uri.parse(smart.value))?.let { builder.addAction(action("Open", it)) }
-            ClipSmarts.Kind.PHONE -> builder.addAction(action("Call", activity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + smart.value)), REQ_PRIMARY)))
-            ClipSmarts.Kind.EMAIL -> builder.addAction(action("Email", activity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + smart.value)), REQ_PRIMARY)))
-            ClipSmarts.Kind.CODE -> builder.addAction(action("Copy ${smart.value}", broadcast(ClipboardSupport.ACTION_COPY_VALUE, item.id, REQ_PRIMARY)))
-            else -> Unit
-        }
-        builder.addAction(action(if (smart?.kind == ClipSmarts.Kind.CODE) "Copy all" else "Copy", broadcast(ClipboardSupport.ACTION_COPY, item.id, REQ_COPY)))
+        // Standard actions too: the expanded view, the lock screen and watches show these.
+        primary?.let { builder.addAction(action(it.first, it.second)) }
+        builder.addAction(action(copyLabel, copy))
+        builder.addAction(action("All clips", openVeyro()))
 
         runCatching { manager.notify(ClipboardSupport.NOTIFICATION_ID, builder.build()) }
             .onFailure { VeyroLog.w("Clipboard") { "Notification refused: ${it.javaClass.simpleName}" } }

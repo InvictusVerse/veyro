@@ -1,6 +1,7 @@
 <!--
-    Veyro's virtual clipboard on the PC (ADR-043). 24 px page inset, 16 px card padding, like the
-    other pages.
+    Veyro's virtual clipboard on the PC (ADR-043). Settings as two setting rows in one card, a
+    filter bar, then every clip in ONE card with divider lines between rows. Click a row to copy
+    it; the buttons on the right open a link, copy, or remove.
 -->
 <Page
     x:Class="Veyro.Views.ClipboardPage"
@@ -8,137 +9,320 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:viewModels="using:Veyro.ViewModels">
 
-    <Grid Padding="24,20,24,0" RowSpacing="12">
+    <Page.Resources>
+        <Style x:Key="ClipIconButton" TargetType="Button">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+    </Page.Resources>
+
+    <Grid Padding="24,20,24,0" RowSpacing="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" ColumnSpacing="12">
+        <!--  Header  -->
+        <Grid ColumnSpacing="14">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBlock
+            <Border
+                Width="44"
+                Height="44"
+                CornerRadius="22">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Offset="0" Color="{ThemeResource SystemAccentColorLight1}" />
+                        <GradientStop Offset="1" Color="{ThemeResource SystemAccentColorDark1}" />
+                    </LinearGradientBrush>
+                </Border.Background>
+                <FontIcon
+                    FontSize="20"
+                    Foreground="White"
+                    Glyph="&#xF0E3;" />
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock
+                    FontSize="20"
+                    FontWeight="SemiBold"
+                    Text="Clipboard" />
+                <TextBlock
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="{x:Bind ViewModel.CountText, Mode=OneWay}" />
+            </StackPanel>
+            <Button
+                Grid.Column="2"
                 VerticalAlignment="Center"
-                FontSize="20"
-                FontWeight="SemiBold"
-                Text="Clipboard" />
-            <Button Grid.Column="1" Click="Clear_Click" Content="Clear all" />
+                Click="Clear_Click"
+                IsEnabled="{x:Bind ViewModel.HasAny, Mode=OneWay}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon FontSize="14" Glyph="&#xE74D;" />
+                    <TextBlock Text="Clear all" />
+                </StackPanel>
+            </Button>
         </Grid>
 
-        <TextBlock
-            Grid.Row="1"
-            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-            Text="Share text or a link to Veyro on your phone and it lands on this PC's clipboard. What your phone sends with Send clipboard is kept here."
-            TextWrapping="Wrap" />
-
-        <!--  Settings  -->
+        <!--  Settings: one card, two setting rows  -->
         <Border
-            Grid.Row="2"
-            Padding="16,12"
+            Grid.Row="1"
             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="1"
             CornerRadius="8">
-            <StackPanel Spacing="4">
-                <ToggleSwitch
-                    Header="Send what I copy on this PC to my phones"
-                    IsOn="{x:Bind ViewModel.SendToPhones, Mode=TwoWay}" />
-                <ToggleSwitch
-                    Header="Include copied images (larger)"
-                    IsOn="{x:Bind ViewModel.SyncImages, Mode=TwoWay}" />
-                <TextBlock
-                    FontSize="12"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Passwords copied from password managers are never sent."
-                    TextWrapping="Wrap" />
+            <StackPanel>
+                <Grid Padding="16,12" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon VerticalAlignment="Center" FontSize="18" Glyph="&#xE8EA;" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Send what I copy on this PC to my phones" />
+                        <TextBlock
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="Shows on the phone as one notification with Copy and Open. Passwords from password managers are never sent."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ToggleSwitch
+                        Grid.Column="2"
+                        MinWidth="0"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Send what I copy on this PC to my phones"
+                        IsOn="{x:Bind ViewModel.SendToPhones, Mode=TwoWay}"
+                        OffContent=""
+                        OnContent="" />
+                </Grid>
+                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <Grid Padding="16,12" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon VerticalAlignment="Center" FontSize="18" Glyph="&#xEB9F;" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Include copied images" />
+                        <TextBlock
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="Larger to send. Up to 2 MB each."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ToggleSwitch
+                        Grid.Column="2"
+                        MinWidth="0"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Include copied images"
+                        IsOn="{x:Bind ViewModel.SyncImages, Mode=TwoWay}"
+                        OffContent=""
+                        OnContent="" />
+                </Grid>
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="3">
-            <TextBlock
-                Margin="0,24,0,0"
+        <!--  Filters  -->
+        <SelectorBar Grid.Row="2" SelectionChanged="Filter_SelectionChanged">
+            <SelectorBarItem
+                IsSelected="True"
+                Tag="All"
+                Text="All" />
+            <SelectorBarItem Tag="Links" Text="Links" />
+            <SelectorBarItem Tag="Text" Text="Text" />
+            <SelectorBarItem Tag="Images" Text="Images" />
+        </SelectorBar>
+
+        <InfoBar
+            x:Name="CopiedBar"
+            Grid.Row="3"
+            IsClosable="False"
+            IsOpen="False"
+            Severity="Success"
+            Title="Copied to this PC's clipboard" />
+
+        <!--  Empty state  -->
+        <StackPanel
+            Grid.Row="4"
+            Margin="0,40,0,0"
+            HorizontalAlignment="Center"
+            Spacing="10"
+            Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}">
+            <Border
+                Width="64"
+                Height="64"
                 HorizontalAlignment="Center"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                CornerRadius="32">
+                <FontIcon FontSize="26" Glyph="&#xF0E3;" />
+            </Border>
+            <TextBlock
+                HorizontalAlignment="Center"
+                FontWeight="SemiBold"
+                Text="{x:Bind ViewModel.EmptyTitle, Mode=OneWay}" />
+            <TextBlock
+                MaxWidth="360"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="Nothing here yet. On your phone, open Veyro > Clipboard and tap Send clipboard to PC."
+                Text="{x:Bind ViewModel.EmptyText, Mode=OneWay}"
                 TextAlignment="Center"
-                TextWrapping="Wrap"
-                Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}" />
+                TextWrapping="Wrap" />
+        </StackPanel>
+
+        <!--  One container for every clip  -->
+        <Border
+            Grid.Row="4"
+            Margin="0,0,0,24"
+            VerticalAlignment="Top"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Visibility="{x:Bind ViewModel.ListVisibility, Mode=OneWay}">
             <ListView
-                Padding="0,0,0,24"
+                IsItemClickEnabled="True"
+                ItemClick="Row_Click"
                 ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
                 SelectionMode="None">
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="Padding" Value="0" />
-                        <Setter Property="Margin" Value="0,0,0,8" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                        <Setter Property="CornerRadius" Value="0" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="viewModels:ClipRowViewModel">
-                        <Border
-                            Padding="16,12"
-                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8">
-                            <Grid ColumnSpacing="12">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Rectangle
+                                Height="1"
+                                Margin="64,0,16,0"
+                                Fill="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                Visibility="{x:Bind DividerVisibility}" />
+                            <Grid
+                                Grid.Row="1"
+                                Padding="16,12,8,12"
+                                ColumnSpacing="14">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="4">
+                                <Border
+                                    Width="34"
+                                    Height="34"
+                                    VerticalAlignment="Top"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="17">
+                                    <FontIcon
+                                        FontSize="15"
+                                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                        Glyph="{x:Bind Glyph}" />
+                                </Border>
+                                <StackPanel
+                                    Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Spacing="3">
+                                    <!--  Link: site, then the address  -->
+                                    <StackPanel Visibility="{x:Bind LinkVisibility}">
+                                        <TextBlock
+                                            FontWeight="SemiBold"
+                                            Text="{x:Bind Host}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                            MaxLines="2"
+                                            Text="{x:Bind LinkText}"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <!--  Code: big, spaced digits  -->
                                     <TextBlock
-                                        MaxLines="4"
+                                        CharacterSpacing="300"
+                                        FontFamily="Cascadia Mono, Consolas"
+                                        FontSize="22"
+                                        FontWeight="SemiBold"
+                                        Text="{x:Bind Code}"
+                                        Visibility="{x:Bind CodeVisibility}" />
+                                    <TextBlock
+                                        MaxLines="3"
                                         Text="{x:Bind Preview}"
                                         TextTrimming="CharacterEllipsis"
                                         TextWrapping="Wrap"
                                         Visibility="{x:Bind TextVisibility}" />
-                                    <Image
-                                        MaxHeight="120"
+                                    <Border
                                         HorizontalAlignment="Left"
-                                        Source="{x:Bind Thumbnail}"
-                                        Visibility="{x:Bind ImageVisibility}" />
+                                        CornerRadius="6"
+                                        Visibility="{x:Bind ImageVisibility}">
+                                        <Image MaxHeight="160" Source="{x:Bind Thumbnail}" />
+                                    </Border>
                                     <TextBlock
                                         FontSize="12"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}">
-                                        <Run Text="{x:Bind Source}" />
-                                        <Run Text=" · " />
-                                        <Run Text="{x:Bind Time}" />
-                                    </TextBlock>
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="{x:Bind Meta}" />
                                 </StackPanel>
                                 <StackPanel
-                                    Grid.Column="1"
+                                    Grid.Column="2"
                                     VerticalAlignment="Center"
                                     Orientation="Horizontal"
-                                    Spacing="8">
+                                    Spacing="2">
                                     <Button
+                                        AutomationProperties.Name="Open link"
                                         Click="Open_Click"
-                                        Content="Open"
+                                        Style="{StaticResource ClipIconButton}"
                                         Tag="{x:Bind}"
-                                        Visibility="{x:Bind LinkVisibility}" />
+                                        ToolTipService.ToolTip="Open"
+                                        Visibility="{x:Bind LinkVisibility}">
+                                        <FontIcon FontSize="15" Glyph="&#xE8A7;" />
+                                    </Button>
                                     <Button
+                                        AutomationProperties.Name="Write email"
+                                        Click="Email_Click"
+                                        Style="{StaticResource ClipIconButton}"
+                                        Tag="{x:Bind}"
+                                        ToolTipService.ToolTip="Write email"
+                                        Visibility="{x:Bind EmailVisibility}">
+                                        <FontIcon FontSize="15" Glyph="&#xE715;" />
+                                    </Button>
+                                    <Button
+                                        AutomationProperties.Name="Copy"
                                         Click="Copy_Click"
-                                        Content="Copy"
-                                        Style="{StaticResource AccentButtonStyle}"
-                                        Tag="{x:Bind}" />
+                                        Style="{StaticResource ClipIconButton}"
+                                        Tag="{x:Bind}"
+                                        ToolTipService.ToolTip="Copy">
+                                        <FontIcon FontSize="15" Glyph="&#xE8C8;" />
+                                    </Button>
                                     <Button
                                         AutomationProperties.Name="Remove"
                                         Click="Remove_Click"
+                                        Style="{StaticResource ClipIconButton}"
                                         Tag="{x:Bind}"
                                         ToolTipService.ToolTip="Remove">
-                                        <FontIcon FontSize="14" Glyph="&#xE74D;" />
+                                        <FontIcon FontSize="15" Glyph="&#xE74D;" />
                                     </Button>
                                 </StackPanel>
                             </Grid>
-                        </Border>
+                        </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
-        </Grid>
+        </Border>
     </Grid>
 </Page>

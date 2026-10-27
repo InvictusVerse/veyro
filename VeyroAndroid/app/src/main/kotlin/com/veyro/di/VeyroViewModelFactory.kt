@@ -101,6 +101,7 @@ public class VeyroViewModelFactory(
             remove = { id -> container.clipboardBridge.history.value.filter { it.id == id }.forEach(container.clipboardBridge::remove) },
             clear = { container.clipboardBridge.clear() },
             sendClipboard = { container.sendPhoneClipboard() },
+            copyText = container::copyClipText,
         ) as T
         else -> error("Unknown ViewModel ${modelClass.name}; add it to VeyroViewModelFactory")
     }
