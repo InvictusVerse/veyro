@@ -459,8 +459,11 @@ public sealed class NotificationToastService : INotificationToastService
 
         switch (action)
         {
-            case "reply" when args.UserInput.TryGetValue(ReplyInputId, out string? text):
+            case "reply" when args.UserInput.TryGetValue(ReplyInputId, out string? text) && !string.IsNullOrWhiteSpace(text):
                 _ = RunAsync(() => _mirror.ReplyAsync(peer, key, text), "reply");
+                break;
+            case "reply":
+                VeyroTrace.Info("Toast reply ignored: the reply box was empty");
                 break;
             case "action" when arguments.TryGetValue("index", out string? rawIndex) &&
                                int.TryParse(rawIndex, NumberStyles.None, CultureInfo.InvariantCulture, out int index):

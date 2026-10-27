@@ -1,3 +1,4 @@
+using Veyro.Core.Diagnostics;
 using Veyro.Core.Link;
 
 namespace Veyro.Core.Notifications;
@@ -117,6 +118,8 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
         if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.NotificationMirror) == 0)
             throw new InvalidOperationException("The phone does not support notification mirroring.");
         await _sessions.SendAsync(peerId, request, ct).ConfigureAwait(false);
+        // The type only: keys and reply text are user data.
+        VeyroTrace.Info($"Sent {request.GetType().Name} to the phone");
     }
 
     private static void ValidateKey(string key)

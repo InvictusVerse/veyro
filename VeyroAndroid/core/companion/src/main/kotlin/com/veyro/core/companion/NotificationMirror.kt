@@ -112,8 +112,9 @@ public class NotificationMirror(
             else -> return
         }
         // Re-resolved against live state every time: the PC can only name what is showing now.
+        VeyroLog.i(TAG) { "PC request: ${message.javaClass.simpleName}" }
         if (!source.isActive(key)) {
-            VeyroLog.d(TAG) { "Ignored ${message.javaClass.simpleName} for an unknown notification" }
+            VeyroLog.i(TAG) { "Ignored ${message.javaClass.simpleName}: that notification is no longer showing" }
             return
         }
         try {
