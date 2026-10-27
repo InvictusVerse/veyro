@@ -53,6 +53,9 @@ public class MainActivity : ComponentActivity() {
         public const val ACTION_SEND_FILES: String = "com.veyro.action.SEND_FILES"
         public const val EXTRA_SEND_TO: String = "com.veyro.extra.SEND_TO"
 
+        /** From [ShareToPcActivity]: files shared from another app, URIs in the ClipData (ADR-043). */
+        public const val ACTION_SHARE_FILES: String = "com.veyro.action.SHARE_FILES"
+
         private const val STATE_SEND_TARGET = "sendTarget"
         private const val STATE_SEND_PENDING = "sendPending"
     }
@@ -161,6 +164,14 @@ public class MainActivity : ComponentActivity() {
     }
 
     private fun readSendRequest(intent: Intent?) {
+        if (intent?.action == ACTION_SHARE_FILES) {
+            intent.action = Intent.ACTION_MAIN
+            val clip = intent.clipData ?: return
+            val files = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri?.let(::describe) }
+            // Straight to the selected or most recent PC, like the picker (ADR-038).
+            (application as VeyroApplication).container.sendFiles(emptyList(), files)
+            return
+        }
         if (intent?.action != ACTION_SEND_FILES) return
         val target = intent.getStringExtra(EXTRA_SEND_TO)
         // Consumed, so returning to the task later does not open the picker again.

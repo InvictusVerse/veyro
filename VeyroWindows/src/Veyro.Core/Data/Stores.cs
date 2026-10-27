@@ -25,7 +25,11 @@ public sealed record AppSettings(
     // the menu server reads this property from settings.json by name.
     bool ShowInExplorerContextMenu = false,
     // ADR-040: dial a paired phone that is on the network but did not reconnect by itself.
-    bool ReconnectAutomatically = true
+    bool ReconnectAutomatically = true,
+    // ADR-043: what this PC copies goes to the phones' virtual clipboard (on by default).
+    bool SendClipboardToPhones = true,
+    // ADR-043: include copied images too (off by default: they are large).
+    bool SyncClipboardImages = false
 );
 
 public interface ISettingsStore

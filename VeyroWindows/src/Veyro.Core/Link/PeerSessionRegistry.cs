@@ -183,7 +183,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     /// <summary>Routes an ADR-038 pcLock or wallpaper. Returns false for any other type.</summary>
     internal bool PublishDeviceMessage(string peerId, LinkMessage message)
     {
-        if (message is not (LinkMessage.PcLock or LinkMessage.Wallpaper)) return false;
+        if (message is not (LinkMessage.PcLock or LinkMessage.Wallpaper or LinkMessage.Clip)) return false;
         Publish(DeviceMessageReceived, peerId, message, nameof(DeviceMessageReceived));
         return true;
     }

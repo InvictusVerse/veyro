@@ -1,0 +1,268 @@
+using System.Text.RegularExpressions;
+using Veyro.Core.Diagnostics;
+using Veyro.Core.Link;
+
+namespace Veyro.Core.Clipboard;
+
+/// <summary>One item in the PC's virtual clipboard (ADR-043). In memory only.</summary>
+public sealed record ClipItem(
+    string Id,
+    string PeerId,
+    string Kind,
+    string? Text,
+    byte[]? Image,
+    DateTimeOffset At)
+{
+    /// <summary>First http(s) link in the text, for an Open button. Null when there is none.</summary>
+    public Uri? Link => ClipboardService.FindLink(Text);
+}
+
+/// <summary>Writes to the Windows clipboard. Implemented in the app (WinRT, UI thread).</summary>
+public interface IClipboardSink
+{
+    Task SetTextAsync(string text);
+    Task SetImageAsync(byte[] image);
+}
+
+/// <summary>Toasts for clipboard events. Implemented by the app's toast service.</summary>
+public interface IClipboardNotifier
+{
+    /// <summary>A phone shared text: it is on the PC clipboard now.</summary>
+    void ShowApplied(string peerId, ClipItem item);
+
+    /// <summary>A phone sent its clipboard: it is in the virtual clipboard.</summary>
+    void ShowStored(string peerId, ClipItem item);
+}
+
+/// <summary>
+/// Clipboard between this PC and its phones (ADR-043, 04-PROTOCOL.md 6.5).
+///  - Phone shares text / a link (apply = true): put on the PC clipboard, toast (Open for links).
+///  - Phone sends its clipboard (apply = false): kept in the virtual clipboard, toast.
+///  - The PC copies something: sent to every connected capable phone (setting, default on);
+///    images only when the image setting is on. What this service itself just put on the
+///    clipboard is not echoed back.
+/// History: newest first, at most <see cref="MaxItems"/>, in memory only.
+/// Clipboard contents are user data and are never logged.
+/// </summary>
+public sealed partial class ClipboardService : IDisposable
+{
+    public const int MaxItems = 50;
+
+    private readonly IPeerSessionRegistry _sessions;
+    private readonly Func<bool> _sendEnabled;
+    private readonly Func<bool> _imagesEnabled;
+    private readonly object _gate = new();
+    private readonly List<ClipItem> _items = new();
+    private readonly HashSet<string> _seenIds = new(StringComparer.Ordinal);
+    private static readonly TimeSpan EchoWindow = TimeSpan.FromSeconds(2);
+
+    private readonly Func<DateTimeOffset> _clock;
+    private string? _lastAppliedFingerprint;
+    private DateTimeOffset? _lastImageAppliedAt;
+    private string? _lastSentFingerprint;
+    private DateTimeOffset _lastSentAt;
+
+    public IClipboardSink? Sink { get; set; }
+    public IClipboardNotifier? Notifier { get; set; }
+
+    /// <summary>The virtual clipboard changed. Raised on a background thread.</summary>
+    public event Action? Changed;
+
+    public ClipboardService(
+        IPeerSessionRegistry sessions,
+        Func<bool> sendEnabled,
+        Func<bool> imagesEnabled,
+        Func<DateTimeOffset>? clock = null)
+    {
+        _sessions = sessions;
+        _sendEnabled = sendEnabled;
+        _imagesEnabled = imagesEnabled;
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _sessions.DeviceMessageReceived += OnDeviceMessage;
+    }
+
+    public IReadOnlyList<ClipItem> Items
+    {
+        get { lock (_gate) return _items.ToList(); }
+    }
+
+    public void Remove(string id)
+    {
+        lock (_gate) _items.RemoveAll(i => i.Id == id);
+        Changed?.Invoke();
+    }
+
+    public void Clear()
+    {
+        lock (_gate) _items.Clear();
+        Changed?.Invoke();
+    }
+
+    /// <summary>Copy an item from the virtual clipboard onto the PC clipboard.</summary>
+    public async Task CopyToPcAsync(ClipItem item)
+    {
+        if (Sink is not { } sink) return;
+        RememberApplied(item.Text, item.Image);
+        if (item.Image is { } image) await sink.SetImageAsync(image).ConfigureAwait(false);
+        else if (item.Text is { } text) await sink.SetTextAsync(text).ConfigureAwait(false);
+    }
+
+    /// <summary>The PC clipboard changed (text). Sends it to the phones unless it is our own echo.</summary>
+    public Task OnLocalTextCopiedAsync(string text)
+    {
+        if (!_sendEnabled() || string.IsNullOrEmpty(text) || text.Length > LinkMessage.Clip.MaxTextChars) return Task.CompletedTask;
+        string fingerprint = Fingerprint(text, null);
+        if (IsEcho(fingerprint) || IsRepeat(fingerprint)) return Task.CompletedTask;
+        return BroadcastAsync(new LinkMessage.Clip(NewId(), LinkMessage.Clip.KindText, Text: text, Ts: Now()));
+    }
+
+    /// <summary>The PC clipboard changed (image, already PNG within the cap).</summary>
+    public Task OnLocalImageCopiedAsync(byte[] png)
+    {
+        if (!_sendEnabled() || !_imagesEnabled() || !IsAcceptableImage(png)) return Task.CompletedTask;
+        string fingerprint = Fingerprint(null, png);
+        // Windows re-encodes a bitmap it was given, so an image echo rarely matches byte for byte:
+        // any image change right after Veyro set one is taken as that echo.
+        if (IsEcho(fingerprint) || IsRecentImageApply() || IsRepeat(fingerprint)) return Task.CompletedTask;
+        return BroadcastAsync(new LinkMessage.Clip(NewId(), LinkMessage.Clip.KindImage, Image: Convert.ToBase64String(png), Ts: Now()));
+    }
+
+    private async Task BroadcastAsync(LinkMessage.Clip clip)
+    {
+        foreach (string peerId in _sessions.GetConnectedPeers())
+        {
+            if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Clipboard) == 0) continue;
+            try { await _sessions.SendAsync(peerId, clip).ConfigureAwait(false); }
+            catch (Exception error) { VeyroTrace.Warn($"Clipboard not sent: {error.GetType().Name}"); }
+        }
+    }
+
+    private void OnDeviceMessage(string peerId, LinkMessage message)
+    {
+        if (message is LinkMessage.Clip clip) _ = HandleIncomingAsync(peerId, clip);
+    }
+
+    /// <summary>Incoming clip from a phone. Untrusted input: validated and size-capped.</summary>
+    public async Task HandleIncomingAsync(string peerId, LinkMessage.Clip clip)
+    {
+        ClipItem? item = Validate(peerId, clip);
+        if (item is null) return;
+        lock (_gate)
+        {
+            if (!_seenIds.Add(peerId + "|" + clip.Id)) return;
+            if (_seenIds.Count > 4 * MaxItems) _seenIds.Clear();
+            _items.Insert(0, item);
+            if (_items.Count > MaxItems) _items.RemoveRange(MaxItems, _items.Count - MaxItems);
+        }
+        Changed?.Invoke();
+
+        if (clip.Apply)
+        {
+            try { await CopyToPcAsync(item).ConfigureAwait(false); }
+            catch (Exception error) { VeyroTrace.Warn($"Setting the clipboard failed: {error.GetType().Name}"); }
+            Notifier?.ShowApplied(peerId, item);
+        }
+        else
+        {
+            Notifier?.ShowStored(peerId, item);
+        }
+    }
+
+    private static ClipItem? Validate(string peerId, LinkMessage.Clip clip)
+    {
+        if (string.IsNullOrEmpty(clip.Id) || clip.Id.Length > 64) return null;
+        DateTimeOffset at = DateTimeOffset.Now;
+        switch (clip.Kind)
+        {
+            case LinkMessage.Clip.KindText when !string.IsNullOrEmpty(clip.Text) && clip.Text.Length <= LinkMessage.Clip.MaxTextChars:
+                return new ClipItem(clip.Id, peerId, clip.Kind, clip.Text, null, at);
+            case LinkMessage.Clip.KindImage when clip.Image is { Length: > 0 } b64 && b64.Length <= (LinkMessage.Clip.MaxImageBytes + 2) / 3 * 4:
+                byte[] bytes;
+                try { bytes = Convert.FromBase64String(b64); }
+                catch (FormatException) { return null; }
+                return IsAcceptableImage(bytes) ? new ClipItem(clip.Id, peerId, clip.Kind, null, bytes, at) : null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>PNG or JPEG by magic bytes, within the size cap.</summary>
+    public static bool IsAcceptableImage(byte[]? bytes)
+    {
+        if (bytes is null || bytes.Length < 4 || bytes.Length > LinkMessage.Clip.MaxImageBytes) return false;
+        bool png = bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47;
+        bool jpeg = bytes[0] == 0xFF && bytes[1] == 0xD8;
+        return png || jpeg;
+    }
+
+    /// <summary>First http(s) URL in the text, or null. Only http(s) is ever offered to open.</summary>
+    public static Uri? FindLink(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        Match match = LinkPattern().Match(text);
+        return match.Success && Uri.TryCreate(match.Value.TrimEnd('.', ',', ')', ']', '"', '\''), UriKind.Absolute, out Uri? uri) &&
+               (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? uri
+            : null;
+    }
+
+    [GeneratedRegex(@"https?://[^\s<>""]+", RegexOptions.IgnoreCase)]
+    private static partial Regex LinkPattern();
+
+    private void RememberApplied(string? text, byte[]? image)
+    {
+        lock (_gate)
+        {
+            _lastAppliedFingerprint = Fingerprint(text, image);
+            _lastImageAppliedAt = image is null ? null : _clock();
+        }
+    }
+
+    private bool IsRecentImageApply()
+    {
+        lock (_gate)
+        {
+            if (_lastImageAppliedAt is not { } at || _clock() - at > EchoWindow) return false;
+            _lastImageAppliedAt = null;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Some apps raise several clipboard changes for one copy; the same content within
+    /// <see cref="EchoWindow"/> is sent once. Copying it again later is sent again.
+    /// </summary>
+    private bool IsRepeat(string fingerprint)
+    {
+        lock (_gate)
+        {
+            DateTimeOffset now = _clock();
+            bool repeat = _lastSentFingerprint == fingerprint && now - _lastSentAt <= EchoWindow;
+            _lastSentFingerprint = fingerprint;
+            _lastSentAt = now;
+            return repeat;
+        }
+    }
+
+    private bool IsEcho(string fingerprint)
+    {
+        lock (_gate)
+        {
+            if (_lastAppliedFingerprint != fingerprint) return false;
+            _lastAppliedFingerprint = null;
+            return true;
+        }
+    }
+
+    private static string Fingerprint(string? text, byte[]? image)
+    {
+        // Line endings normalised: the clipboard may hand back "\r\n" for text that was set with "\n".
+        byte[] data = image ?? System.Text.Encoding.UTF8.GetBytes((text ?? string.Empty).Replace("\r\n", "\n"));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
+    }
+
+    private static string NewId() => Guid.NewGuid().ToString("N")[..16];
+    private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    public void Dispose() => _sessions.DeviceMessageReceived -= OnDeviceMessage;
+}

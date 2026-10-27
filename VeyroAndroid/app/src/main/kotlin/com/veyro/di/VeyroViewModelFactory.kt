@@ -2,6 +2,7 @@ package com.veyro.di
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.veyro.feature.clipboard.ClipboardViewModel
 import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.history.HistoryViewModel
 import com.veyro.ui.home.HomeViewModel
@@ -92,6 +93,15 @@ public class VeyroViewModelFactory(
             onBackgroundSettingChanged = { container.backgroundController.onSettingChanged() },
         ) as T
 
+        modelClass.isAssignableFrom(ClipboardViewModel::class.java) -> ClipboardViewModel(
+            rows = container.clipboardRows,
+            autoFetch = container.settingsStore.clipboardReceiveEnabled,
+            setAutoFetch = { container.settingsStore.setClipboardReceiveEnabled(it) },
+            copy = container::copyClip,
+            remove = { id -> container.clipboardBridge.history.value.filter { it.id == id }.forEach(container.clipboardBridge::remove) },
+            clear = { container.clipboardBridge.clear() },
+            sendClipboard = { container.sendPhoneClipboard() },
+        ) as T
         else -> error("Unknown ViewModel ${modelClass.name}; add it to VeyroViewModelFactory")
     }
 }

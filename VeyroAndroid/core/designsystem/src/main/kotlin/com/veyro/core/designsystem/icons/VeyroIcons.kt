@@ -26,6 +26,8 @@ public object VeyroIcons {
     public val Check: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_check)
     public val Clear: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_clear)
     public val Close: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_close)
+    public val Clipboard: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_content_paste)
+    public val ContentCopy: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_content_copy)
     public val ComputerSound: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_computer_sound)
     public val ComputerSoundFill: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_computer_sound_fill)
     public val Delete: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_sym_delete_fill)

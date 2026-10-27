@@ -155,6 +155,7 @@ internal fun MainScreen(
                     onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
                     onSendFiles = { ids -> onSendFiles(ids.map { it.value }) },
                     onOpenHistory = { navigateToTab(homeNavController, VeyroDestination.History) },
+                    onOpenClipboard = { rootNavController.navigate(VeyroDestination.Clipboard) },
                 )
             }
 

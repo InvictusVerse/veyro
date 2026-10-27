@@ -34,7 +34,7 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
     {
         switch (message)
         {
-            case LinkMessage.PcLock or LinkMessage.Wallpaper:
+            case LinkMessage.PcLock or LinkMessage.Wallpaper or LinkMessage.Clip:
                 DeviceMessageReceived?.Invoke(peerId, message);
                 break;
             case LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved:

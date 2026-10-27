@@ -118,6 +118,7 @@ public static class LinkCapabilities
     public const int FileTransfer = 0x0001;
     public const int FolderTransfer = 0x0002;
     public const int Resume = 0x0004;
+    public const int Clipboard = 0x0008;
     public const int NotificationMirror = 0x0100;
     public const int MediaControl = 0x0200;
     public const int DeviceStatus = 0x0400;
@@ -262,6 +263,7 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(PhotoRemoved), "photoRemoved")]
 [JsonDerivedType(typeof(PcLock), "pcLock")]
 [JsonDerivedType(typeof(Unpair), "unpair")]
+[JsonDerivedType(typeof(Clip), "clip")]
 [JsonDerivedType(typeof(Wallpaper), "wallpaper")]
 public abstract record LinkMessage
 {
@@ -357,6 +359,27 @@ public abstract record LinkMessage
 
     /// <summary>Either direction: the sender removed us. Delete the trust record and close (ADR-042).</summary>
     public sealed record Unpair : LinkMessage;
+
+    /// <summary>
+    /// Either direction: one clipboard item (ADR-043), gated by LinkCapabilities.Clipboard.
+    /// Apply = true: put it on the receiver's clipboard now (shared from the phone). False: keep it
+    /// in the receiver's virtual clipboard. Exactly one of Text / Image is set. Never log contents.
+    /// </summary>
+    public sealed record Clip(
+        [property: JsonPropertyName("id")] string Id,
+        /// <summary>text | image</summary>
+        [property: JsonPropertyName("kind")] string Kind,
+        [property: JsonPropertyName("text")] string? Text = null,
+        /// <summary>PNG or JPEG, at most MaxImageBytes before base64.</summary>
+        [property: JsonPropertyName("image")] string? Image = null,
+        [property: JsonPropertyName("apply")] bool Apply = false,
+        [property: JsonPropertyName("ts")] long Ts = 0) : LinkMessage
+    {
+        public const string KindText = "text";
+        public const string KindImage = "image";
+        public const int MaxTextChars = 100_000;
+        public const int MaxImageBytes = 2 * 1024 * 1024;
+    }
 
     /// <summary>Either direction: sender's wallpaper, JPEG &lt;= 720 px, &lt;= 96 KiB, base64.</summary>
     public sealed record Wallpaper(

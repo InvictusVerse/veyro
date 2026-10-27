@@ -1,0 +1,8 @@
+{
+  "description": "Clipboard messages (ADR-043). Each 'json' is the LinkMessage payload as LinkJson encodes it (discriminator 't', nulls omitted, defaults encoded). Both clients must decode each entry and re-encode it to semantically identical JSON.",
+  "vectors": [
+    { "type": "clip", "json": "{\"t\":\"clip\",\"id\":\"c-1\",\"kind\":\"text\",\"text\":\"https://youtu.be/dQw4w9WgXcQ\",\"apply\":true,\"ts\":1793011200000}" },
+    { "type": "clip", "json": "{\"t\":\"clip\",\"id\":\"c-2\",\"kind\":\"text\",\"text\":\"Meeting at 5\",\"apply\":false,\"ts\":1793011260000}" },
+    { "type": "clip", "json": "{\"t\":\"clip\",\"id\":\"c-3\",\"kind\":\"image\",\"image\":\"iVBORw0KGgo=\",\"apply\":false,\"ts\":1793011300000}" }
+  ]
+}

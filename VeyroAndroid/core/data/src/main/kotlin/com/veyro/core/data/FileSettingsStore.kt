@@ -60,6 +60,8 @@ public class FileSettingsStore(
         val startOnBoot: Boolean = false,
         // ADR-038. Defaulted so older files decode; on unless turned off.
         val wallpaperShareEnabled: Boolean = true,
+        // ADR-043. Defaulted so older files decode; on unless turned off.
+        val clipboardReceiveEnabled: Boolean = true,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -158,6 +160,13 @@ public class FileSettingsStore(
 
     override suspend fun setWallpaperShareEnabled(enabled: Boolean) {
         update { it.copy(wallpaperShareEnabled = enabled) }
+    }
+
+    override val clipboardReceiveEnabled: Flow<Boolean> =
+        state.asStateFlow().map { it.clipboardReceiveEnabled }
+
+    override suspend fun setClipboardReceiveEnabled(enabled: Boolean) {
+        update { it.copy(clipboardReceiveEnabled = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

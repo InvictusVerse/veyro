@@ -32,6 +32,7 @@ import com.veyro.core.designsystem.components.VeyroDetailScaffold
 import com.veyro.core.link.TransferCoordinator
 import com.veyro.core.model.ActiveTransfer
 import com.veyro.feature.clipboard.ClipboardScreen
+import com.veyro.feature.clipboard.ClipboardViewModel
 import com.veyro.ui.components.ActiveTransferBanner
 import com.veyro.ui.components.ActiveTransferDialog
 import com.veyro.ui.components.TransferBannerModel
@@ -142,7 +143,10 @@ public fun VeyroNavHost(
 
             composable<VeyroDestination.Clipboard> {
                 VeyroDetailScaffold(title = "Clipboard", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    Box(Modifier.padding(padding)) { ClipboardScreen() }
+                    ClipboardScreen(
+                        viewModel = viewModel<ClipboardViewModel>(factory = viewModelFactory),
+                        modifier = Modifier.padding(padding),
+                    )
                 }
             }
 

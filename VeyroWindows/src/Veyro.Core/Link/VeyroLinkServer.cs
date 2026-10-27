@@ -96,6 +96,7 @@ public sealed class VeyroLinkServer : IAsyncDisposable, ILinkSessionRunner
     /// <summary>What this listener's sessions support, sent in HelloAck.</summary>
     public const int LocalCapabilities =
         LinkCapabilities.FileTransfer | LinkCapabilities.Resume | LinkCapabilities.NotificationMirror |
+        LinkCapabilities.Clipboard |
         LinkCapabilities.MediaControl | LinkCapabilities.DeviceStatus |
         LinkCapabilities.Messaging | LinkCapabilities.Calls | LinkCapabilities.Photos |
         LinkCapabilities.Wallpaper;
@@ -919,6 +920,11 @@ public sealed class VeyroLinkServer : IAsyncDisposable, ILinkSessionRunner
                         try { PeerUnpaired?.Invoke(peer.DeviceId); }
                         catch (Exception error) { VeyroTrace.Error("PeerUnpaired handler failed", error); }
                         return;
+                    // ADR-043. Clipboard contents are user data: never logged.
+                    case LinkMessage.Clip:
+                        registration.Capabilities |= LinkCapabilities.Clipboard;
+                        _sessions.PublishDeviceMessage(peer.DeviceId, message.Envelope.Payload);
+                        break;
                     // Wallpaper bytes are user data: never logged.
                     case LinkMessage.Wallpaper:
                         registration.Capabilities |= LinkCapabilities.Wallpaper;

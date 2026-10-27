@@ -125,6 +125,50 @@
             android:name=".di.OfferActionReceiver"
             android:exported="false" />
 
+        <!-- ADR-043: "Send to PC" in the share sheet (text, links, files) and in the text-selection
+             menu. No UI of its own: text goes straight to the PCs, files are handed to MainActivity.
+             Exported because other apps start it; everything it receives is untrusted input. -->
+        <activity
+            android:name=".ShareToPcActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/send_to_pc"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- ADR-043: Copy on the "Copied on your PC" notification. Only our own PendingIntents. -->
+        <receiver
+            android:name=".di.ClipActionReceiver"
+            android:exported="false" />
+
+        <!-- ADR-043: hands an image from the PC to the system clipboard. Exposes cache/clips only. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.clips"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/clip_paths" />
+        </provider>
+
     </application>
 
 </manifest>

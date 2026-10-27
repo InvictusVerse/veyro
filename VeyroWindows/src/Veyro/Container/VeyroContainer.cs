@@ -24,6 +24,9 @@ public sealed class VeyroContainer
     public IDiscoveryService DiscoveryService { get; }
     public VeyroLinkServer LinkServer { get; }
     public PeerSessionRegistry PeerSessions { get; }
+    public Veyro.Core.Clipboard.ClipboardService Clipboard { get; }
+    public Veyro.Platforms.Windows.Services.WindowsClipboard WindowsClipboard { get; }
+    public ClipboardViewModel ClipboardViewModel { get; }
     public NotificationMirrorService NotificationMirror { get; }
     public PhoneMediaService PhoneMedia { get; }
     public IWindowsMediaSource PcMediaSource { get; }
@@ -106,6 +109,15 @@ public sealed class VeyroContainer
             if (message is not LinkMessage.PcLock || !PeerSessions.IsConnected(peerId)) return;
             if (!InteropHelpers.LockWorkStation()) VeyroTrace.Warn("Locking the PC failed");
         };
+        // ADR-043: clipboard both ways; virtual clipboard in memory. The watcher starts on the UI
+        // thread in App.OnLaunched (WinRT clipboard calls need it).
+        Clipboard = new Veyro.Core.Clipboard.ClipboardService(
+            PeerSessions,
+            sendEnabled: () => SettingsStore.Current.SendClipboardToPhones,
+            imagesEnabled: () => SettingsStore.Current.SyncClipboardImages);
+        WindowsClipboard = new WindowsClipboard(Clipboard, () => SettingsStore.Current.SyncClipboardImages);
+        Clipboard.Sink = WindowsClipboard;
+        Clipboard.Notifier = new ClipboardToasts(peerId => TrustStore.GetPeer(peerId)?.DisplayName);
         // ADR-027: in-memory only, cleared when the phone's session closes.
         Messaging = new MessagingService(PeerSessions);
         Calls = new CallService(PeerSessions);
@@ -173,6 +185,7 @@ public sealed class VeyroContainer
         CallsPageViewModel = new CallsPageViewModel(Calls, CallRouter, DeviceManager);
         BluetoothCallingViewModel = new BluetoothCallingViewModel(BluetoothCalling, DeviceManager);
         PhotosViewModel = new PhotosViewModel(Photos, DeviceManager);
+        ClipboardViewModel = new ClipboardViewModel(Clipboard, SettingsStore, peerId => TrustStore.GetPeer(peerId)?.DisplayName);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore, PeerSessions);
         TransferConsent.AutoAcceptEnabled += _ => App.MainWindow?.DispatcherQueue.TryEnqueue(DevicesViewModel.RefreshAutoAccept);

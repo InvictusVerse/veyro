@@ -59,6 +59,7 @@ import com.veyro.core.companion.AndroidNotificationSource
 import com.veyro.core.companion.AndroidPhotoSource
 import com.veyro.core.companion.CompanionLink
 import com.veyro.core.companion.PeerConnectionLink
+import com.veyro.core.companion.ClipboardBridge
 import com.veyro.core.companion.PhotoBridge
 import com.veyro.core.companion.PhotoSender
 import com.veyro.core.link.SendResult
@@ -89,6 +90,9 @@ import com.veyro.core.companion.AndroidWallpaperSource
 import com.veyro.core.companion.WallpaperBridge
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import com.veyro.feature.clipboard.ClipRow
+import com.veyro.feature.clipboard.SendClipOutcome
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.veyro.core.model.fingerprint
@@ -399,6 +403,7 @@ public class VeyroContainer(context: Context) {
     private companion object {
         const val LAST_KNOWN_ENDPOINT_TTL_MS = 60_000L
         const val THUMBNAIL_PX = 192
+        const val CLIP_PREVIEW_PX = 480
     }
 
     // ── Background running (ADR-036) ───────────────────────────────────────────────────────
@@ -577,6 +582,78 @@ public class VeyroContainer(context: Context) {
             cache = FilePeerWallpaperCache(File(appContext.cacheDir, "wallpapers"), dispatchers),
             scope = appScope,
         )
+    }
+
+    /**
+     * Clipboard with the PCs (ADR-043): shared text goes onto the PC clipboard, "Send clipboard"
+     * into the PC's virtual clipboard, and the PC's copies into this phone's (with a notification).
+     */
+    public val clipboardBridge: ClipboardBridge by lazy {
+        ClipboardBridge(
+            links = companionLinks,
+            receiveEnabled = flow { emitAll(settingsStore.clipboardReceiveEnabled) },
+            notifier = AndroidClipNotifier(appContext, appScope, ::clipSourceName),
+            scope = appScope,
+        )
+    }
+
+    private suspend fun clipSourceName(peerId: String?): String =
+        peerId?.let { com.veyro.core.model.DeviceId.parseOrNull(it) }
+            ?.let { runCatching { trustStore.find(it) }.getOrNull()?.name }
+            ?: "your PC"
+
+    /** The virtual clipboard as Clipboard-screen rows; image previews decoded off the main thread. */
+    public val clipboardRows: Flow<List<ClipRow>> by lazy {
+        val thumbnails = java.util.Collections.synchronizedMap(HashMap<String, ImageBitmap?>())
+        clipboardBridge.history.map { items ->
+            // Only the items still in the history keep a decoded preview.
+            thumbnails.keys.retainAll(items.map { it.id }.toSet())
+            items.map { item ->
+                ClipRow(
+                    id = item.id,
+                    text = item.text,
+                    thumbnail = item.image?.let { bytes -> thumbnails.getOrPut(item.id) { decodePreview(bytes) } },
+                    source = clipSourceName(item.peerId),
+                    atMillis = item.atMillis,
+                )
+            }
+        }.flowOn(dispatchers.default)
+    }
+
+    private fun decodePreview(bytes: ByteArray): ImageBitmap? = runCatching {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= CLIP_PREVIEW_PX || bounds.outHeight / (sample * 2) >= CLIP_PREVIEW_PX) sample *= 2
+        val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+    }.getOrNull()
+
+    /** The Clipboard screen's Copy: puts a virtual-clipboard item on the system clipboard. */
+    public fun copyClip(id: String): Boolean {
+        val item = clipboardBridge.history.value.firstOrNull { it.id == id } ?: return false
+        return ClipboardSupport.copy(appContext, item)
+    }
+
+    /** "Send clipboard to PC" (ADR-043). Called from the open screen, which is what makes the read legal. */
+    public suspend fun sendPhoneClipboard(): SendClipOutcome {
+        val (text, image) = withContext(dispatchers.io) { ClipboardSupport.read(appContext) }
+        if (text.isNullOrBlank() && image == null) return SendClipOutcome.EMPTY
+        val sendable = withContext(dispatchers.default) { image?.let(ClipboardSupport::fitImage) }
+        if (image != null && sendable == null && text.isNullOrBlank()) return SendClipOutcome.TOO_LARGE
+        val reached = clipboardBridge.sendClipboard(if (sendable != null) null else text, sendable)
+        return if (reached > 0) SendClipOutcome.SENT else SendClipOutcome.NO_PC
+    }
+
+    /**
+     * "Send to PC" from the share sheet or text selection. Runs in the app scope, so the sharing
+     * Activity can finish at once; [onResult] gets how many PCs it reached, on the main thread.
+     */
+    public fun shareTextToPcs(text: String, onResult: (reached: Int) -> Unit) {
+        appScope.launch {
+            val reached = runCatching { clipboardBridge.share(text) }.getOrDefault(0)
+            withContext(dispatchers.main) { onResult(reached) }
+        }
     }
 
     /** A small preview of a received image for Home's Recent card. Null if unreadable. */

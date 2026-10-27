@@ -62,4 +62,9 @@ public interface SettingsStore {
     public val wallpaperShareEnabled: Flow<Boolean> get() = flowOf(true)
 
     public suspend fun setWallpaperShareEnabled(enabled: Boolean) {}
+
+    /** "Auto-fetch PC clipboard" (ADR-043): keep what the PC copies here. On by default. */
+    public val clipboardReceiveEnabled: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setClipboardReceiveEnabled(enabled: Boolean) {}
 }

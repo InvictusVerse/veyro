@@ -78,6 +78,8 @@ public fun HomeScreen(
     onSendFiles: (List<DeviceId>) -> Unit,
     onOpenHistory: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The phone's virtual clipboard (ADR-043). */
+    onOpenClipboard: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -203,7 +205,14 @@ public fun HomeScreen(
                         onClick = { if (!FileActions.openReceivedFolder(context)) onOpenHistory() },
                     )
                 }
-                // Clipboard is deferred (06-ROADMAP); its row joins here once it ships.
+                item(key = "clipboard") {
+                    HomeRow(
+                        label = "Clipboard",
+                        icon = VeyroIcons.Clipboard,
+                        supporting = "What your PC copies, ready to paste here. Share text or a link to Veyro to send it to the PC.",
+                        onClick = onOpenClipboard,
+                    )
+                }
 
                 val sessions = state.pcMedia?.sessions.orEmpty()
                 if (sessions.isNotEmpty()) {

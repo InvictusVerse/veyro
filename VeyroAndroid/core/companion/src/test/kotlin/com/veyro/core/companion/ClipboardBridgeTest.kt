@@ -1,0 +1,171 @@
+package com.veyro.core.companion
+
+import com.veyro.core.link.LinkMessage
+import com.veyro.core.model.Capabilities
+import com.veyro.core.model.Capability
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.Base64
+
+/** [ClipboardBridge] with fakes (ADR-043). */
+@OptIn(ExperimentalCoroutinesApi::class)
+class ClipboardBridgeTest {
+
+    private class FakeLink(caps: Capabilities, override val peerDeviceId: String = "PC-A") : CompanionLink {
+        val inbound = MutableSharedFlow<LinkMessage>(extraBufferCapacity = 64)
+        val sent = mutableListOf<LinkMessage>()
+        override val peerCapabilities: Flow<Capabilities> = MutableStateFlow(caps)
+        override val incoming: Flow<LinkMessage> get() = inbound
+        override suspend fun send(message: LinkMessage) {
+            sent += message
+        }
+        val clips get() = sent.filterIsInstance<LinkMessage.Clip>()
+    }
+
+    private class Rig(
+        val bridge: ClipboardBridge,
+        val links: MutableStateFlow<List<CompanionLink>>,
+        val enabled: MutableStateFlow<Boolean>,
+        val shown: MutableList<ClipItem>,
+    )
+
+    private fun TestScope.rig(vararg links: CompanionLink): Rig {
+        val flow = MutableStateFlow(links.toList())
+        val enabled = MutableStateFlow(true)
+        val shown = mutableListOf<ClipItem>()
+        val bridge = ClipboardBridge(flow, enabled, { shown += it }, backgroundScope, now = { 1_000L })
+        bridge.start()
+        runCurrent()
+        return Rig(bridge, flow, enabled, shown)
+    }
+
+    private val clipCaps = Capabilities.of(Capability.FILE_TRANSFER, Capability.CLIPBOARD)
+
+    @Test
+    fun `share goes to every capable PC with apply, and skips the rest`() = runTest {
+        val a = FakeLink(clipCaps, "PC-A")
+        val b = FakeLink(clipCaps, "PC-B")
+        val old = FakeLink(Capabilities.of(Capability.FILE_TRANSFER), "PC-OLD")
+        val rig = rig(a, b, old)
+
+        assertEquals(2, rig.bridge.share("https://youtu.be/x"))
+        assertEquals(listOf("https://youtu.be/x"), a.clips.map { it.text })
+        assertTrue(a.clips.single().apply)
+        assertEquals(1, b.clips.size)
+        assertTrue(old.sent.isEmpty())
+    }
+
+    @Test
+    fun `blank shares send nothing and long text is capped`() = runTest {
+        val a = FakeLink(clipCaps)
+        val rig = rig(a)
+        assertEquals(0, rig.bridge.share("   "))
+        rig.bridge.share("x".repeat(LinkMessage.Clip.MAX_TEXT_CHARS + 10))
+        assertEquals(LinkMessage.Clip.MAX_TEXT_CHARS, a.clips.single().text!!.length)
+    }
+
+    @Test
+    fun `sendClipboard is stored on the PC, not applied, and prefers a valid image`() = runTest {
+        val a = FakeLink(clipCaps)
+        val rig = rig(a)
+        assertEquals(1, rig.bridge.sendClipboard("note", null))
+        assertEquals(1, rig.bridge.sendClipboard("ignored", PNG))
+        assertEquals(1, rig.bridge.sendClipboard("fallback", "not an image".toByteArray()))
+        assertEquals(0, rig.bridge.sendClipboard(null, null))
+
+        val clips = a.clips
+        assertTrue(clips.none { it.apply })
+        assertEquals(LinkMessage.Clip.KIND_TEXT, clips[0].kind)
+        assertEquals(LinkMessage.Clip.KIND_IMAGE, clips[1].kind)
+        assertArrayEquals(PNG, Base64.getDecoder().decode(clips[1].image))
+        assertEquals("fallback", clips[2].text)
+    }
+
+    @Test
+    fun `no PC connected reaches nobody`() = runTest {
+        val rig = rig()
+        assertEquals(0, rig.bridge.share("hello"))
+    }
+
+    @Test
+    fun `PC copies land newest first with a notification, once per id`() = runTest {
+        val a = FakeLink(clipCaps)
+        val rig = rig(a)
+        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = "first"))
+        a.inbound.emit(LinkMessage.Clip("2", LinkMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString(PNG)))
+        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = "first"))
+        runCurrent()
+
+        val history = rig.bridge.history.value
+        assertEquals(listOf("2", "1"), history.map { it.id })
+        assertTrue(history[0].isImage)
+        assertEquals("PC-A", history[1].peerId)
+        assertEquals(2, rig.shown.size)
+    }
+
+    @Test
+    fun `invalid or oversized items from the PC are dropped`() = runTest {
+        val a = FakeLink(clipCaps)
+        val rig = rig(a)
+        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = ""))
+        a.inbound.emit(LinkMessage.Clip("2", LinkMessage.Clip.KIND_TEXT, text = "x".repeat(LinkMessage.Clip.MAX_TEXT_CHARS + 1)))
+        a.inbound.emit(LinkMessage.Clip("3", LinkMessage.Clip.KIND_IMAGE, image = Base64.getEncoder().encodeToString("<svg/>".toByteArray())))
+        a.inbound.emit(LinkMessage.Clip("4", LinkMessage.Clip.KIND_IMAGE, image = "%%% not base64"))
+        a.inbound.emit(LinkMessage.Clip("5", "file", text = "x"))
+        a.inbound.emit(LinkMessage.Clip("", LinkMessage.Clip.KIND_TEXT, text = "no id"))
+        runCurrent()
+        assertTrue(rig.bridge.history.value.isEmpty())
+        assertTrue(rig.shown.isEmpty())
+    }
+
+    @Test
+    fun `auto-fetch off keeps nothing`() = runTest {
+        val a = FakeLink(clipCaps)
+        val rig = rig(a)
+        rig.enabled.value = false
+        a.inbound.emit(LinkMessage.Clip("1", LinkMessage.Clip.KIND_TEXT, text = "secret"))
+        runCurrent()
+        assertTrue(rig.bridge.history.value.isEmpty())
+        assertFalse(rig.shown.isNotEmpty())
+    }
+
+    @Test
+    fun `history keeps the newest 50, and remove and clear work`() = runTest {
+        val a = FakeLink(clipCaps)
+        val rig = rig(a)
+        repeat(60) { a.inbound.emit(LinkMessage.Clip("id$it", LinkMessage.Clip.KIND_TEXT, text = "t$it")) }
+        runCurrent()
+        val history = rig.bridge.history.value
+        assertEquals(ClipboardBridge.MAX_ITEMS, history.size)
+        assertEquals("id59", history.first().id)
+
+        rig.bridge.remove(history.first())
+        assertEquals("id58", rig.bridge.history.value.first().id)
+        rig.bridge.clear()
+        assertTrue(rig.bridge.history.value.isEmpty())
+    }
+
+    @Test
+    fun `image check accepts only PNG or JPEG within the cap`() {
+        assertTrue(ClipboardBridge.isAcceptableImage(PNG))
+        assertTrue(ClipboardBridge.isAcceptableImage(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0, 0)))
+        assertFalse(ClipboardBridge.isAcceptableImage(null))
+        assertFalse(ClipboardBridge.isAcceptableImage("GIF89a".toByteArray()))
+        val huge = ByteArray(LinkMessage.Clip.MAX_IMAGE_BYTES + 1).also { PNG.copyInto(it) }
+        assertFalse(ClipboardBridge.isAcceptableImage(huge))
+    }
+
+    private companion object {
+        val PNG = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    }
+}

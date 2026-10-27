@@ -53,6 +53,7 @@ public value class Capabilities(public val bits: Int) {
         public val ANDROID_CURRENT: Capabilities = of(
             Capability.FILE_TRANSFER,
             Capability.FOLDER_TRANSFER,
+            Capability.CLIPBOARD,
             Capability.RESUME,
             Capability.NOTIFICATION_MIRROR,
             Capability.MEDIA_CONTROL,

@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">Veyro</string>
     <string name="app_tagline">Seamlessly connected</string>
+    <!-- ADR-043: the share sheet and text-selection entry. -->
+    <string name="send_to_pc">Send to PC</string>
 </resources>

@@ -354,6 +354,15 @@
                                 <FontIcon Glyph="&#xE91B;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
+                        <!--  ADR-043: Veyro's virtual clipboard  -->
+                        <NavigationViewItem
+                            x:Name="ClipboardNavigationItem"
+                            Content="Clipboard"
+                            Tag="Clipboard">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xF0E3;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
                     </NavigationView.MenuItems>
                 </NavigationView>
 

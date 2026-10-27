@@ -85,6 +85,9 @@ public partial class App : Application
         }
 
         MainWindow.Activate();
+        // ADR-043: watch the Windows clipboard (UI thread).
+        try { container.WindowsClipboard.Start(MainWindow.DispatcherQueue); }
+        catch (Exception error) { VeyroTrace.Crash("Starting the clipboard watcher", error); }
         // Incoming files are asked about by the container's TransferConsentCoordinator (ADR-036).
         container.LinkServer.PairingAuthorizer = AuthorizePairingAsync;
         // A newly paired phone shows up in the device list and sidebar without a restart.

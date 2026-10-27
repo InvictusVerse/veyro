@@ -431,6 +431,36 @@ public sealed interface LinkMessage {
     @SerialName("unpair")
     public data object Unpair : LinkMessage
 
+    /**
+     * Either direction: one clipboard item (ADR-043, 04-PROTOCOL.md 6.5), gated by CLIPBOARD.
+     *
+     * [apply] true: put it on the receiver's system clipboard now (text or a link shared from the
+     * phone). False: keep it in the receiver's virtual clipboard (the PC's own copies arriving on
+     * the phone, or the phone's clipboard sent with the in-app button). Exactly one of [text] or
+     * [image] is set. Clipboard contents are user data: never log them.
+     */
+    @Serializable
+    @SerialName("clip")
+    public data class Clip(
+        /** Sender-chosen id, unique per item, so a receiver can drop duplicates. */
+        val id: String,
+        /** `text` | `image` */
+        val kind: String,
+        /** UTF-8 text, at most [MAX_TEXT_CHARS]. */
+        val text: String? = null,
+        /** PNG or JPEG, at most [MAX_IMAGE_BYTES] before base64. */
+        val image: String? = null,
+        val apply: Boolean = false,
+        val ts: Long = 0,
+    ) : LinkMessage {
+        public companion object {
+            public const val KIND_TEXT: String = "text"
+            public const val KIND_IMAGE: String = "image"
+            public const val MAX_TEXT_CHARS: Int = 100_000
+            public const val MAX_IMAGE_BYTES: Int = 2 * 1024 * 1024
+        }
+    }
+
     /** Phone to PC: lock the PC (Phone Link "Lock PC"). Gated by DEVICE_STATUS (ADR-038). */
     @Serializable
     @SerialName("pcLock")

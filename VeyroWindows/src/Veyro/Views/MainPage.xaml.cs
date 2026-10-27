@@ -20,7 +20,8 @@ public sealed partial class MainPage : Page
         { "Calls", typeof(CallsPage) },
         { "Messages", typeof(MessagesPage) },
         { "Transfers", typeof(TransfersPage) },
-        { "Photos", typeof(PhotosPage) }
+        { "Photos", typeof(PhotosPage) },
+        { "Clipboard", typeof(ClipboardPage) }
     };
 
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
@@ -94,6 +95,7 @@ public sealed partial class MainPage : Page
             "Messages" => MessagesNavigationItem,
             "Transfers" => TransfersNavigationItem,
             "Photos" => PhotosNavigationItem,
+            "Clipboard" => ClipboardNavigationItem,
             _ => null
         };
         if (item is not null && !ReferenceEquals(MainNavigationView.SelectedItem, item))

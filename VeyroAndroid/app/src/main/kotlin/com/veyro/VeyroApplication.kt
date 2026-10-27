@@ -46,6 +46,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.photoBridge.start()
         // ADR-038. Same rule: wallpapers only travel over a session something else opened.
         container.wallpaperBridge.start()
+        // ADR-043. Same rule: clips only travel over a session something else opened.
+        container.clipboardBridge.start()
         registerActivityLifecycleCallbacks(VisibilityTracker())
     }
 
