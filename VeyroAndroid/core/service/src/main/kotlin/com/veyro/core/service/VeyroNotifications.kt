@@ -34,7 +34,8 @@ public class VeyroNotifications(private val context: Context) {
         public const val ID_BACKGROUND: Int = 1003
         public const val ID_RESULT: Int = 1004
 
-        private const val RESULT_TIMEOUT_MS = 10_000L
+        /** Sent / received / failed cards clear themselves after 5 minutes (user's choice). */
+        public const val AUTO_CLEAR_MS: Long = 5 * 60 * 1000L
     }
 
     private val manager: NotificationManager? =
@@ -135,8 +136,8 @@ public class VeyroNotifications(private val context: Context) {
             .setAutoCancel(true)
             .setCategory(if (success) Notification.CATEGORY_STATUS else Notification.CATEGORY_ERROR)
         contentIntent?.let { builder.setContentIntent(it) }
-        // A success needs no attention later; a failure stays until seen.
-        if (success) builder.setTimeoutAfter(RESULT_TIMEOUT_MS)
+        // Success or failure, the card clears itself after 5 minutes.
+        builder.setTimeoutAfter(AUTO_CLEAR_MS)
         VeyroNotificationCard.apply(
             context,
             builder,

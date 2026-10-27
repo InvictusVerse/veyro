@@ -14,6 +14,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import com.veyro.core.service.VeyroNotificationCard
+import com.veyro.core.service.VeyroNotifications
 import androidx.core.content.FileProvider
 import com.veyro.core.companion.ClipboardBridge
 import com.veyro.MainActivity
@@ -149,11 +150,17 @@ internal class AndroidClipNotifier(
         }
     }
 
+    private var lastPostAt = 0L
+
     override fun show(item: ClipItem) {
         scope.launch { post(item, peerName(item.peerId)) }
     }
 
     private fun post(item: ClipItem, pcName: String) {
+        // The card clears itself after 5 minutes; a copy after that starts a fresh count.
+        val now = System.currentTimeMillis()
+        if (now - lastPostAt > VeyroNotifications.AUTO_CLEAR_MS) ClipboardSupport.unseen.set(0)
+        lastPostAt = now
         val count = ClipboardSupport.unseen.incrementAndGet()
         val smart = if (item.image != null) null else ClipSmarts.classify(item.text)
         val title = when (smart?.kind) {
@@ -192,6 +199,8 @@ internal class AndroidClipNotifier(
             .setOnlyAlertOnce(true)
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_STATUS)
+            // Gone 5 minutes after the last copy (each new copy restarts the clock).
+            .setTimeoutAfter(VeyroNotifications.AUTO_CLEAR_MS)
 
         // The Veyro card (ADR-044): violet badge with what was copied, the buttons inline when
         // collapsed, and the standard actions (plus "All clips") when expanded or on the lock screen.
