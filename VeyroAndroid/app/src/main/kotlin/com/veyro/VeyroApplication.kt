@@ -50,6 +50,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.clipboardBridge.start()
         // ADR-043: "Send to <PC>" in the share sheet's top row.
         container.startShareShortcuts()
+        // ADR-044: start reading "Clear notifications automatically" now, so the first notification has it.
+        container.notificationAutoClearMs
         // ADR-044: received files live in one Download/Veyro folder; bring older ones in once.
         container.moveOlderReceivedFilesOnce()
         registerActivityLifecycleCallbacks(VisibilityTracker())

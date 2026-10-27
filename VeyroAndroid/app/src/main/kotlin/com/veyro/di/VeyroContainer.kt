@@ -94,6 +94,9 @@ import com.veyro.feature.clipboard.ClipKind
 import com.veyro.feature.clipboard.ClipRow
 import com.veyro.feature.clipboard.SendClipOutcome
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.veyro.core.model.fingerprint
@@ -333,6 +336,16 @@ public class VeyroContainer(context: Context) {
         }
     }
 
+    /**
+     * How long clipboard and file-result notifications stay (Settings, ADR-044); null while
+     * "Clear notifications automatically" is off. Read synchronously by the notifiers.
+     */
+    public val notificationAutoClearMs: StateFlow<Long?> by lazy {
+        combine(settingsStore.notificationAutoClear, settingsStore.notificationAutoClearMinutes) { on, minutes ->
+            if (on) minutes * 60_000L else null
+        }.stateIn(appScope, SharingStarted.Eagerly, com.veyro.core.service.VeyroNotifications.AUTO_CLEAR_MS)
+    }
+
     /** Cancel on a transfer notification. */
     public fun cancelTransfer() {
         transferCoordinator.cancel()
@@ -473,6 +486,7 @@ public class VeyroContainer(context: Context) {
             scope = appScope,
             transfers = { transferCoordinator.activeTransfer },
             appVisible = appVisible,
+            autoClearMs = { notificationAutoClearMs.value },
         )
     }
 
@@ -658,7 +672,7 @@ public class VeyroContainer(context: Context) {
         ClipboardBridge(
             links = companionLinks,
             receiveEnabled = flow { emitAll(settingsStore.clipboardReceiveEnabled) },
-            notifier = AndroidClipNotifier(appContext, appScope, ::clipSourceName),
+            notifier = AndroidClipNotifier(appContext, appScope, ::clipSourceName) { notificationAutoClearMs.value },
             scope = appScope,
         )
     }

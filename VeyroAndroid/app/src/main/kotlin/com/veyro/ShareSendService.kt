@@ -176,6 +176,7 @@ public class ShareSendService : Service() {
             title = title,
             text = text,
             success = success,
+            autoClearMs = (application as VeyroApplication).container.notificationAutoClearMs.value,
             pills = if (success) emptyList() else listOf(VeyroNotificationCard.Pill("Open Veyro", open)),
             contentIntent = open,
         )

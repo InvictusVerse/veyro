@@ -119,6 +119,23 @@ public class SettingsViewModel(
         settingsStore.wallpaperShareEnabled
             .onEach { _state.value = _state.value.copy(wallpaperShareEnabled = it) }
             .launchIn(viewModelScope)
+
+        settingsStore.notificationAutoClear
+            .onEach { _state.value = _state.value.copy(notificationAutoClear = it) }
+            .launchIn(viewModelScope)
+
+        settingsStore.notificationAutoClearMinutes
+            .onEach { _state.value = _state.value.copy(notificationAutoClearMinutes = it) }
+            .launchIn(viewModelScope)
+    }
+
+    /** ADR-044. Applies to notifications posted from now on. */
+    public fun setNotificationAutoClear(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setNotificationAutoClear(enabled) }
+    }
+
+    public fun setNotificationAutoClearMinutes(minutes: Int) {
+        viewModelScope.launch { settingsStore.setNotificationAutoClearMinutes(minutes) }
     }
 
     /** ADR-038. The photo permission, if needed, is requested by the Activity. */

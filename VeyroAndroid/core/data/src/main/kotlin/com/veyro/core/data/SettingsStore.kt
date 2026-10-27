@@ -67,4 +67,24 @@ public interface SettingsStore {
     public val clipboardReceiveEnabled: Flow<Boolean> get() = flowOf(true)
 
     public suspend fun setClipboardReceiveEnabled(enabled: Boolean) {}
+
+    /**
+     * Clipboard and sent / received file notifications clear themselves after
+     * [notificationAutoClearMinutes] (ADR-044). On by default.
+     */
+    public val notificationAutoClear: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setNotificationAutoClear(enabled: Boolean) {}
+
+    /** How long those notifications stay, in minutes. 5 by default; kept while auto-clear is off. */
+    public val notificationAutoClearMinutes: Flow<Int> get() = flowOf(DEFAULT_AUTO_CLEAR_MINUTES)
+
+    public suspend fun setNotificationAutoClearMinutes(minutes: Int) {}
+
+    public companion object {
+        public const val DEFAULT_AUTO_CLEAR_MINUTES: Int = 5
+
+        /** The choices Settings offers. */
+        public val AUTO_CLEAR_CHOICES: List<Int> = listOf(1, 5, 15, 30, 60)
+    }
 }

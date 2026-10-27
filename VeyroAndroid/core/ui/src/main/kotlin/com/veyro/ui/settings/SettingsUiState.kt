@@ -53,6 +53,12 @@ public data class SettingsUiState(
     /** Send this phone's wallpaper to the PC (ADR-038). On by default. */
     val wallpaperShareEnabled: Boolean = true,
 
+    /** Clipboard and sent / received notifications clear themselves (ADR-044). On by default. */
+    val notificationAutoClear: Boolean = true,
+
+    /** After how many minutes. 5 by default. */
+    val notificationAutoClearMinutes: Int = 5,
+
     /** Whether Android exempts Veyro from battery optimisation (asked only from Settings). */
     val batteryOptimizationIgnored: Boolean = false,
 

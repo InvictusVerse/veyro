@@ -15,7 +15,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.semantics.Role
+import com.veyro.core.data.SettingsStore
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -70,6 +76,18 @@ public fun SettingsScreen(
     var showDeviceNameDialog by rememberSaveable { mutableStateOf(false) }
     var showResetConfirm by rememberSaveable { mutableStateOf(false) }
     var showDebug by rememberSaveable { mutableStateOf(false) }
+    var showAutoClearDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showAutoClearDialog) {
+        AutoClearDialog(
+            selected = state.notificationAutoClearMinutes,
+            onDismiss = { showAutoClearDialog = false },
+            onSelect = {
+                showAutoClearDialog = false
+                viewModel.setNotificationAutoClearMinutes(it)
+            },
+        )
+    }
 
     // Grants happen in system settings, so re-check whenever the user returns.
     LifecycleResumeEffect(Unit) {
@@ -175,6 +193,32 @@ public fun SettingsScreen(
                 },
                 icon = if (state.batteryOptimizationIgnored) VeyroIcons.Check else VeyroIcons.Battery,
                 onPreferenceClick = { requestBatteryExemption(context, alreadyExempt = state.batteryOptimizationIgnored) },
+            )
+        }
+
+        item { SectionLabel("Notifications") }
+
+        item {
+            SwitchPreferenceWidget(
+                title = "Clear notifications automatically",
+                subtitle = "Clipboard, sent and received file notifications disappear on their own. " +
+                    "Progress stays while a transfer runs.",
+                icon = VeyroIcons.Notifications,
+                checked = state.notificationAutoClear,
+                onCheckedChanged = viewModel::setNotificationAutoClear,
+            )
+        }
+
+        item {
+            TextPreferenceWidget(
+                title = "Clear after",
+                subtitle = if (state.notificationAutoClear) {
+                    autoClearLabel(state.notificationAutoClearMinutes)
+                } else {
+                    "Off: they stay until you dismiss them"
+                },
+                icon = VeyroIcons.AccessTime,
+                onPreferenceClick = if (state.notificationAutoClear) ({ showAutoClearDialog = true }) else null,
             )
         }
 
@@ -290,6 +334,43 @@ public fun SettingsScreen(
  * Asks Android to exempt Veyro from battery optimisation, only from this explicit row (ADR-036).
  * Already exempt, or on a ROM without the direct request, it opens the system list instead.
  */
+/** "After 5 minutes", "After 1 hour". */
+private fun autoClearLabel(minutes: Int): String = when {
+    minutes == 1 -> "After 1 minute"
+    minutes < 60 -> "After $minutes minutes"
+    minutes == 60 -> "After 1 hour"
+    minutes % 60 == 0 -> "After ${minutes / 60} hours"
+    else -> "After $minutes minutes"
+}
+
+/** The "Clear after" choice. Each row is one radio option for TalkBack. */
+@Composable
+private fun AutoClearDialog(selected: Int, onDismiss: () -> Unit, onSelect: (Int) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Clear notifications after") },
+        text = {
+            Column(Modifier.selectableGroup()) {
+                SettingsStore.AUTO_CLEAR_CHOICES.forEach { minutes ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .selectable(selected = minutes == selected, onClick = { onSelect(minutes) }, role = Role.RadioButton)
+                            .padding(horizontal = 4.dp),
+                    ) {
+                        // The row carries the semantics; the button is decorative.
+                        RadioButton(selected = minutes == selected, onClick = null)
+                        Text(autoClearLabel(minutes).removePrefix("After "), modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 private fun requestBatteryExemption(context: Context, alreadyExempt: Boolean) {
     val direct = Intent(
         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,

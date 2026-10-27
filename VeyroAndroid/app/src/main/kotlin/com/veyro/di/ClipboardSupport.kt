@@ -137,6 +137,8 @@ internal class AndroidClipNotifier(
     private val context: Context,
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val peerName: suspend (String?) -> String,
+    /** Settings: how long the card stays after the last copy; null keeps it until dismissed. */
+    private val autoClearMs: () -> Long? = { VeyroNotifications.AUTO_CLEAR_MS },
 ) : ClipNotifier {
 
     private val manager by lazy {
@@ -157,9 +159,10 @@ internal class AndroidClipNotifier(
     }
 
     private fun post(item: ClipItem, pcName: String) {
-        // The card clears itself after 5 minutes; a copy after that starts a fresh count.
+        // When the card has cleared itself, a later copy starts a fresh count.
+        val clearAfter = autoClearMs()
         val now = System.currentTimeMillis()
-        if (now - lastPostAt > VeyroNotifications.AUTO_CLEAR_MS) ClipboardSupport.unseen.set(0)
+        if (clearAfter != null && now - lastPostAt > clearAfter) ClipboardSupport.unseen.set(0)
         lastPostAt = now
         val count = ClipboardSupport.unseen.incrementAndGet()
         val smart = if (item.image != null) null else ClipSmarts.classify(item.text)
@@ -199,8 +202,8 @@ internal class AndroidClipNotifier(
             .setOnlyAlertOnce(true)
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_STATUS)
-            // Gone 5 minutes after the last copy (each new copy restarts the clock).
-            .setTimeoutAfter(VeyroNotifications.AUTO_CLEAR_MS)
+        // Gone that long after the last copy (each new copy restarts the clock), when turned on.
+        clearAfter?.let { builder.setTimeoutAfter(it) }
 
         // The Veyro card (ADR-044): violet badge with what was copied, the buttons inline when
         // collapsed, and the standard actions (plus "All clips") when expanded or on the lock screen.

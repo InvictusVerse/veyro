@@ -34,7 +34,7 @@ public class VeyroNotifications(private val context: Context) {
         public const val ID_BACKGROUND: Int = 1003
         public const val ID_RESULT: Int = 1004
 
-        /** Sent / received / failed cards clear themselves after 5 minutes (user's choice). */
+        /** The default for "Clear notifications automatically": 5 minutes (ADR-044). */
         public const val AUTO_CLEAR_MS: Long = 5 * 60 * 1000L
     }
 
@@ -131,13 +131,14 @@ public class VeyroNotifications(private val context: Context) {
         thumbnail: android.graphics.Bitmap? = null,
         pills: List<VeyroNotificationCard.Pill> = emptyList(),
         contentIntent: PendingIntent? = null,
+        /** Settings > "Clear notifications automatically": null keeps the card until dismissed. */
+        autoClearMs: Long? = AUTO_CLEAR_MS,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_PROGRESS)
             .setAutoCancel(true)
             .setCategory(if (success) Notification.CATEGORY_STATUS else Notification.CATEGORY_ERROR)
         contentIntent?.let { builder.setContentIntent(it) }
-        // Success or failure, the card clears itself after 5 minutes.
-        builder.setTimeoutAfter(AUTO_CLEAR_MS)
+        autoClearMs?.let { builder.setTimeoutAfter(it) }
         VeyroNotificationCard.apply(
             context,
             builder,

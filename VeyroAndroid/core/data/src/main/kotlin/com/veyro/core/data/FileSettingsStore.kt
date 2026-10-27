@@ -62,6 +62,9 @@ public class FileSettingsStore(
         val wallpaperShareEnabled: Boolean = true,
         // ADR-043. Defaulted so older files decode; on unless turned off.
         val clipboardReceiveEnabled: Boolean = true,
+        // ADR-044. Defaulted so older files decode: on, 5 minutes.
+        val notificationAutoClear: Boolean = true,
+        val notificationAutoClearMinutes: Int = SettingsStore.DEFAULT_AUTO_CLEAR_MINUTES,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -167,6 +170,20 @@ public class FileSettingsStore(
 
     override suspend fun setClipboardReceiveEnabled(enabled: Boolean) {
         update { it.copy(clipboardReceiveEnabled = enabled) }
+    }
+
+    override val notificationAutoClear: Flow<Boolean> =
+        state.asStateFlow().map { it.notificationAutoClear }
+
+    override suspend fun setNotificationAutoClear(enabled: Boolean) {
+        update { it.copy(notificationAutoClear = enabled) }
+    }
+
+    override val notificationAutoClearMinutes: Flow<Int> =
+        state.asStateFlow().map { it.notificationAutoClearMinutes.coerceIn(1, 24 * 60) }
+
+    override suspend fun setNotificationAutoClearMinutes(minutes: Int) {
+        update { it.copy(notificationAutoClearMinutes = minutes.coerceIn(1, 24 * 60)) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

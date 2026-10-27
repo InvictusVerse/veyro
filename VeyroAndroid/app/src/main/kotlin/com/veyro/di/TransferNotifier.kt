@@ -40,6 +40,8 @@ public class TransferNotifier(
     private val scope: CoroutineScope,
     private val transfers: () -> StateFlow<ActiveTransfer?>,
     private val appVisible: StateFlow<Boolean>,
+    /** Settings: how long the result stays; null keeps it until dismissed. */
+    private val autoClearMs: () -> Long? = { VeyroNotifications.AUTO_CLEAR_MS },
 ) {
     private companion object {
         const val PROGRESS_INTERVAL_MS = 700L
@@ -136,6 +138,7 @@ public class TransferNotifier(
                         thumbnail = thumb,
                         pills = pills,
                         contentIntent = pills.first().intent,
+                        autoClearMs = autoClearMs(),
                     ),
                 )
             }
@@ -147,6 +150,7 @@ public class TransferNotifier(
                     success = false,
                     pills = listOf(VeyroNotificationCard.Pill("Open Veyro", openApp())),
                     contentIntent = openApp(),
+                    autoClearMs = autoClearMs(),
                 ),
             )
             else -> Unit // Cancelled: the user did it, nothing to report.
