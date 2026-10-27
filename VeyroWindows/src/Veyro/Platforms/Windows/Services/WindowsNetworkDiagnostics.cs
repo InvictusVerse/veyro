@@ -4,9 +4,9 @@ using Veyro.Core.Diagnostics;
 namespace Veyro.Platforms.Windows.Services;
 
 /// <summary>
-/// Firewall and network-profile checks for the pairing screen (ADR-030). Reading needs no
-/// elevation and runs hidden; adding the rule needs a UAC prompt, which Veyro shows at startup only
-/// when the rule is missing and the user has not said no before.
+/// Firewall and network-profile checks for the pairing screen (ADR-030). The rule normally comes
+/// with the package (manifest `windows.firewallRules`). Reading needs no elevation and runs hidden;
+/// adding the fallback rule needs a UAC prompt, which Veyro shows at most once on its own.
 /// </summary>
 public sealed class WindowsNetworkDiagnostics : INetworkDiagnosticsService
 {
@@ -15,8 +15,11 @@ public sealed class WindowsNetworkDiagnostics : INetworkDiagnosticsService
     private const string AddRuleScript =
         "if (-not (Get-NetFirewallRule -DisplayName 'Veyro LAN Transfer' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'Veyro LAN Transfer' -Direction Inbound -Protocol TCP -LocalPort 5150-5169 -Action Allow -Profile Private }";
 
+    // Present when either rule allows the ports: the one the package manifest installs (named
+    // after the app, found by its port range) or the "Veyro LAN Transfer" fallback rule.
     private const string CheckScript =
         "$rule = [bool](Get-NetFirewallRule -DisplayName 'Veyro LAN Transfer' -ErrorAction SilentlyContinue | Where-Object { [string]$_.Enabled -eq 'True' });" +
+        "if (-not $rule) { $rule = [bool](Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object { @($_.LocalPort) -contains '5150-5169' } | Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { [string]$_.Enabled -eq 'True' -and [string]$_.Direction -eq 'Inbound' -and [string]$_.Action -eq 'Allow' }) };" +
         "$profiles = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ name = [string]$_.InterfaceAlias; category = [string]$_.NetworkCategory } });" +
         "[pscustomobject]@{ rule = $rule; profiles = $profiles } | ConvertTo-Json -Compress -Depth 3";
 

@@ -179,11 +179,8 @@ public sealed class PairingViewModel : BaseViewModel
 
     public async Task AddFirewallRuleAsync()
     {
-        // Asked for by the user, so it always asks, even after a "No" at startup.
-        if (await _network.RequestFirewallRuleAsync())
-        {
-            await _settings.UpdateAsync(s => s with { FirewallPromptDeclined = false });
-        }
+        // Pressed by the user, so it asks even after the one startup prompt.
+        await _network.RequestFirewallRuleAsync();
         await RefreshNetworkChecksAsync();
     }
 

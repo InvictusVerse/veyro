@@ -30,9 +30,9 @@ public sealed record AppSettings(
     bool SendClipboardToPhones = true,
     // ADR-043: include copied images too (off by default: they are large).
     bool SyncClipboardImages = false,
-    // The user said no to the firewall prompt at startup: Veyro never asks on its own again. The
-    // pairing network check's "Add rule" still asks, and clears this when it succeeds.
-    bool FirewallPromptDeclined = false
+    // Veyro asked for the firewall rule at startup once (whatever the answer): it never asks on
+    // its own again. Only the pairing network check's "Add rule", pressed by the user, asks then.
+    bool FirewallPromptAsked = false
 );
 
 public interface ISettingsStore

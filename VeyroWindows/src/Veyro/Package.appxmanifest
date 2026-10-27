@@ -109,6 +109,18 @@
     </Application>
   </Applications>
 
+  <Extensions>
+    <!-- The phone connects in on TCP 5150-5169. Windows creates this inbound rule (private
+         networks only) when the package is installed and removes it on uninstall, so nobody
+         is asked for administrator permission. The PowerShell rule in
+         WindowsNetworkDiagnostics is only a one-time fallback if this one is missing. -->
+    <desktop2:Extension Category="windows.firewallRules">
+      <desktop2:FirewallRules Executable="Veyro.exe">
+        <desktop2:Rule Direction="in" IPProtocol="TCP" LocalPortMin="5150" LocalPortMax="5169" Profile="private" />
+      </desktop2:FirewallRules>
+    </desktop2:Extension>
+  </Extensions>
+
   <Capabilities>
     <Capability Name="internetClient" />
     <Capability Name="internetClientServer" />

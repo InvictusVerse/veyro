@@ -112,28 +112,22 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Asks for the firewall rule only when it is really missing. The check needs no elevation and
-    /// shows nothing; before, every start ran the elevated command and Windows showed its
-    /// PowerShell / UAC prompt each time, rule or not. A "No" is remembered: Veyro does not ask on
-    /// its own again (the pairing screen's "Add rule" still can). If the rule cannot be read at all,
-    /// nothing is asked either; the pairing screen names that case.
+    /// The firewall rule normally comes with the package (manifest), so nothing is asked. Only if
+    /// it is really missing does Veyro ask for administrator permission to add it, and then once
+    /// ever: the answer, yes or no, is remembered and Veyro never asks on its own again (the
+    /// pairing screen's "Add rule" still can, when the user presses it). The check itself needs no
+    /// elevation and shows nothing. If the rule cannot be read at all, nothing is asked.
     /// </summary>
     private static async Task EnsureFirewallRuleAsync()
     {
         try
         {
             VeyroContainer container = VeyroContainer.Instance;
+            if (container.SettingsStore.Current.FirewallPromptAsked) return;
             NetworkCheckResult check = await container.NetworkDiagnostics.CheckAsync();
             if (check.Firewall != FirewallRuleState.Missing) return;
-            if (container.SettingsStore.Current.FirewallPromptDeclined)
-            {
-                VeyroTrace.Info("Firewall rule missing; not asking again (declined before)");
-                return;
-            }
-            if (!await container.NetworkDiagnostics.RequestFirewallRuleAsync())
-            {
-                await container.SettingsStore.UpdateAsync(s => s with { FirewallPromptDeclined = true });
-            }
+            await container.SettingsStore.UpdateAsync(s => s with { FirewallPromptAsked = true });
+            await container.NetworkDiagnostics.RequestFirewallRuleAsync();
         }
         catch (Exception error)
         {
