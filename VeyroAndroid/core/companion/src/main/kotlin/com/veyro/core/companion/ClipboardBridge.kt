@@ -81,11 +81,14 @@ public class ClipboardBridge(
         links.forEachLink { link -> serve(link) }
     }.also { job = it }
 
-    /** Shared text or link: the PC applies it. Returns how many PCs it reached. */
-    public suspend fun share(text: String): Int {
+    /**
+     * Shared text or link: the PC applies it. [peerId] limits it to one PC (picked in the share
+     * sheet's Direct Share row); null sends to every capable PC. Returns how many PCs it reached.
+     */
+    public suspend fun share(text: String, peerId: String? = null): Int {
         val trimmed = text.take(LinkMessage.Clip.MAX_TEXT_CHARS)
         if (trimmed.isBlank()) return 0
-        return broadcast(LinkMessage.Clip(newId(), LinkMessage.Clip.KIND_TEXT, text = trimmed, apply = true, ts = now()))
+        return broadcast(LinkMessage.Clip(newId(), LinkMessage.Clip.KIND_TEXT, text = trimmed, apply = true, ts = now()), peerId)
     }
 
     /** The phone's clipboard (text or image): kept in the PC's virtual clipboard. */
@@ -108,9 +111,10 @@ public class ClipboardBridge(
         _history.value = emptyList()
     }
 
-    private suspend fun broadcast(clip: LinkMessage.Clip): Int {
+    private suspend fun broadcast(clip: LinkMessage.Clip, onlyPeer: String? = null): Int {
         var reached = 0
         for (link in current.value) {
+            if (onlyPeer != null && !link.peerDeviceId.equals(onlyPeer, ignoreCase = true)) continue
             val capable = runCatching { Capability.CLIPBOARD in link.peerCapabilities.first() }.getOrDefault(false)
             if (!capable) continue
             runCatching { link.send(clip) }

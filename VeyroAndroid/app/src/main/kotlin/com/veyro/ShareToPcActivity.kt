@@ -1,8 +1,8 @@
 package com.veyro
 
 import android.app.Activity
-import android.content.ClipData
 import android.content.Intent
+import com.veyro.di.ShareShortcuts
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,8 +14,9 @@ import com.veyro.core.common.VeyroLog
  *
  *  - Text or a link (`ACTION_SEND` without a stream, or `ACTION_PROCESS_TEXT`): sent to every
  *    connected PC, which puts it on its clipboard and offers Open for a link.
- *  - Files (`ACTION_SEND` / `ACTION_SEND_MULTIPLE` with streams): handed to [MainActivity], whose
- *    task outlives this one, so the read grant on the URIs lasts for the whole transfer.
+ *  - Files (`ACTION_SEND` / `ACTION_SEND_MULTIPLE` with streams): sent in the background by
+ *    [ShareSendService]; Veyro does not open.
+ *  - Picked from the Direct Share row ("Send to <PC>", [ShareShortcuts]): to that PC only.
  *
  * No UI and no layout: it finishes in [onCreate]. Everything in the intent comes from another app
  * and is treated as untrusted (length-capped by the bridge, files validated by the receiver).
@@ -52,7 +53,9 @@ public class ShareToPcActivity : Activity() {
     private fun sendText(text: String?) {
         if (text.isNullOrBlank()) return
         val app = application as VeyroApplication
-        app.container.shareTextToPcs(text) { reached ->
+        val target = ShareShortcuts.targetOf(intent)
+        target?.let { ShareShortcuts.reportUsed(this, it) }
+        app.container.shareTextToPcs(text, target) { reached ->
             val message = if (reached > 0) "Sent to PC" else "No PC connected"
             Toast.makeText(app, message, Toast.LENGTH_SHORT).show()
         }
@@ -85,17 +88,15 @@ public class ShareToPcActivity : Activity() {
         return uris.filter { it.scheme == "content" }
     }
 
+    /**
+     * Sends in the background: the user stays in the app they shared from. The read grant goes
+     * with the service's start intent, so it lasts for the whole transfer (see [ShareSendService]).
+     */
     private fun forwardFiles(uris: List<Uri>) {
-        val clip = ClipData.newRawUri("files", uris.first())
-        uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
-        val forward = Intent(this, MainActivity::class.java)
-            .setAction(MainActivity.ACTION_SHARE_FILES)
-            .addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-            )
-        // The grant travels with the ClipData, so MainActivity can read the URIs too.
-        forward.clipData = clip
-        startActivity(forward)
+        val target = ShareShortcuts.targetOf(intent)
+        ShareSendService.start(this, uris, target)
+        target?.let { ShareShortcuts.reportUsed(this, it) }
+        val what = if (uris.size == 1) "file" else "${uris.size} files"
+        Toast.makeText(applicationContext, "Sending $what to your PC", Toast.LENGTH_SHORT).show()
     }
 }

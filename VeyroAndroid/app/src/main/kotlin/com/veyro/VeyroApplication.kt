@@ -48,6 +48,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.wallpaperBridge.start()
         // ADR-043. Same rule: clips only travel over a session something else opened.
         container.clipboardBridge.start()
+        // ADR-043: "Send to <PC>" in the share sheet's top row.
+        container.startShareShortcuts()
         registerActivityLifecycleCallbacks(VisibilityTracker())
     }
 

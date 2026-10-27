@@ -66,6 +66,17 @@ class ClipboardBridgeTest {
     }
 
     @Test
+    fun `a share picked for one PC goes only to that PC`() = runTest {
+        val a = FakeLink(clipCaps, "PC-A")
+        val b = FakeLink(clipCaps, "PC-B")
+        val rig = rig(a, b)
+        assertEquals(1, rig.bridge.share("hello", peerId = "pc-b"))
+        assertTrue(a.clips.isEmpty())
+        assertEquals(listOf("hello"), b.clips.map { it.text })
+        assertEquals(0, rig.bridge.share("hello", peerId = "PC-GONE"))
+    }
+
+    @Test
     fun `blank shares send nothing and long text is capped`() = runTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)

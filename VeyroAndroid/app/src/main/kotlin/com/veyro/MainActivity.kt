@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,13 +27,11 @@ import com.veyro.ui.onboarding.OnboardingViewModel
 import com.veyro.core.companion.AndroidPhotoSource
 import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.designsystem.theme.VeyroTheme
-import com.veyro.core.protocol.RelativePath
 import com.veyro.core.link.OutgoingFile
 import com.veyro.di.VeyroViewModelFactory
 import com.veyro.navigation.VeyroNavHost
 import com.veyro.ui.components.InboundPairingDialog
 import com.veyro.ui.components.InboundTransferDialog
-import java.io.IOException
 
 /**
  * The only Activity.
@@ -54,9 +51,6 @@ public class MainActivity : ComponentActivity() {
         /** From the background notification's Send files: pick files for [EXTRA_SEND_TO]. */
         public const val ACTION_SEND_FILES: String = "com.veyro.action.SEND_FILES"
         public const val EXTRA_SEND_TO: String = "com.veyro.extra.SEND_TO"
-
-        /** From [ShareToPcActivity]: files shared from another app, URIs in the ClipData (ADR-043). */
-        public const val ACTION_SHARE_FILES: String = "com.veyro.action.SHARE_FILES"
 
         /** From the "Copied on <PC>" notification: show the Clipboard screen (ADR-043). */
         public const val ACTION_OPEN_CLIPBOARD: String = "com.veyro.action.OPEN_CLIPBOARD"
@@ -180,14 +174,6 @@ public class MainActivity : ComponentActivity() {
             openClipboard = true
             return
         }
-        if (intent?.action == ACTION_SHARE_FILES) {
-            intent.action = Intent.ACTION_MAIN
-            val clip = intent.clipData ?: return
-            val files = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri?.let(::describe) }
-            // Straight to the selected or most recent PC, like the picker (ADR-038).
-            (application as VeyroApplication).container.sendFiles(emptyList(), files)
-            return
-        }
         if (intent?.action != ACTION_SEND_FILES) return
         val target = intent.getStringExtra(EXTRA_SEND_TO)
         // Consumed, so returning to the task later does not open the picker again.
@@ -255,67 +241,5 @@ public class MainActivity : ComponentActivity() {
         requestPermissions.launch(arrayOf(AndroidPhotoSource.permission()))
     }
 
-    /**
-     * Turns a picked `content://` URI into something sendable.
-     *
-     * The display name and size come from the content provider, not from the URI path: a
-     * `content://` URI frequently has no meaningful path at all. A provider that reports neither is
-     * **skipped rather than guessed at**, because an item with an unknown size breaks the chunk plan
-     * and would fail at the far end as a hash mismatch - which the user would read as a network
-     * problem.
-     *
-     * The stream is opened lazily, each time, rather than being held open. A picker selection can
-     * sit on screen for minutes before the user hits Send, and an open file descriptor that long is
-     * both a leak and a liability if the provider revokes access.
-     */
-    private fun describe(uri: Uri): OutgoingFile? {
-        // Persist the read grant so the URI still resolves when the transfer actually starts.
-        // Without it, opening the stream later can fail with a SecurityException partway through.
-        runCatching {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }.onFailure {
-            // Not fatal: many providers grant only a transient permission, which is still valid for
-            // this process. Logged because it predicts a later failure if the send is delayed.
-            VeyroLog.d(TAG) { "No persistable permission for a picked file: ${it.message}" }
-        }
-
-        var name: String? = null
-        var size = -1L
-
-        runCatching {
-            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex >= 0 && !cursor.isNull(nameIndex)) {
-                        name = cursor.getString(nameIndex)
-                    }
-                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
-                        size = cursor.getLong(sizeIndex)
-                    }
-                }
-            }
-        }.onFailure { VeyroLog.w(TAG, it) { "Could not query a picked file" } }
-
-        val rawName = name ?: uri.lastPathSegment?.substringAfterLast('/')
-        if (rawName.isNullOrBlank() || size < 0) {
-            VeyroLog.w(TAG) { "Skipping a picked file with no reported name or size" }
-            return null
-        }
-
-        // Sanitised here so what the user sees in the list is what goes on the wire. This is a
-        // courtesy to the receiver, not a security control - the receiver validates regardless
-        // (REQ-T11), because a sender's idea of "sanitised" is not something to trust.
-        val safeName = RelativePath.sanitizeOutgoingSegment(rawName)
-
-        return OutgoingFile(
-            effectiveName = safeName,
-            sizeBytes = size,
-            lastModifiedEpochMillis = System.currentTimeMillis(),
-            openStream = {
-                contentResolver.openInputStream(uri)
-                    ?: throw IOException("could not open $safeName")
-            },
-        )
-    }
+    private fun describe(uri: Uri): OutgoingFile? = SharedUris.describe(this, uri)
 }

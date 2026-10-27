@@ -118,6 +118,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- ADR-043: Direct Share targets ("Send to <PC>" in the share sheet's top row). -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/share_targets" />
         </activity>
 
         <!-- Accept / Decline on the incoming-file notification. Only our own PendingIntents reach it. -->
@@ -152,6 +156,13 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- ADR-043: sends files shared to Veyro in the background, holding their read grant for
+             the whole transfer. Started only from ShareToPcActivity while it is visible. -->
+        <service
+            android:name=".ShareSendService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- ADR-043: Copy on the "Copied on your PC" notification. Only our own PendingIntents. -->
         <receiver

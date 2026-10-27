@@ -291,17 +291,51 @@ public class VeyroContainer(context: Context) {
      */
     public fun sendFiles(deviceIds: List<String>, files: List<OutgoingFile>) {
         if (files.isEmpty()) return
+        appScope.launch { sendFilesAndWait(deviceIds, files) }
+    }
+
+    /** Who a send went to and how many of those PCs took every file. */
+    public data class SendSummary(val targets: List<String>, val succeeded: Int)
+
+    /** [sendFiles], suspending until every PC is done; used by the background share (ADR-043). */
+    public suspend fun sendFilesAndWait(deviceIds: List<String>, files: List<OutgoingFile>): SendSummary {
+        if (files.isEmpty()) return SendSummary(emptyList(), 0)
+        val peers = runCatching { trustStore.snapshot() }.getOrDefault(emptyList()).filterNot { it.revoked }
+        val selected = connectionManagerReady.value?.activeConnection?.value?.peerDeviceId
+        val names = mutableListOf<String>()
+        var succeeded = 0
+        SendTargets.sendToEach(peers, deviceIds, selected) { target ->
+            names += target.name
+            // SendResult reports failures in the banner; an exception must not skip the rest.
+            val result = runCatching { transferCoordinator.sendTo(target.deviceId, target.name, files) }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                .getOrNull()
+            if (result is SendResult.Success) succeeded++
+        }
+        if (names.isEmpty()) VeyroLog.w("Container") { "Send files: no paired device to send to" }
+        return SendSummary(names, succeeded)
+    }
+
+    /**
+     * Keeps the share sheet's Direct Share row ("Send to <PC>") in step with the paired PCs, most
+     * recently used first (ADR-043). Called once from the Application.
+     */
+    public fun startShareShortcuts() {
         appScope.launch {
-            val peers = runCatching { trustStore.snapshot() }.getOrDefault(emptyList()).filterNot { it.revoked }
-            val selected = connectionManagerReady.value?.activeConnection?.value?.peerDeviceId
-            val sent = SendTargets.sendToEach(peers, deviceIds, selected) { target ->
-                // SendResult reports failures in the banner; an exception must not skip the rest.
-                runCatching { transferCoordinator.sendTo(target.deviceId, target.name, files) }
-                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
-            }
-            if (sent == 0) VeyroLog.w("Container") { "Send files: no paired device to send to" }
+            trustStore.peers
+                .map { peers ->
+                    peers.filterNot { it.revoked }
+                        .filter { it.platform != com.veyro.core.model.Platform.ANDROID }
+                        .sortedByDescending { maxOf(it.lastConnectedEpochMillis, it.pairedAtEpochMillis) }
+                }
+                .distinctUntilChanged { a, b -> a.map { it.deviceId to it.name } == b.map { it.deviceId to it.name } }
+                .collect { ShareShortcuts.publish(appContext, it) }
         }
     }
+
+    /** The running transfer, for the background share's progress notification. */
+    public val activeTransfer: kotlinx.coroutines.flow.StateFlow<com.veyro.core.model.ActiveTransfer?>
+        get() = transferCoordinator.activeTransfer
 
     /** Legacy alias for callers expecting linkManager. */
     public val linkManager: ConnectionManager get() = connectionManager
@@ -663,9 +697,9 @@ public class VeyroContainer(context: Context) {
      * "Send to PC" from the share sheet or text selection. Runs in the app scope, so the sharing
      * Activity can finish at once; [onResult] gets how many PCs it reached, on the main thread.
      */
-    public fun shareTextToPcs(text: String, onResult: (reached: Int) -> Unit) {
+    public fun shareTextToPcs(text: String, target: String? = null, onResult: (reached: Int) -> Unit) {
         appScope.launch {
-            val reached = runCatching { clipboardBridge.share(text) }.getOrDefault(0)
+            val reached = runCatching { clipboardBridge.share(text, target) }.getOrDefault(0)
             withContext(dispatchers.main) { onResult(reached) }
         }
     }
