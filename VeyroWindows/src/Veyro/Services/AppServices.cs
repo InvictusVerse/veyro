@@ -340,8 +340,8 @@ public sealed class FileTransferService : IFileTransferService
                 };
                 ActiveTransferChanged?.Invoke(ActiveTransfer);
             });
-            var client = new VeyroLinkClient(_identityManager.DeviceId.Value, _settingsStore.Current.DeviceName);
-            Vtc1TransferResult result = await client.SendFilesAsync(
+            var client = new LinkClient(_identityManager.DeviceId.Value, _settingsStore.Current.DeviceName);
+            BulkTransferResult result = await client.SendFilesAsync(
                 _sessions, peer, trusted, filePaths, progress, _transferCancellation.Token).ConfigureAwait(true);
             var verifiedItems = items.Select(item => item with { Verification = VerificationOutcome.Verified }).ToList();
             ActiveTransfer = ActiveTransfer with

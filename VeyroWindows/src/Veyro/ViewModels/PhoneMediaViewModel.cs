@@ -114,9 +114,9 @@ public sealed class PhoneMediaViewModel : BaseViewModel
         UpdateTick();
     }
 
-    public Task TogglePlayPauseAsync() => SendSessionAsync(LinkMessage.MediaCommand.Toggle);
-    public Task NextAsync() => SendSessionAsync(LinkMessage.MediaCommand.Next);
-    public Task PreviousAsync() => SendSessionAsync(LinkMessage.MediaCommand.Prev);
+    public Task TogglePlayPauseAsync() => SendSessionAsync(PeerMessage.MediaCommand.Toggle);
+    public Task NextAsync() => SendSessionAsync(PeerMessage.MediaCommand.Next);
+    public Task PreviousAsync() => SendSessionAsync(PeerMessage.MediaCommand.Prev);
 
     /// <summary>User moved the seek slider. Sends the last value after a short pause.</summary>
     public void RequestSeek(double seconds)
@@ -151,14 +151,14 @@ public sealed class PhoneMediaViewModel : BaseViewModel
     private Task SendSeekAsync()
     {
         _seekHoldUntil = DateTimeOffset.UtcNow + EchoHold;
-        return SendSessionAsync(LinkMessage.MediaCommand.Seek, (long)(_pendingSeekSeconds * 1000));
+        return SendSessionAsync(PeerMessage.MediaCommand.Seek, (long)(_pendingSeekSeconds * 1000));
     }
 
     private async Task SendVolumeAsync()
     {
         if (_peerId is not { } peer) return;
         _volumeHoldUntil = DateTimeOffset.UtcNow + EchoHold;
-        try { await _media.SendCommandAsync(peer, LinkMessage.MediaCommand.Volume, null, (long)Math.Round(_pendingVolume)); }
+        try { await _media.SendCommandAsync(peer, PeerMessage.MediaCommand.Volume, null, (long)Math.Round(_pendingVolume)); }
         catch (Exception error) { VeyroTrace.Error("Phone media 'volume' failed", error); }
     }
 

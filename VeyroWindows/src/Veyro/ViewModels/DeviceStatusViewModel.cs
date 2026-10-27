@@ -25,7 +25,7 @@ public sealed class DeviceStatusViewModel : BaseViewModel
     private readonly DispatcherQueue? _dispatcher;
     private readonly DispatcherQueueTimer? _ringTimer;
     private string? _peerId;
-    private LinkMessage.DeviceStatus? _reported;
+    private PeerMessage.DeviceStatus? _reported;
     private bool _isRinging;
     private string _statusText = string.Empty;
     private byte[]? _wallpaperBytes;

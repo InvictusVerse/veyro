@@ -83,7 +83,7 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
     {
         ValidateKey(key);
         ArgumentOutOfRangeException.ThrowIfNegative(index);
-        return SendAsync(peerId, new LinkMessage.NotificationActionRequest(key, index), ct);
+        return SendAsync(peerId, new PeerMessage.NotificationActionRequest(key, index), ct);
     }
 
     public Task ReplyAsync(string peerId, string key, string text, CancellationToken ct = default)
@@ -94,13 +94,13 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
         if (trimmed.Length == 0) throw new ArgumentException("Reply text is empty.", nameof(text));
         if (trimmed.Length > MaxReplyLength)
             throw new ArgumentException($"Reply text exceeds {MaxReplyLength} characters.", nameof(text));
-        return SendAsync(peerId, new LinkMessage.NotificationReplyRequest(key, trimmed), ct);
+        return SendAsync(peerId, new PeerMessage.NotificationReplyRequest(key, trimmed), ct);
     }
 
     public Task DismissAsync(string peerId, string key, CancellationToken ct = default)
     {
         ValidateKey(key);
-        return SendAsync(peerId, new LinkMessage.NotificationDismissRequest(key), ct);
+        return SendAsync(peerId, new PeerMessage.NotificationDismissRequest(key), ct);
     }
 
     public void Dispose()
@@ -109,13 +109,13 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
         _sessions.SessionClosed -= OnSessionClosed;
     }
 
-    private async Task SendAsync(string peerId, LinkMessage request, CancellationToken ct)
+    private async Task SendAsync(string peerId, PeerMessage request, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(peerId);
         if (!_sessions.IsConnected(peerId))
             throw new InvalidOperationException("The phone is not connected.");
         // Companion messages are only sent to a peer that advertised the capability (ADR-025).
-        if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.NotificationMirror) == 0)
+        if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.NotificationMirror) == 0)
             throw new InvalidOperationException("The phone does not support notification mirroring.");
         await _sessions.SendAsync(peerId, request, ct).ConfigureAwait(false);
         // The type only: keys and reply text are user data.
@@ -128,16 +128,16 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
         if (key.Length > MaxKeyLength) throw new ArgumentException("Notification key is too long.", nameof(key));
     }
 
-    private void OnNotificationReceived(string peerId, LinkMessage.Notification message)
+    private void OnNotificationReceived(string peerId, PeerMessage.Notification message)
     {
         // Untrusted input: ignore anything that does not fit the contract.
         if (string.IsNullOrWhiteSpace(message.Key) || message.Key.Length > MaxKeyLength) return;
 
         NotificationChange? change = message.Kind switch
         {
-            LinkMessage.Notification.KindPosted => Upsert(peerId, message, NotificationChangeKind.Posted),
-            LinkMessage.Notification.KindActive => Upsert(peerId, message, NotificationChangeKind.Updated),
-            LinkMessage.Notification.KindRemoved => Remove(peerId, message.Key),
+            PeerMessage.Notification.KindPosted => Upsert(peerId, message, NotificationChangeKind.Posted),
+            PeerMessage.Notification.KindActive => Upsert(peerId, message, NotificationChangeKind.Updated),
+            PeerMessage.Notification.KindRemoved => Remove(peerId, message.Key),
             _ => null
         };
         if (change is not null) Changed?.Invoke(change);
@@ -150,7 +150,7 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
         if (hadAny) Changed?.Invoke(new NotificationChange(peerId, NotificationChangeKind.Cleared, null, null));
     }
 
-    private NotificationChange Upsert(string peerId, LinkMessage.Notification message, NotificationChangeKind kind)
+    private NotificationChange Upsert(string peerId, PeerMessage.Notification message, NotificationChangeKind kind)
     {
         MirroredNotification item = ToModel(peerId, message);
         lock (_gate)
@@ -178,7 +178,7 @@ public sealed class NotificationMirrorService : INotificationMirrorService, IDis
         return new NotificationChange(peerId, NotificationChangeKind.Removed, key, null);
     }
 
-    private static MirroredNotification ToModel(string peerId, LinkMessage.Notification message)
+    private static MirroredNotification ToModel(string peerId, PeerMessage.Notification message)
     {
         DateTimeOffset timestamp = DateTimeOffset.UtcNow;
         if (message.Ts is long ts && ts > 0)

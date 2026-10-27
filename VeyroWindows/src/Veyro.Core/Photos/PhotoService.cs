@@ -24,7 +24,7 @@ public interface IPhotoService
     /// <summary>Raised on the session or timer thread; UI subscribers marshal to their dispatcher.</summary>
     event Action<PhotoChange>? Changed;
 
-    /// <summary>Connected and advertising <see cref="LinkCapabilities.Photos"/>.</summary>
+    /// <summary>Connected and advertising <see cref="PeerCapabilities.Photos"/>.</summary>
     bool IsAvailable(string peerId);
 
     /// <summary>True once a list arrived in this session.</summary>
@@ -117,7 +117,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
     public string PhotosRoot => _photosRoot;
 
     public bool IsAvailable(string peerId)
-        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Photos) != 0;
+        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Photos) != 0;
 
     public bool HasList(string peerId)
     {
@@ -155,7 +155,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
         {
             try
             {
-                await _sessions.SendAsync(peerId, new LinkMessage.PhotosRequest(ListLimit), ct).ConfigureAwait(false);
+                await _sessions.SendAsync(peerId, new PeerMessage.PhotosRequest(ListLimit), ct).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -192,7 +192,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
             List<long> batch = wanted.GetRange(offset, Math.Min(MaxThumbnailBatch, wanted.Count - offset));
             try
             {
-                await _sessions.SendAsync(peerId, new LinkMessage.PhotoThumbRequest(batch, ThumbnailSize), ct).ConfigureAwait(false);
+                await _sessions.SendAsync(peerId, new PeerMessage.PhotoThumbRequest(batch, ThumbnailSize), ct).ConfigureAwait(false);
             }
             catch
             {
@@ -229,7 +229,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
     {
         EnsureAvailable(peerId);
         Task<string> task;
-        LinkMessage.PhotoFetch? request = null;
+        PeerMessage.PhotoFetch? request = null;
         lock (_gate)
         {
             PeerState state = StateOf(peerId);
@@ -245,7 +245,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
                     _ => Fail(peerId, requestId, new TimeoutException(NotSentMessage)),
                     null, OfferTimeout, Timeout.InfiniteTimeSpan);
                 task = pending.Completion.Task;
-                request = new LinkMessage.PhotoFetch(id, requestId);
+                request = new PeerMessage.PhotoFetch(id, requestId);
             }
         }
         if (request is not null)
@@ -263,7 +263,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
 
     // ── IRequestedOfferHandler (session thread) ─────────────────────────────────────────
 
-    public RequestedOfferClaim? TryClaim(string peerId, LinkMessage.TransferOffer offer)
+    public RequestedOfferClaim? TryClaim(string peerId, PeerMessage.TransferOffer offer)
     {
         if (offer.RequestId is not { } requestId) return null;
         string directory;
@@ -343,18 +343,18 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
 
     // ── Inbound (session thread) ──────────────────────────────────────────────────────
 
-    private void OnPhotosMessage(string peerId, LinkMessage message)
+    private void OnPhotosMessage(string peerId, PeerMessage message)
     {
         switch (message)
         {
-            case LinkMessage.Photos photos: OnList(peerId, photos); break;
-            case LinkMessage.PhotoThumb thumb: OnThumbnail(peerId, thumb); break;
-            case LinkMessage.PhotoNew added: OnPhotoNew(peerId, added); break;
-            case LinkMessage.PhotoRemoved removed: OnPhotoRemoved(peerId, removed); break;
+            case PeerMessage.Photos photos: OnList(peerId, photos); break;
+            case PeerMessage.PhotoThumb thumb: OnThumbnail(peerId, thumb); break;
+            case PeerMessage.PhotoNew added: OnPhotoNew(peerId, added); break;
+            case PeerMessage.PhotoRemoved removed: OnPhotoRemoved(peerId, removed); break;
         }
     }
 
-    private void OnList(string peerId, LinkMessage.Photos message)
+    private void OnList(string peerId, PeerMessage.Photos message)
     {
         TaskCompletionSource<IReadOnlyList<PhotoInfo>>? waiter;
         IReadOnlyList<PhotoInfo> photos;
@@ -376,7 +376,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
         Raise(new PhotoChange(peerId, PhotoChangeKind.List));
     }
 
-    private void OnThumbnail(string peerId, LinkMessage.PhotoThumb message)
+    private void OnThumbnail(string peerId, PeerMessage.PhotoThumb message)
     {
         byte[]? jpeg = DecodeThumbnail(message.Jpeg);
         lock (_gate)
@@ -395,7 +395,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
         Raise(new PhotoChange(peerId, PhotoChangeKind.Thumbnail, message.Id));
     }
 
-    private void OnPhotoNew(string peerId, LinkMessage.PhotoNew message)
+    private void OnPhotoNew(string peerId, PeerMessage.PhotoNew message)
     {
         if (Sanitize(message.Item) is not { } item) return;
         lock (_gate)
@@ -406,7 +406,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
         Raise(new PhotoChange(peerId, PhotoChangeKind.List));
     }
 
-    private void OnPhotoRemoved(string peerId, LinkMessage.PhotoRemoved message)
+    private void OnPhotoRemoved(string peerId, PeerMessage.PhotoRemoved message)
     {
         lock (_gate)
         {
@@ -487,7 +487,7 @@ public sealed class PhotoService : IPhotoService, IRequestedOfferHandler, IDispo
     private void EnsureAvailable(string peerId)
     {
         if (!_sessions.IsConnected(peerId)) throw new InvalidOperationException("The phone is not connected.");
-        if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Photos) == 0)
+        if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Photos) == 0)
             throw new InvalidOperationException("The phone does not offer photos.");
     }
 

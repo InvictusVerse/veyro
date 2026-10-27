@@ -11,10 +11,10 @@ public sealed class SecureLinkSessionTests
     public void SessionFrame_UsesAuthenticatedEncryptedWireFormat()
     {
         byte[] key = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
-        string json = LinkJson.Encode(new LinkEnvelope
+        string json = PeerMessageJson.Encode(new LinkEnvelope
         {
             MsgId = "m1", From = "peer", Seq = 1, Ts = 1,
-            Payload = new LinkMessage.Ping("n1")
+            Payload = new PeerMessage.Ping("n1")
         });
         SealedFrame frame = FrameCrypto.Seal(json, key, encrypt: true, "peer");
 

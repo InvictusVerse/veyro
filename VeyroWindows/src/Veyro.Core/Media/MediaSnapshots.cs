@@ -13,13 +13,13 @@ public static class MediaSnapshots
     /// <summary>Position drift that counts as a seek rather than normal playback.</summary>
     public const long PositionToleranceMs = 1500;
 
-    public static readonly LinkMessage.MediaState Empty = new([]);
+    public static readonly PeerMessage.MediaState Empty = new([]);
 
     /// <summary>
     /// Untrusted input from the peer: drop sessions without a usable id, de-duplicate ids, cap
     /// counts and lengths, strip oversize art, clamp numbers into range.
     /// </summary>
-    public static LinkMessage.MediaState Sanitize(LinkMessage.MediaState state)
+    public static PeerMessage.MediaState Sanitize(PeerMessage.MediaState state)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sessions = new List<MediaSessionInfo>();
@@ -43,7 +43,7 @@ public static class MediaSnapshots
             });
             if (sessions.Count == MaxSessions) break;
         }
-        return new LinkMessage.MediaState(
+        return new PeerMessage.MediaState(
             sessions,
             state.Volume is { } volume ? Math.Clamp(volume, 0, 100) : null,
             state.Muted);
@@ -67,7 +67,7 @@ public static class MediaSnapshots
     /// Whether <paramref name="next"/> differs from <paramref name="previous"/> in a way the peer
     /// must hear about. Position moving as playback predicts is not a change; a seek is.
     /// </summary>
-    public static bool IsSignificantChange(LinkMessage.MediaState? previous, LinkMessage.MediaState next)
+    public static bool IsSignificantChange(PeerMessage.MediaState? previous, PeerMessage.MediaState next)
     {
         if (previous is null) return true;
         if (previous.Volume != next.Volume || previous.Muted != next.Muted) return true;

@@ -36,7 +36,7 @@ public interface ICallService
     /// <summary>Raised on the session or timer thread; UI subscribers marshal to their dispatcher.</summary>
     event Action<CallChange>? Changed;
 
-    /// <summary>Connected and advertising <see cref="LinkCapabilities.Calls"/>.</summary>
+    /// <summary>Connected and advertising <see cref="PeerCapabilities.Calls"/>.</summary>
     bool IsAvailable(string peerId);
 
     /// <summary>The ringing or active call, or null.</summary>
@@ -94,7 +94,7 @@ public sealed class CallService : ICallService, IDisposable
     }
 
     public bool IsAvailable(string peerId)
-        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Calls) != 0;
+        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Calls) != 0;
 
     public PhoneCall? GetCurrentCall(string peerId)
     {
@@ -127,7 +127,7 @@ public sealed class CallService : ICallService, IDisposable
         {
             try
             {
-                await _sessions.SendAsync(peerId, new LinkMessage.CallLogRequest(Math.Clamp(limit, 1, 500)), ct).ConfigureAwait(false);
+                await _sessions.SendAsync(peerId, new PeerMessage.CallLogRequest(Math.Clamp(limit, 1, 500)), ct).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -141,13 +141,13 @@ public sealed class CallService : ICallService, IDisposable
     public async Task SendActionAsync(string peerId, string action, string? number = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(peerId);
-        LinkMessage.CallAction message;
+        PeerMessage.CallAction message;
         switch (action)
         {
             case ActionDial:
                 string normalized = PhoneAddress.Normalize(number)
                     ?? throw new ArgumentException("Not a valid phone number.", nameof(number));
-                message = new LinkMessage.CallAction(ActionDial, null, normalized);
+                message = new PeerMessage.CallAction(ActionDial, null, normalized);
                 break;
             case ActionDecline:
             case ActionSilence:
@@ -155,7 +155,7 @@ public sealed class CallService : ICallService, IDisposable
             case ActionEnd:
                 PhoneCall call = GetCurrentCall(peerId)
                     ?? throw new InvalidOperationException("There is no call on the phone.");
-                message = new LinkMessage.CallAction(action, call.CallId);
+                message = new PeerMessage.CallAction(action, call.CallId);
                 break;
             default:
                 throw new ArgumentException("Unknown call action.", nameof(action));
@@ -173,7 +173,7 @@ public sealed class CallService : ICallService, IDisposable
         _sessions.CapabilitiesChanged -= OnCapabilitiesChanged;
     }
 
-    private void OnCallState(string peerId, LinkMessage.CallState state)
+    private void OnCallState(string peerId, PeerMessage.CallState state)
     {
         // Untrusted input: an unknown state or a missing/oversized id is ignored.
         if (string.IsNullOrEmpty(state.CallId) || state.CallId.Length > MaxCallIdLength) return;
@@ -207,7 +207,7 @@ public sealed class CallService : ICallService, IDisposable
         Raise(new CallChange(peerId, CallChangeKind.State, call));
     }
 
-    private void OnCallLog(string peerId, LinkMessage.CallLog log)
+    private void OnCallLog(string peerId, PeerMessage.CallLog log)
     {
         var entries = (log.Entries ?? [])
             .Where(entry => entry is not null)
@@ -258,7 +258,7 @@ public sealed class CallService : ICallService, IDisposable
     private void EnsureAvailable(string peerId)
     {
         if (!_sessions.IsConnected(peerId)) throw new InvalidOperationException("The phone is not connected.");
-        if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Calls) == 0)
+        if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Calls) == 0)
             throw new InvalidOperationException("The phone does not support calls.");
     }
 

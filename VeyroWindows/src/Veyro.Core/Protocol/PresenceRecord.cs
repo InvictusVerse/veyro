@@ -198,7 +198,7 @@ public static class PresenceCodec
 
         // Refuse rather than guess (REQ-S08). Not an error to surface for every stray packet —
         // it just means "not a peer we can talk to".
-        if (version != VlpConstants.VlpVersion)
+        if (version != ProtocolConstants.VlpVersion)
             return new PresenceResult.Invalid(PresenceRejectReason.BadVersion, $"version {version}");
 
         // Untrusted input: the id must actually be a well-formed deviceId, not merely present.
@@ -243,7 +243,7 @@ public static class PresenceCodec
         string? name = map.GetValueOrDefault(PresenceRecord.KeyName);
         if (name is not null)
         {
-            if (Encoding.UTF8.GetByteCount(name) > VlpConstants.MaxDisplayNameBytes)
+            if (Encoding.UTF8.GetByteCount(name) > ProtocolConstants.MaxDisplayNameBytes)
                 return new PresenceResult.Invalid(PresenceRejectReason.NameTooLong, $"{name.Length} chars");
 
             foreach (char c in name)

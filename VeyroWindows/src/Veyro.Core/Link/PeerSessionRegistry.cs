@@ -3,7 +3,7 @@ using Veyro.Core.Diagnostics;
 namespace Veyro.Core.Link;
 
 /// <summary>
-/// The live, authenticated sessions held by <see cref="VeyroLinkServer"/>, one per paired peer
+/// The live, authenticated sessions held by <see cref="LinkServer"/>, one per paired peer
 /// (ADR-025). Lets UI-side services receive companion messages and send PC-to-phone requests
 /// without touching sockets.
 ///
@@ -21,28 +21,28 @@ public interface IPeerSessionRegistry
     /// </summary>
     event Action<string>? CapabilitiesChanged;
 
-    event Action<string, LinkMessage.Notification>? NotificationReceived;
-    event Action<string, LinkMessage.MediaState>? MediaStateReceived;
-    event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
-    event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
+    event Action<string, PeerMessage.Notification>? NotificationReceived;
+    event Action<string, PeerMessage.MediaState>? MediaStateReceived;
+    event Action<string, PeerMessage.MediaCommand>? MediaCommandReceived;
+    event Action<string, PeerMessage.DeviceStatus>? DeviceStatusReceived;
 
     // ADR-027 phone-to-PC messages. Bodies, numbers, names and SIM labels are user data.
-    event Action<string, LinkMessage.SimList>? SimListReceived;
-    event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
-    event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
-    event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
-    event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
-    event Action<string, LinkMessage.CallState>? CallStateReceived;
-    event Action<string, LinkMessage.CallLog>? CallLogReceived;
+    event Action<string, PeerMessage.SimList>? SimListReceived;
+    event Action<string, PeerMessage.SmsThreads>? SmsThreadsReceived;
+    event Action<string, PeerMessage.SmsMessages>? SmsMessagesReceived;
+    event Action<string, PeerMessage.SmsNew>? SmsNewReceived;
+    event Action<string, PeerMessage.SmsSendResult>? SmsSendResultReceived;
+    event Action<string, PeerMessage.CallState>? CallStateReceived;
+    event Action<string, PeerMessage.CallLog>? CallLogReceived;
 
     /// <summary>ADR-034 phone-to-PC photo messages: photos, photoThumb, photoNew, photoRemoved. User data.</summary>
-    event Action<string, LinkMessage>? PhotosMessageReceived;
+    event Action<string, PeerMessage>? PhotosMessageReceived;
 
     /// <summary>
     /// ADR-038 phone-to-PC messages: <c>pcLock</c> (only from a peer still in the trust store) and
     /// <c>wallpaper</c>. Wallpaper bytes are user data.
     /// </summary>
-    event Action<string, LinkMessage>? DeviceMessageReceived;
+    event Action<string, PeerMessage>? DeviceMessageReceived;
 
     bool IsConnected(string peerId);
 
@@ -53,7 +53,7 @@ public interface IPeerSessionRegistry
     int GetPeerCapabilities(string peerId);
 
     /// <summary>Sends over the peer's live session. Throws if the peer has no session.</summary>
-    Task SendAsync(string peerId, LinkMessage message, CancellationToken ct = default);
+    Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default);
 
     /// <summary>
     /// Routes the transfer-scoped replies for <paramref name="transferId"/> on the peer's live
@@ -71,19 +71,19 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     public event Action<string>? SessionOpened;
     public event Action<string>? SessionClosed;
     public event Action<string>? CapabilitiesChanged;
-    public event Action<string, LinkMessage.Notification>? NotificationReceived;
-    public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
-    public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
-    public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
-    public event Action<string, LinkMessage.SimList>? SimListReceived;
-    public event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
-    public event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
-    public event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
-    public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
-    public event Action<string, LinkMessage.CallState>? CallStateReceived;
-    public event Action<string, LinkMessage.CallLog>? CallLogReceived;
-    public event Action<string, LinkMessage>? PhotosMessageReceived;
-    public event Action<string, LinkMessage>? DeviceMessageReceived;
+    public event Action<string, PeerMessage.Notification>? NotificationReceived;
+    public event Action<string, PeerMessage.MediaState>? MediaStateReceived;
+    public event Action<string, PeerMessage.MediaCommand>? MediaCommandReceived;
+    public event Action<string, PeerMessage.DeviceStatus>? DeviceStatusReceived;
+    public event Action<string, PeerMessage.SimList>? SimListReceived;
+    public event Action<string, PeerMessage.SmsThreads>? SmsThreadsReceived;
+    public event Action<string, PeerMessage.SmsMessages>? SmsMessagesReceived;
+    public event Action<string, PeerMessage.SmsNew>? SmsNewReceived;
+    public event Action<string, PeerMessage.SmsSendResult>? SmsSendResultReceived;
+    public event Action<string, PeerMessage.CallState>? CallStateReceived;
+    public event Action<string, PeerMessage.CallLog>? CallLogReceived;
+    public event Action<string, PeerMessage>? PhotosMessageReceived;
+    public event Action<string, PeerMessage>? DeviceMessageReceived;
 
     public bool IsConnected(string peerId)
     {
@@ -100,7 +100,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         lock (_gate) return _sessions.TryGetValue(peerId, out var registration) ? registration.Capabilities : 0;
     }
 
-    public async Task SendAsync(string peerId, LinkMessage message, CancellationToken ct = default)
+    public async Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default)
     {
         Registration? registration;
         lock (_gate) _sessions.TryGetValue(peerId, out registration);
@@ -124,7 +124,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     /// <paramref name="onReplaced"/> asks its loop to close the socket cleanly. Its later
     /// <see cref="Registration.Dispose"/> raises nothing.
     /// </summary>
-    internal Registration Open(string peerId, Func<LinkMessage, CancellationToken, Task> send, Action? onReplaced = null)
+    internal Registration Open(string peerId, Func<PeerMessage, CancellationToken, Task> send, Action? onReplaced = null)
     {
         var registration = new Registration(this, peerId, send, onReplaced);
         Registration? replaced;
@@ -143,47 +143,47 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     }
 
     // Companion payloads are user data: handlers are isolated and nothing here logs them.
-    internal void PublishNotification(string peerId, LinkMessage.Notification notification)
+    internal void PublishNotification(string peerId, PeerMessage.Notification notification)
         => Publish(NotificationReceived, peerId, notification, nameof(NotificationReceived));
 
-    internal void PublishMediaState(string peerId, LinkMessage.MediaState state)
+    internal void PublishMediaState(string peerId, PeerMessage.MediaState state)
         => Publish(MediaStateReceived, peerId, state, nameof(MediaStateReceived));
 
-    internal void PublishMediaCommand(string peerId, LinkMessage.MediaCommand command)
+    internal void PublishMediaCommand(string peerId, PeerMessage.MediaCommand command)
         => Publish(MediaCommandReceived, peerId, command, nameof(MediaCommandReceived));
 
-    internal void PublishDeviceStatus(string peerId, LinkMessage.DeviceStatus status)
+    internal void PublishDeviceStatus(string peerId, PeerMessage.DeviceStatus status)
         => Publish(DeviceStatusReceived, peerId, status, nameof(DeviceStatusReceived));
 
     /// <summary>Routes an ADR-027 phone-to-PC message. Returns false for any other type.</summary>
-    internal bool PublishMessagingOrCall(string peerId, LinkMessage message)
+    internal bool PublishMessagingOrCall(string peerId, PeerMessage message)
     {
         switch (message)
         {
-            case LinkMessage.SimList m: Publish(SimListReceived, peerId, m, nameof(SimListReceived)); return true;
-            case LinkMessage.SmsThreads m: Publish(SmsThreadsReceived, peerId, m, nameof(SmsThreadsReceived)); return true;
-            case LinkMessage.SmsMessages m: Publish(SmsMessagesReceived, peerId, m, nameof(SmsMessagesReceived)); return true;
-            case LinkMessage.SmsNew m: Publish(SmsNewReceived, peerId, m, nameof(SmsNewReceived)); return true;
-            case LinkMessage.SmsSendResult m: Publish(SmsSendResultReceived, peerId, m, nameof(SmsSendResultReceived)); return true;
-            case LinkMessage.CallState m: Publish(CallStateReceived, peerId, m, nameof(CallStateReceived)); return true;
-            case LinkMessage.CallLog m: Publish(CallLogReceived, peerId, m, nameof(CallLogReceived)); return true;
+            case PeerMessage.SimList m: Publish(SimListReceived, peerId, m, nameof(SimListReceived)); return true;
+            case PeerMessage.SmsThreads m: Publish(SmsThreadsReceived, peerId, m, nameof(SmsThreadsReceived)); return true;
+            case PeerMessage.SmsMessages m: Publish(SmsMessagesReceived, peerId, m, nameof(SmsMessagesReceived)); return true;
+            case PeerMessage.SmsNew m: Publish(SmsNewReceived, peerId, m, nameof(SmsNewReceived)); return true;
+            case PeerMessage.SmsSendResult m: Publish(SmsSendResultReceived, peerId, m, nameof(SmsSendResultReceived)); return true;
+            case PeerMessage.CallState m: Publish(CallStateReceived, peerId, m, nameof(CallStateReceived)); return true;
+            case PeerMessage.CallLog m: Publish(CallLogReceived, peerId, m, nameof(CallLogReceived)); return true;
             default: return false;
         }
     }
 
     /// <summary>Routes an ADR-034 phone-to-PC photo message. Returns false for any other type.</summary>
-    internal bool PublishPhotos(string peerId, LinkMessage message)
+    internal bool PublishPhotos(string peerId, PeerMessage message)
     {
-        if (message is not (LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved))
+        if (message is not (PeerMessage.Photos or PeerMessage.PhotoThumb or PeerMessage.PhotoNew or PeerMessage.PhotoRemoved))
             return false;
         Publish(PhotosMessageReceived, peerId, message, nameof(PhotosMessageReceived));
         return true;
     }
 
     /// <summary>Routes an ADR-038 pcLock or wallpaper. Returns false for any other type.</summary>
-    internal bool PublishDeviceMessage(string peerId, LinkMessage message)
+    internal bool PublishDeviceMessage(string peerId, PeerMessage message)
     {
-        if (message is not (LinkMessage.PcLock or LinkMessage.Wallpaper or LinkMessage.Clip)) return false;
+        if (message is not (PeerMessage.PcLock or PeerMessage.Wallpaper or PeerMessage.Clip)) return false;
         Publish(DeviceMessageReceived, peerId, message, nameof(DeviceMessageReceived));
         return true;
     }
@@ -235,7 +235,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         private int _disposed;
         private int _replaced;
 
-        public Registration(PeerSessionRegistry owner, string peerId, Func<LinkMessage, CancellationToken, Task> send, Action? onReplaced = null)
+        public Registration(PeerSessionRegistry owner, string peerId, Func<PeerMessage, CancellationToken, Task> send, Action? onReplaced = null)
         {
             _owner = owner;
             PeerId = peerId;
@@ -244,7 +244,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         }
 
         public string PeerId { get; }
-        public Func<LinkMessage, CancellationToken, Task> Send { get; }
+        public Func<PeerMessage, CancellationToken, Task> Send { get; }
 
         /// <summary>
         /// A newer session from the same peer took over. The loop stops publishing companion

@@ -45,25 +45,25 @@ public sealed class SmsCallsVectorTests
 
         Type expected = type switch
         {
-            "smsThreadsReq" => typeof(LinkMessage.SmsThreadsRequest),
-            "smsThreads" => typeof(LinkMessage.SmsThreads),
-            "smsMessagesReq" => typeof(LinkMessage.SmsMessagesRequest),
-            "smsMessages" => typeof(LinkMessage.SmsMessages),
-            "smsNew" => typeof(LinkMessage.SmsNew),
-            "smsSend" => typeof(LinkMessage.SmsSend),
-            "smsSendResult" => typeof(LinkMessage.SmsSendResult),
-            "simList" => typeof(LinkMessage.SimList),
-            "callState" => typeof(LinkMessage.CallState),
-            "callAction" => typeof(LinkMessage.CallAction),
-            "callLogReq" => typeof(LinkMessage.CallLogRequest),
-            "callLog" => typeof(LinkMessage.CallLog),
+            "smsThreadsReq" => typeof(PeerMessage.SmsThreadsRequest),
+            "smsThreads" => typeof(PeerMessage.SmsThreads),
+            "smsMessagesReq" => typeof(PeerMessage.SmsMessagesRequest),
+            "smsMessages" => typeof(PeerMessage.SmsMessages),
+            "smsNew" => typeof(PeerMessage.SmsNew),
+            "smsSend" => typeof(PeerMessage.SmsSend),
+            "smsSendResult" => typeof(PeerMessage.SmsSendResult),
+            "simList" => typeof(PeerMessage.SimList),
+            "callState" => typeof(PeerMessage.CallState),
+            "callAction" => typeof(PeerMessage.CallAction),
+            "callLogReq" => typeof(PeerMessage.CallLogRequest),
+            "callLog" => typeof(PeerMessage.CallLog),
             _ => throw new InvalidOperationException($"Unexpected vector type {type}")
         };
-        LinkMessage? decoded = LinkJson.Decode<LinkMessage>(json);
+        PeerMessage? decoded = PeerMessageJson.Decode<PeerMessage>(json);
         Assert.NotNull(decoded);
         Assert.IsType(expected, decoded);
 
-        string reEncoded = LinkJson.Encode(decoded);
+        string reEncoded = PeerMessageJson.Encode(decoded);
         Assert.True(
             JsonNode.DeepEquals(JsonNode.Parse(json), JsonNode.Parse(reEncoded)),
             $"Re-encoded JSON differs for vector {index}: {reEncoded}");
@@ -133,7 +133,7 @@ public sealed class MessagingServiceTests
     private const string Sam = "+15550100";
 
     private static (FakePeerSessions Sessions, ManualTimeProvider Time, MessagingService Service, List<MessagingChange> Changes) Create(
-        int capabilities = LinkCapabilities.Messaging)
+        int capabilities = PeerCapabilities.Messaging)
     {
         var sessions = new FakePeerSessions();
         var time = new ManualTimeProvider();
@@ -153,14 +153,14 @@ public sealed class MessagingServiceTests
     private static async Task LoadThreadsAsync(FakePeerSessions sessions, MessagingService service, params SmsThread[] threads)
     {
         Task<IReadOnlyList<SmsThread>> request = service.RequestThreadsAsync(Phone);
-        sessions.Receive(Phone, new LinkMessage.SmsThreads(threads));
+        sessions.Receive(Phone, new PeerMessage.SmsThreads(threads));
         await request;
     }
 
     private static async Task LoadPageAsync(FakePeerSessions sessions, MessagingService service, long threadId, bool more, params SmsMessage[] messages)
     {
         Task<Conversation> load = service.LoadOlderAsync(Phone, threadId);
-        sessions.Receive(Phone, new LinkMessage.SmsMessages(threadId, messages, more));
+        sessions.Receive(Phone, new PeerMessage.SmsMessages(threadId, messages, more));
         await load;
     }
 
@@ -182,15 +182,15 @@ public sealed class MessagingServiceTests
     [Fact]
     public async Task Send_RequiresCapabilityAndKnownSim()
     {
-        var (sessions, _, service, _) = Create(LinkCapabilities.NotificationMirror);
+        var (sessions, _, service, _) = Create(PeerCapabilities.NotificationMirror);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(Phone, [Sam], "hi"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RequestThreadsAsync(Phone));
 
-        sessions.Connect(Phone, LinkCapabilities.Messaging);
-        sessions.Receive(Phone, new LinkMessage.SimList([new SimInfo(1, "A", 0), new SimInfo(2, "B", 1)]));
+        sessions.Connect(Phone, PeerCapabilities.Messaging);
+        sessions.Receive(Phone, new PeerMessage.SimList([new SimInfo(1, "A", 0), new SimInfo(2, "B", 1)]));
         await Assert.ThrowsAsync<ArgumentException>(() => service.SendAsync(Phone, [Sam], "hi", sim: 3));
         await service.SendAsync(Phone, [Sam], "hi", sim: 2);
-        Assert.Equal(2, Assert.Single(sessions.SentOf<LinkMessage.SmsSend>(Phone)).Sim);
+        Assert.Equal(2, Assert.Single(sessions.SentOf<PeerMessage.SmsSend>(Phone)).Sim);
     }
 
     [Fact]
@@ -201,7 +201,7 @@ public sealed class MessagingServiceTests
 
         ConversationMessage pending = await service.SendAsync(Phone, ["+1 555-0100"], "Sure, 1pm");
 
-        LinkMessage.SmsSend sent = Assert.Single(sessions.SentOf<LinkMessage.SmsSend>(Phone));
+        PeerMessage.SmsSend sent = Assert.Single(sessions.SentOf<PeerMessage.SmsSend>(Phone));
         Assert.Equal(["+15550100"], sent.Addresses);
         Assert.Equal("Sure, 1pm", sent.Body);
         Assert.Equal(pending.ClientId, sent.ClientId);
@@ -219,9 +219,9 @@ public sealed class MessagingServiceTests
         ConversationMessage a = await service.SendAsync(Phone, [Sam], "a");
         ConversationMessage b = await service.SendAsync(Phone, [Sam], "b");
 
-        sessions.Receive(Phone, new LinkMessage.SmsSendResult(a.ClientId!, true));
-        sessions.Receive(Phone, new LinkMessage.SmsSendResult(b.ClientId!, false, "no-service"));
-        sessions.Receive(Phone, new LinkMessage.SmsSendResult("unknown", true)); // ignored
+        sessions.Receive(Phone, new PeerMessage.SmsSendResult(a.ClientId!, true));
+        sessions.Receive(Phone, new PeerMessage.SmsSendResult(b.ClientId!, false, "no-service"));
+        sessions.Receive(Phone, new PeerMessage.SmsSendResult("unknown", true)); // ignored
 
         var messages = service.GetConversation(Phone, a.ThreadId)!.Messages;
         Assert.Equal(SmsDeliveryState.Sent, messages.Single(m => m.Key == a.Key).State);
@@ -241,7 +241,7 @@ public sealed class MessagingServiceTests
         ConversationMessage timedOut = service.GetConversation(Phone, message.ThreadId)!.Messages[0];
         Assert.Equal((SmsDeliveryState.Failed, MessagingService.ErrorTimeout), (timedOut.State, timedOut.Error));
 
-        sessions.Receive(Phone, new LinkMessage.SmsSendResult(message.ClientId!, true));
+        sessions.Receive(Phone, new PeerMessage.SmsSendResult(message.ClientId!, true));
         Assert.Equal(SmsDeliveryState.Sent, service.GetConversation(Phone, message.ThreadId)!.Messages[0].State);
     }
 
@@ -251,11 +251,11 @@ public sealed class MessagingServiceTests
         var (sessions, _, service, _) = Create();
         ConversationMessage message = await service.SendAsync(Phone, [Sam], "again");
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RetryAsync(Phone, message.ClientId!));
-        sessions.Receive(Phone, new LinkMessage.SmsSendResult(message.ClientId!, false, "radio"));
+        sessions.Receive(Phone, new PeerMessage.SmsSendResult(message.ClientId!, false, "radio"));
 
         ConversationMessage retried = await service.RetryAsync(Phone, message.ClientId!);
 
-        var sends = sessions.SentOf<LinkMessage.SmsSend>(Phone);
+        var sends = sessions.SentOf<PeerMessage.SmsSend>(Phone);
         Assert.Equal(2, sends.Count);
         Assert.NotEqual(sends[0].ClientId, sends[1].ClientId);
         Assert.Equal("again", sends[1].Body);
@@ -269,7 +269,7 @@ public sealed class MessagingServiceTests
         await LoadThreadsAsync(sessions, service, Thread(2, 200, "+15550102"), Thread(1, 100, "+15550101", unread: 2));
         changes.Clear();
 
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(901, 1, 300, body: "Lunch?")));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(901, 1, 300, body: "Lunch?")));
         SmsThread top = service.GetThreads(Phone)[0];
         Assert.Equal((1L, "Lunch?", 300L, 3), (top.ThreadId, top.Snippet, top.Ts, top.Unread));
         Assert.Equal(["Name"], top.Names!);
@@ -278,19 +278,19 @@ public sealed class MessagingServiceTests
 
         // A duplicate frame neither bumps unread nor alerts again.
         changes.Clear();
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(901, 1, 300, body: "Lunch?")));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(901, 1, 300, body: "Lunch?")));
         Assert.Equal(3, service.GetThread(Phone, 1)!.Unread);
         Assert.DoesNotContain(changes, c => c.Kind == MessagingChangeKind.Incoming);
 
         // Outgoing (sent on the phone): moves to top, no unread, no alert.
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(902, 2, 400, outgoing: true, body: "ok", status: "sent")));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(902, 2, 400, outgoing: true, body: "ok", status: "sent")));
         top = service.GetThreads(Phone)[0];
         Assert.Equal((2L, "ok", 0), (top.ThreadId, top.Snippet, top.Unread));
         Assert.DoesNotContain(changes, c => c.Kind == MessagingChangeKind.Incoming);
 
         // Unknown thread: created from the thread hint, or from the message alone.
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(903, 3, 500), new SmsThread(3, ["+15550103"], ["Lee"], "x", 500, 0)));
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(904, 4, 600)));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(903, 3, 500), new SmsThread(3, ["+15550103"], ["Lee"], "x", 500, 0)));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(904, 4, 600)));
         Assert.Equal([4L, 3L, 2L, 1L], service.GetThreads(Phone).Select(t => t.ThreadId));
         Assert.Equal(1, service.GetThread(Phone, 3)!.Unread);
         Assert.Equal([Sam], service.GetThread(Phone, 4)!.Addresses);
@@ -305,13 +305,13 @@ public sealed class MessagingServiceTests
         var (sessions, _, service, _) = Create();
         await LoadPageAsync(sessions, service, 1, false, Msg(10, 1, 100));
 
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(11, 1, 200)));
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(20, 2, 200)));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(11, 1, 200)));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(20, 2, 200)));
 
         Assert.Equal([10L, 11L], service.GetConversation(Phone, 1)!.Messages.Select(m => m.Id!.Value));
         Assert.Null(service.GetConversation(Phone, 2));
         // Incoming page messages count as seen: no unread bump when smsNew repeats one.
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(10, 1, 100)));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(10, 1, 100)));
         Assert.Equal(1, service.GetThread(Phone, 1)!.Unread);
     }
 
@@ -323,8 +323,8 @@ public sealed class MessagingServiceTests
         await LoadPageAsync(sessions, service, 12, false, Msg(901, 12, 100));
         ConversationMessage pending = await service.SendAsync(Phone, [Sam], "Sure, 1pm");
 
-        sessions.Receive(Phone, new LinkMessage.SmsNew(Msg(902, 12, 150, outgoing: true, body: "Sure, 1pm", status: "sent")));
-        sessions.Receive(Phone, new LinkMessage.SmsSendResult(pending.ClientId!, true));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(Msg(902, 12, 150, outgoing: true, body: "Sure, 1pm", status: "sent")));
+        sessions.Receive(Phone, new PeerMessage.SmsSendResult(pending.ClientId!, true));
 
         var messages = service.GetConversation(Phone, 12)!.Messages;
         Assert.Equal(2, messages.Count);
@@ -343,7 +343,7 @@ public sealed class MessagingServiceTests
         changes.Clear();
 
         var echo = new SmsMessage(950, 77, "+15550199", "hello", 200, true, true, "sent");
-        sessions.Receive(Phone, new LinkMessage.SmsNew(echo, new SmsThread(77, ["+15550199"], null, "hello", 200, 0)));
+        sessions.Receive(Phone, new PeerMessage.SmsNew(echo, new SmsThread(77, ["+15550199"], null, "hello", 200, 0)));
 
         Assert.Equal([77L, 12L], service.GetThreads(Phone).Select(t => t.ThreadId));
         Assert.Null(service.GetConversation(Phone, pending.ThreadId));
@@ -359,24 +359,24 @@ public sealed class MessagingServiceTests
         var (sessions, _, service, _) = Create();
 
         Task<Conversation> first = service.LoadOlderAsync(Phone, 12);
-        Assert.Equal(new LinkMessage.SmsMessagesRequest(12, null, 50), sessions.SentOf<LinkMessage.SmsMessagesRequest>(Phone)[0]);
-        sessions.Receive(Phone, new LinkMessage.SmsMessages(12, [Msg(3, 12, 300), Msg(2, 12, 200)], More: true));
+        Assert.Equal(new PeerMessage.SmsMessagesRequest(12, null, 50), sessions.SentOf<PeerMessage.SmsMessagesRequest>(Phone)[0]);
+        sessions.Receive(Phone, new PeerMessage.SmsMessages(12, [Msg(3, 12, 300), Msg(2, 12, 200)], More: true));
         Conversation page1 = await first;
         Assert.Equal([200L, 300L], page1.Messages.Select(m => m.Ts));
         Assert.True(page1.More);
 
         Task<Conversation> second = service.LoadOlderAsync(Phone, 12);
         Task<Conversation> coalesced = service.LoadOlderAsync(Phone, 12);
-        Assert.Equal(new LinkMessage.SmsMessagesRequest(12, 200, 50), sessions.SentOf<LinkMessage.SmsMessagesRequest>(Phone)[1]);
-        Assert.Equal(2, sessions.SentOf<LinkMessage.SmsMessagesRequest>(Phone).Count);
-        sessions.Receive(Phone, new LinkMessage.SmsMessages(12, [Msg(1, 12, 100), Msg(2, 12, 200)], More: false));
+        Assert.Equal(new PeerMessage.SmsMessagesRequest(12, 200, 50), sessions.SentOf<PeerMessage.SmsMessagesRequest>(Phone)[1]);
+        Assert.Equal(2, sessions.SentOf<PeerMessage.SmsMessagesRequest>(Phone).Count);
+        sessions.Receive(Phone, new PeerMessage.SmsMessages(12, [Msg(1, 12, 100), Msg(2, 12, 200)], More: false));
         Conversation page2 = await second;
         await coalesced;
         Assert.Equal([100L, 200L, 300L], page2.Messages.Select(m => m.Ts));
         Assert.False(page2.More);
 
         await service.LoadOlderAsync(Phone, 12);
-        Assert.Equal(2, sessions.SentOf<LinkMessage.SmsMessagesRequest>(Phone).Count);
+        Assert.Equal(2, sessions.SentOf<PeerMessage.SmsMessagesRequest>(Phone).Count);
     }
 
     [Fact]
@@ -385,7 +385,7 @@ public sealed class MessagingServiceTests
         var (sessions, time, service, _) = Create();
         Task<IReadOnlyList<SmsThread>> threads = service.RequestThreadsAsync(Phone, limit: 999);
         Task<Conversation> page = service.LoadOlderAsync(Phone, 5);
-        Assert.Equal(200, sessions.SentOf<LinkMessage.SmsThreadsRequest>(Phone)[0].Limit);
+        Assert.Equal(200, sessions.SentOf<PeerMessage.SmsThreadsRequest>(Phone)[0].Limit);
 
         time.Advance(TimeSpan.FromSeconds(14));
         Assert.False(threads.IsCompleted || page.IsCompleted);
@@ -395,14 +395,14 @@ public sealed class MessagingServiceTests
 
         // A fresh request goes out after a timeout.
         _ = service.RequestThreadsAsync(Phone);
-        Assert.Equal(2, sessions.SentOf<LinkMessage.SmsThreadsRequest>(Phone).Count);
+        Assert.Equal(2, sessions.SentOf<PeerMessage.SmsThreadsRequest>(Phone).Count);
     }
 
     [Fact]
     public async Task SessionClose_ClearsEverything()
     {
         var (sessions, time, service, changes) = Create();
-        sessions.Receive(Phone, new LinkMessage.SimList([new SimInfo(1, "A")]));
+        sessions.Receive(Phone, new PeerMessage.SimList([new SimInfo(1, "A")]));
         await LoadThreadsAsync(sessions, service, Thread(12, 100));
         await LoadPageAsync(sessions, service, 12, true, Msg(1, 12, 100));
         ConversationMessage pending = await service.SendAsync(Phone, [Sam], "x");
@@ -430,7 +430,7 @@ public sealed class CallServiceTests
     private const string Phone = "PHONE";
 
     private static (FakePeerSessions Sessions, ManualTimeProvider Time, CallService Service, List<CallChange> Changes) Create(
-        int capabilities = LinkCapabilities.Calls)
+        int capabilities = PeerCapabilities.Calls)
     {
         var sessions = new FakePeerSessions();
         var time = new ManualTimeProvider();
@@ -446,18 +446,18 @@ public sealed class CallServiceTests
     {
         var (sessions, _, service, changes) = Create();
 
-        sessions.Receive(Phone, new LinkMessage.CallState("k-77", "ringing", "in", "+15550100", "Sam"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k-77", "ringing", "in", "+15550100", "Sam"));
         PhoneCall ringing = service.GetCurrentCall(Phone)!;
         Assert.True(ringing.IsIncomingRinging);
 
         // A later frame of the same call keeps fields it omits.
-        sessions.Receive(Phone, new LinkMessage.CallState("k-77", "active"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k-77", "active"));
         PhoneCall active = service.GetCurrentCall(Phone)!;
         Assert.Equal(("active", "in", "+15550100", "Sam"), (active.State, active.Direction, active.Number, active.Name));
 
-        sessions.Receive(Phone, new LinkMessage.CallState("other", "ended"));
+        sessions.Receive(Phone, new PeerMessage.CallState("other", "ended"));
         Assert.NotNull(service.GetCurrentCall(Phone));
-        sessions.Receive(Phone, new LinkMessage.CallState("k-77", "ended"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k-77", "ended"));
         Assert.Null(service.GetCurrentCall(Phone));
 
         Assert.Equal(["ringing", "active", "ended", "ended"], changes.Where(c => c.Kind == CallChangeKind.State).Select(c => c.Call!.State));
@@ -467,13 +467,13 @@ public sealed class CallServiceTests
     public void State_InvalidFramesIgnored()
     {
         var (sessions, _, service, changes) = Create();
-        sessions.Receive(Phone, new LinkMessage.CallState("k", "holding"));
-        sessions.Receive(Phone, new LinkMessage.CallState("", "ringing"));
-        sessions.Receive(Phone, new LinkMessage.CallState(new string('k', 129), "ringing"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k", "holding"));
+        sessions.Receive(Phone, new PeerMessage.CallState("", "ringing"));
+        sessions.Receive(Phone, new PeerMessage.CallState(new string('k', 129), "ringing"));
         Assert.Null(service.GetCurrentCall(Phone));
         Assert.Empty(changes);
 
-        sessions.Receive(Phone, new LinkMessage.CallState("k", "ringing", "sideways"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k", "ringing", "sideways"));
         Assert.Null(service.GetCurrentCall(Phone)!.Direction);
     }
 
@@ -483,15 +483,15 @@ public sealed class CallServiceTests
         var (sessions, _, service, _) = Create();
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendActionAsync(Phone, CallService.ActionDecline));
 
-        sessions.Receive(Phone, new LinkMessage.CallState("k-77", "ringing", "in"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k-77", "ringing", "in"));
         await service.SendActionAsync(Phone, CallService.ActionSilence);
         await service.SendActionAsync(Phone, CallService.ActionAnswer, number: "ignored");
         await service.SendActionAsync(Phone, CallService.ActionEnd);
         await Assert.ThrowsAsync<ArgumentException>(() => service.SendActionAsync(Phone, "hold"));
 
         Assert.Equal(
-            [new LinkMessage.CallAction("silence", "k-77"), new LinkMessage.CallAction("answer", "k-77"), new LinkMessage.CallAction("end", "k-77")],
-            sessions.SentOf<LinkMessage.CallAction>(Phone));
+            [new PeerMessage.CallAction("silence", "k-77"), new PeerMessage.CallAction("answer", "k-77"), new PeerMessage.CallAction("end", "k-77")],
+            sessions.SentOf<PeerMessage.CallAction>(Phone));
     }
 
     [Theory]
@@ -510,13 +510,13 @@ public sealed class CallServiceTests
             return;
         }
         await service.SendActionAsync(Phone, CallService.ActionDial, number);
-        Assert.Equal(new LinkMessage.CallAction("dial", null, expected), Assert.Single(sessions.SentOf<LinkMessage.CallAction>(Phone)));
+        Assert.Equal(new PeerMessage.CallAction("dial", null, expected), Assert.Single(sessions.SentOf<PeerMessage.CallAction>(Phone)));
     }
 
     [Fact]
     public async Task Actions_RequireCapability()
     {
-        var (sessions, _, service, _) = Create(LinkCapabilities.Messaging);
+        var (sessions, _, service, _) = Create(PeerCapabilities.Messaging);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendActionAsync(Phone, CallService.ActionDial, "5550100"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RequestCallLogAsync(Phone));
         Assert.Empty(sessions.Sent);
@@ -527,8 +527,8 @@ public sealed class CallServiceTests
     {
         var (sessions, time, service, changes) = Create();
         Task<IReadOnlyList<CallLogEntry>> request = service.RequestCallLogAsync(Phone, limit: 9999);
-        Assert.Equal(500, Assert.Single(sessions.SentOf<LinkMessage.CallLogRequest>(Phone)).Limit);
-        sessions.Receive(Phone, new LinkMessage.CallLog([
+        Assert.Equal(500, Assert.Single(sessions.SentOf<PeerMessage.CallLogRequest>(Phone)).Limit);
+        sessions.Receive(Phone, new PeerMessage.CallLog([
             new CallLogEntry(1, "+15550100", Ts: 100, DurationSec: -4, Type: "weird"),
             new CallLogEntry(2, "+15550101", "Sam", 200, 42, "missed")
         ]));
@@ -541,7 +541,7 @@ public sealed class CallServiceTests
         time.Advance(TimeSpan.FromSeconds(15));
         await Assert.ThrowsAsync<TimeoutException>(() => late);
 
-        sessions.Receive(Phone, new LinkMessage.CallState("k", "ringing", "in"));
+        sessions.Receive(Phone, new PeerMessage.CallState("k", "ringing", "in"));
         sessions.Disconnect(Phone);
         Assert.Empty(service.GetCallLog(Phone));
         Assert.Null(service.GetCurrentCall(Phone));
@@ -580,29 +580,29 @@ public sealed class SmsCallsSessionTests
             var capable = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             registry.CapabilitiesChanged += peer =>
             {
-                if ((registry.GetPeerCapabilities(peer) & LinkCapabilities.Messaging) != 0) capable.TrySetResult();
+                if ((registry.GetPeerCapabilities(peer) & PeerCapabilities.Messaging) != 0) capable.TrySetResult();
             };
             var ringing = new TaskCompletionSource<PhoneCall>(TaskCreationOptions.RunContinuationsAsynchronously);
             calls.Changed += change => { if (change.Call is { IsRinging: true } call) ringing.TrySetResult(call); };
 
-            await using var server = new VeyroLinkServer(
+            await using var server = new LinkServer(
                 pcId, "Test PC", trustStore, Path.Combine(root, "received"), pcPublicKey,
                 _ => Task.FromResult(false), sessions: registry);
             await server.StartAsync();
 
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/veyro"), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes(LinkJson.Encode(new LinkPreamble(phoneId, "Phone", "android"))),
+            await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(phoneId, "Phone", "android"))),
                 WebSocketMessageType.Text, true, ct);
             byte[] buffer = new byte[4096];
             WebSocketReceiveResult ackFrame = await socket.ReceiveAsync(buffer, ct);
             Assert.Equal(LinkPreambleAck.ModeSession,
-                LinkJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ackFrame.Count))?.Mode);
+                PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ackFrame.Count))?.Mode);
 
             await using var phone = new SecureLinkSession(socket, phoneId, secret, encrypt: true, expectedPeerId: pcId);
-            const int family = LinkCapabilities.Messaging | LinkCapabilities.Calls;
-            await phone.SendAsync(new LinkMessage.Hello(phoneId, "Phone", "android", Capabilities: LinkCapabilities.FileTransfer | family), ct);
-            var helloAck = Assert.IsType<LinkMessage.HelloAck>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
+            const int family = PeerCapabilities.Messaging | PeerCapabilities.Calls;
+            await phone.SendAsync(new PeerMessage.Hello(phoneId, "Phone", "android", Capabilities: PeerCapabilities.FileTransfer | family), ct);
+            var helloAck = Assert.IsType<PeerMessage.HelloAck>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.Equal(family, helloAck.Capabilities & family);
             await capable.Task.WaitAsync(ct);
             Assert.True(messaging.IsAvailable(phoneId));
@@ -610,13 +610,13 @@ public sealed class SmsCallsSessionTests
 
             // PC -> phone smsThreadsReq; phone -> PC smsThreads completes the request.
             Task<IReadOnlyList<SmsThread>> request = messaging.RequestThreadsAsync(phoneId);
-            Assert.Equal(new LinkMessage.SmsThreadsRequest(50), (await phone.ReceiveAsync(ct))!.Envelope.Payload);
-            await phone.SendAsync(new LinkMessage.SmsThreads([new SmsThread(12, ["+15550100"], ["Sam"], "Lunch?", 1793011200000, 1)]), ct);
+            Assert.Equal(new PeerMessage.SmsThreadsRequest(50), (await phone.ReceiveAsync(ct))!.Envelope.Payload);
+            await phone.SendAsync(new PeerMessage.SmsThreads([new SmsThread(12, ["+15550100"], ["Sam"], "Lunch?", 1793011200000, 1)]), ct);
             SmsThread thread = Assert.Single(await request.WaitAsync(ct));
             Assert.Equal((12L, 1), (thread.ThreadId, thread.Unread));
 
             // callState is routed on the same session.
-            await phone.SendAsync(new LinkMessage.CallState("k-77", "ringing", "in", "+15550100"), ct);
+            await phone.SendAsync(new PeerMessage.CallState("k-77", "ringing", "in", "+15550100"), ct);
             Assert.Equal("k-77", (await ringing.Task.WaitAsync(ct)).CallId);
 
             await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", ct);

@@ -13,18 +13,18 @@ public interface IPcMediaSource
     event Action? Changed;
 
     /// <summary>Latest full snapshot. Cheap: implementations cache it.</summary>
-    LinkMessage.MediaState Current { get; }
+    PeerMessage.MediaState Current { get; }
 
     /// <summary>
     /// Executes a command already validated by the publisher: session actions name an id from
     /// <see cref="Current"/>, <c>volume</c> is 0..100 and <c>mute</c> is 1/0.
     /// </summary>
-    Task ExecuteAsync(LinkMessage.MediaCommand command, CancellationToken ct = default);
+    Task ExecuteAsync(PeerMessage.MediaCommand command, CancellationToken ct = default);
 }
 
 /// <summary>
 /// Publishes the PC's media state to every connected peer that advertised
-/// <see cref="LinkCapabilities.MediaControl"/> and executes the <c>mediaCmd</c> those peers send
+/// <see cref="PeerCapabilities.MediaControl"/> and executes the <c>mediaCmd</c> those peers send
 /// (04-PROTOCOL.md 6.2). A full snapshot goes out when the capability is first seen on a session
 /// and on every change, coalesced per peer to at most one per <see cref="MinInterval"/>; the
 /// trailing send always carries the newest snapshot. Media metadata is never logged.
@@ -66,7 +66,7 @@ public sealed class PcMediaPublisher : IDisposable
     }
 
     private bool IsCapable(string peerId)
-        => (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.MediaControl) != 0;
+        => (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.MediaControl) != 0;
 
     private void OnCapabilitiesChanged(string peerId)
     {
@@ -146,9 +146,9 @@ public sealed class PcMediaPublisher : IDisposable
         }
     }
 
-    private void OnCommand(string peerId, LinkMessage.MediaCommand command)
+    private void OnCommand(string peerId, PeerMessage.MediaCommand command)
     {
-        LinkMessage.MediaCommand? validated = Validate(command, _source.Current);
+        PeerMessage.MediaCommand? validated = Validate(command, _source.Current);
         if (validated is null) return;
         _ = ExecuteAsync(validated);
     }
@@ -157,24 +157,24 @@ public sealed class PcMediaPublisher : IDisposable
     /// Untrusted input. Session actions must name a session of the latest local snapshot;
     /// anything unknown, unaddressed or missing a required value is ignored (null).
     /// </summary>
-    public static LinkMessage.MediaCommand? Validate(LinkMessage.MediaCommand command, LinkMessage.MediaState current)
+    public static PeerMessage.MediaCommand? Validate(PeerMessage.MediaCommand command, PeerMessage.MediaState current)
     {
         switch (command.Action)
         {
-            case LinkMessage.MediaCommand.Volume:
+            case PeerMessage.MediaCommand.Volume:
                 return command.Value is { } volume ? new(command.Action, null, Math.Clamp(volume, 0, 100)) : null;
-            case LinkMessage.MediaCommand.Mute:
+            case PeerMessage.MediaCommand.Mute:
                 return command.Value is { } mute ? new(command.Action, null, mute != 0 ? 1 : 0) : null;
-            case LinkMessage.MediaCommand.Play:
-            case LinkMessage.MediaCommand.Pause:
-            case LinkMessage.MediaCommand.Toggle:
-            case LinkMessage.MediaCommand.Next:
-            case LinkMessage.MediaCommand.Prev:
-            case LinkMessage.MediaCommand.Seek:
+            case PeerMessage.MediaCommand.Play:
+            case PeerMessage.MediaCommand.Pause:
+            case PeerMessage.MediaCommand.Toggle:
+            case PeerMessage.MediaCommand.Next:
+            case PeerMessage.MediaCommand.Prev:
+            case PeerMessage.MediaCommand.Seek:
                 if (string.IsNullOrEmpty(command.Id)) return null;
                 MediaSessionInfo? session = current.Sessions.FirstOrDefault(candidate => candidate.Id == command.Id);
                 if (session is null) return null;
-                if (command.Action != LinkMessage.MediaCommand.Seek) return new(command.Action, session.Id);
+                if (command.Action != PeerMessage.MediaCommand.Seek) return new(command.Action, session.Id);
                 if (command.Value is not { } position || !session.CanSeek) return null;
                 return new(command.Action, session.Id, Math.Clamp(position, 0, session.DurationMs ?? long.MaxValue));
             default:
@@ -182,7 +182,7 @@ public sealed class PcMediaPublisher : IDisposable
         }
     }
 
-    private async Task ExecuteAsync(LinkMessage.MediaCommand command)
+    private async Task ExecuteAsync(PeerMessage.MediaCommand command)
     {
         try { await _source.ExecuteAsync(command).ConfigureAwait(false); }
         catch (Exception error) { VeyroTrace.Error($"PC media command '{command.Action}' failed", error); }

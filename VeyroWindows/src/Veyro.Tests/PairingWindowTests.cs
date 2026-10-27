@@ -269,7 +269,7 @@ public sealed class PairingWindowTests
 
 /// <summary>The server side: an open window pairs without the prompt; a closed one still prompts.</summary>
 [Collection(LinkServerCollection.Name)]
-public sealed class VeyroLinkServerPairingWindowTests
+public sealed class LinkServerPairingWindowTests
 {
     private sealed class Fixture : IAsyncDisposable
     {
@@ -279,14 +279,14 @@ public sealed class VeyroLinkServerPairingWindowTests
         public string PcId => DeviceId.FromPublicKey(PcPublicKey).Value;
         public string PhoneId => DeviceId.FromPublicKey(PhonePublicKey).Value;
         public FileTrustStore TrustStore { get; }
-        public VeyroLinkServer Server { get; }
+        public LinkServer Server { get; }
         public List<InboundPairingRequest> Prompts { get; } = [];
 
         public Fixture()
         {
             Directory.CreateDirectory(Root);
             TrustStore = new FileTrustStore(Root, new byte[32]);
-            Server = new VeyroLinkServer(PcId, "Test PC", TrustStore, Path.Combine(Root, "received"), PcPublicKey, _ => Task.FromResult(false));
+            Server = new LinkServer(PcId, "Test PC", TrustStore, Path.Combine(Root, "received"), PcPublicKey, _ => Task.FromResult(false));
             Server.PairingAuthorizer = request =>
             {
                 lock (Prompts) Prompts.Add(request);
@@ -298,11 +298,11 @@ public sealed class VeyroLinkServerPairingWindowTests
         {
             var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{Server.Port}/veyro"), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes(LinkJson.Encode(new LinkPreamble(PhoneId, "Phone", "android"))),
+            await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Phone", "android"))),
                 WebSocketMessageType.Text, true, ct);
             byte[] buffer = new byte[4096];
             WebSocketReceiveResult frame = await socket.ReceiveAsync(buffer, ct);
-            return (socket, LinkJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, frame.Count)));
+            return (socket, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, frame.Count)));
         }
 
         /// <summary>
@@ -311,17 +311,17 @@ public sealed class VeyroLinkServerPairingWindowTests
         /// </summary>
         public async Task SendPairHelloAsync(ClientWebSocket socket, byte[] bootstrap, CancellationToken ct)
         {
-            string envelope = LinkJson.Encode(new LinkEnvelope
+            string envelope = PeerMessageJson.Encode(new LinkEnvelope
             {
                 MsgId = Guid.NewGuid().ToString(),
                 From = PhoneId,
                 Seq = 1,
                 Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Payload = new LinkMessage.PairHello(PhoneId, "Phone", "android", "1.0",
+                Payload = new PeerMessage.PairHello(PhoneId, "Phone", "android", "1.0",
                     PublicKeyB64: Convert.ToBase64String(PhonePublicKey))
             });
             SealedFrame frame = FrameCrypto.Seal(envelope, bootstrap, encrypt: false, PhoneId);
-            string wire = LinkJson.Encode(new LinkWireFrame
+            string wire = PeerMessageJson.Encode(new LinkWireFrame
             {
                 From = frame.FromDeviceId,
                 Nonce = Convert.ToBase64String(frame.Nonce),
@@ -364,14 +364,14 @@ public sealed class VeyroLinkServerPairingWindowTests
             byte[] bootstrap = FrameCrypto.DeriveBootstrapKey(code, f.PhoneId, f.PcId);
             await using var phone = new SecureLinkSession(socket, f.PhoneId, bootstrap, encrypt: false, expectedPeerId: f.PcId);
             await f.SendPairHelloAsync(socket, bootstrap, ct);
-            var pairOk = Assert.IsType<LinkMessage.PairOk>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
+            var pairOk = Assert.IsType<PeerMessage.PairOk>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
 
             // Phone rule from 4.2: the answering key must be the one the QR's id commits to.
             Assert.True(DeviceId.Matches(new DeviceId(f.PcId), Convert.FromBase64String(pairOk.PublicKeyB64!)));
 
             phone.Rekey(Convert.FromBase64String(pairOk.SessionSecretB64));
-            await phone.SendAsync(new LinkMessage.Hello(f.PhoneId, "Phone", "android"), ct);
-            Assert.IsType<LinkMessage.HelloAck>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
+            await phone.SendAsync(new PeerMessage.Hello(f.PhoneId, "Phone", "android"), ct);
+            Assert.IsType<PeerMessage.HelloAck>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
 
             TrustedPeer peer = await completed.Task.WaitAsync(ct);
             Assert.Equal(f.PhoneId, peer.DeviceId);

@@ -11,14 +11,14 @@ public interface IOutboundTransferChannel : IDisposable
     string TransferId { get; }
 
     /// <summary>Sends on the session this channel is bound to (not a newer one that replaced it).</summary>
-    Task SendAsync(LinkMessage message, CancellationToken ct = default);
+    Task SendAsync(PeerMessage message, CancellationToken ct = default);
 
     /// <summary>
     /// Completes with the phone's decision. A <c>cancel</c> before the decision completes it as a
     /// decline. Throws <see cref="TimeoutException"/> after <paramref name="timeout"/> and
     /// <see cref="IOException"/> if the session closes first.
     /// </summary>
-    Task<LinkMessage.TransferDecision> WaitForDecisionAsync(TimeSpan timeout, CancellationToken ct = default);
+    Task<PeerMessage.TransferDecision> WaitForDecisionAsync(TimeSpan timeout, CancellationToken ct = default);
 
     /// <summary>
     /// Cancelled when the phone cancels the transfer after deciding, reports
@@ -41,7 +41,7 @@ public sealed class TransferMailbox
     private bool _closed;
 
     /// <summary>Starts routing messages for <paramref name="transferId"/> to the returned entry.</summary>
-    public Entry Register(string transferId, Func<LinkMessage, CancellationToken, Task> send)
+    public Entry Register(string transferId, Func<PeerMessage, CancellationToken, Task> send)
     {
         ArgumentException.ThrowIfNullOrEmpty(transferId);
         var entry = new Entry(this, transferId, send);
@@ -57,7 +57,7 @@ public sealed class TransferMailbox
     /// Routes a transfer-scoped message to its waiter. Returns false (the session handles it as
     /// before) for any other message or an id nobody waits for.
     /// </summary>
-    public bool TryDeliver(LinkMessage message)
+    public bool TryDeliver(PeerMessage message)
     {
         string? transferId = TransferIdOf(message);
         if (transferId is null) return false;
@@ -81,13 +81,13 @@ public sealed class TransferMailbox
         foreach (Entry entry in entries) entry.SessionClosed();
     }
 
-    public static string? TransferIdOf(LinkMessage message) => message switch
+    public static string? TransferIdOf(PeerMessage message) => message switch
     {
-        LinkMessage.TransferDecision m => m.TransferId,
-        LinkMessage.Cancel m => m.TransferId,
-        LinkMessage.TransferEnd m => m.TransferId,
-        LinkMessage.ItemResult m => m.TransferId,
-        LinkMessage.TransferProgressNotice m => m.TransferId,
+        PeerMessage.TransferDecision m => m.TransferId,
+        PeerMessage.Cancel m => m.TransferId,
+        PeerMessage.TransferEnd m => m.TransferId,
+        PeerMessage.ItemResult m => m.TransferId,
+        PeerMessage.TransferProgressNotice m => m.TransferId,
         _ => null
     };
 
@@ -103,13 +103,13 @@ public sealed class TransferMailbox
     public sealed class Entry : IOutboundTransferChannel
     {
         private readonly TransferMailbox _owner;
-        private readonly Func<LinkMessage, CancellationToken, Task> _send;
-        private readonly TaskCompletionSource<LinkMessage.TransferDecision> _decision =
+        private readonly Func<PeerMessage, CancellationToken, Task> _send;
+        private readonly TaskCompletionSource<PeerMessage.TransferDecision> _decision =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CancellationTokenSource _aborted = new();
         private int _disposed;
 
-        internal Entry(TransferMailbox owner, string transferId, Func<LinkMessage, CancellationToken, Task> send)
+        internal Entry(TransferMailbox owner, string transferId, Func<PeerMessage, CancellationToken, Task> send)
         {
             _owner = owner;
             _send = send;
@@ -120,25 +120,25 @@ public sealed class TransferMailbox
         public CancellationToken PeerAborted => _aborted.Token;
 
         /// <summary>The receiver's transferEnd, once it arrived.</summary>
-        public LinkMessage.TransferEnd? End { get; private set; }
+        public PeerMessage.TransferEnd? End { get; private set; }
 
-        public Task SendAsync(LinkMessage message, CancellationToken ct = default) => _send(message, ct);
+        public Task SendAsync(PeerMessage message, CancellationToken ct = default) => _send(message, ct);
 
-        public async Task<LinkMessage.TransferDecision> WaitForDecisionAsync(TimeSpan timeout, CancellationToken ct = default)
+        public async Task<PeerMessage.TransferDecision> WaitForDecisionAsync(TimeSpan timeout, CancellationToken ct = default)
             => await _decision.Task.WaitAsync(timeout, ct).ConfigureAwait(false);
 
-        internal void Deliver(LinkMessage message)
+        internal void Deliver(PeerMessage message)
         {
             switch (message)
             {
-                case LinkMessage.TransferDecision decision:
+                case PeerMessage.TransferDecision decision:
                     _decision.TrySetResult(decision);
                     break;
-                case LinkMessage.Cancel cancel:
+                case PeerMessage.Cancel cancel:
                     // Before the decision the phone withdrew its answer: a decline. After it, an abort.
-                    if (!_decision.TrySetResult(new LinkMessage.TransferDecision(TransferId, false, cancel.Reason))) Abort();
+                    if (!_decision.TrySetResult(new PeerMessage.TransferDecision(TransferId, false, cancel.Reason))) Abort();
                     break;
-                case LinkMessage.TransferEnd end:
+                case PeerMessage.TransferEnd end:
                     End = end;
                     if (!end.Completed) Abort();
                     break;

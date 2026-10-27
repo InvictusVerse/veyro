@@ -37,22 +37,22 @@ public sealed class StatusWallpaperVectorTests
         string type = vector.GetProperty("type").GetString()!;
         string json = vector.GetProperty("json").GetString()!;
 
-        LinkMessage? decoded = LinkJson.Decode<LinkMessage>(json);
+        PeerMessage? decoded = PeerMessageJson.Decode<PeerMessage>(json);
         Type expected = type switch
         {
-            "devStatus" => typeof(LinkMessage.DeviceStatus),
-            "pcLock" => typeof(LinkMessage.PcLock),
-            "wallpaper" => typeof(LinkMessage.Wallpaper),
+            "devStatus" => typeof(PeerMessage.DeviceStatus),
+            "pcLock" => typeof(PeerMessage.PcLock),
+            "wallpaper" => typeof(PeerMessage.Wallpaper),
             _ => throw new InvalidOperationException($"Unexpected vector type {type}")
         };
         Assert.NotNull(decoded);
         Assert.IsType(expected, decoded);
 
-        string reEncoded = LinkJson.Encode(decoded);
+        string reEncoded = PeerMessageJson.Encode(decoded);
         Assert.True(
             JsonNode.DeepEquals(JsonNode.Parse(json), JsonNode.Parse(reEncoded)),
             $"Re-encoded JSON differs for vector {index}: {reEncoded}");
-        Assert.Equal(decoded, LinkJson.Decode<LinkMessage>(reEncoded));
+        Assert.Equal(decoded, PeerMessageJson.Decode<PeerMessage>(reEncoded));
     }
 
     [Fact]
@@ -60,8 +60,8 @@ public sealed class StatusWallpaperVectorTests
     {
         using var doc = LoadVectors();
         string json = doc.RootElement.GetProperty("vectors")[0].GetProperty("json").GetString()!;
-        var status = Assert.IsType<LinkMessage.DeviceStatus>(LinkJson.Decode<LinkMessage>(json));
-        Assert.Equal(new LinkMessage.DeviceStatus(57, false, "normal", false, 3, 2, "Carrier A", true, false), status);
+        var status = Assert.IsType<PeerMessage.DeviceStatus>(PeerMessageJson.Decode<PeerMessage>(json));
+        Assert.Equal(new PeerMessage.DeviceStatus(57, false, "normal", false, 3, 2, "Carrier A", true, false), status);
     }
 }
 
@@ -167,18 +167,18 @@ public sealed class WallpaperServiceTests
         var source = new FakeWallpaperSource();
         using var service = new WallpaperService(sessions, source);
 
-        sessions.Connect(Phone, LinkCapabilities.Wallpaper);
-        sessions.Connect("OTHER", LinkCapabilities.Wallpaper | LinkCapabilities.DeviceStatus);
-        sessions.Connect("LEGACY", LinkCapabilities.DeviceStatus);
+        sessions.Connect(Phone, PeerCapabilities.Wallpaper);
+        sessions.Connect("OTHER", PeerCapabilities.Wallpaper | PeerCapabilities.DeviceStatus);
+        sessions.Connect("LEGACY", PeerCapabilities.DeviceStatus);
 
-        Assert.Equal(Convert.ToBase64String(source.Jpeg!), Assert.Single(sessions.SentOf<LinkMessage.Wallpaper>(Phone)).Jpeg);
-        Assert.Single(sessions.SentOf<LinkMessage.Wallpaper>("OTHER"));
-        Assert.Empty(sessions.SentOf<LinkMessage.Wallpaper>("LEGACY"));
+        Assert.Equal(Convert.ToBase64String(source.Jpeg!), Assert.Single(sessions.SentOf<PeerMessage.Wallpaper>(Phone)).Jpeg);
+        Assert.Single(sessions.SentOf<PeerMessage.Wallpaper>("OTHER"));
+        Assert.Empty(sessions.SentOf<PeerMessage.Wallpaper>("LEGACY"));
         Assert.Equal(1, source.Reads);
 
         source.Change(null); // wallpaper removed: "none available"
-        Assert.Null(sessions.SentOf<LinkMessage.Wallpaper>(Phone)[^1].Jpeg);
-        Assert.Equal(2, sessions.SentOf<LinkMessage.Wallpaper>(Phone).Count);
+        Assert.Null(sessions.SentOf<PeerMessage.Wallpaper>(Phone)[^1].Jpeg);
+        Assert.Equal(2, sessions.SentOf<PeerMessage.Wallpaper>(Phone).Count);
     }
 
     [Fact]
@@ -188,15 +188,15 @@ public sealed class WallpaperServiceTests
         using var service = new WallpaperService(sessions, null);
         var changed = new List<string>();
         service.Changed += changed.Add;
-        sessions.Connect(Phone, LinkCapabilities.Wallpaper);
+        sessions.Connect(Phone, PeerCapabilities.Wallpaper);
 
-        sessions.Receive(Phone, new LinkMessage.Wallpaper("/9j/4AAQSkZJRg=="));
+        sessions.Receive(Phone, new PeerMessage.Wallpaper("/9j/4AAQSkZJRg=="));
         Assert.Equal(0xFF, service.GetPhoneWallpaper(Phone)![0]);
 
-        sessions.Receive(Phone, new LinkMessage.Wallpaper("garbage"));
+        sessions.Receive(Phone, new PeerMessage.Wallpaper("garbage"));
         Assert.Null(service.GetPhoneWallpaper(Phone));
 
-        sessions.Receive(Phone, new LinkMessage.Wallpaper("/9j/4AAQSkZJRg=="));
+        sessions.Receive(Phone, new PeerMessage.Wallpaper("/9j/4AAQSkZJRg=="));
         sessions.Disconnect(Phone);
         Assert.Null(service.GetPhoneWallpaper(Phone));
         Assert.Equal([Phone, Phone, Phone, Phone], changed);
@@ -225,16 +225,16 @@ public sealed class ExtendedDeviceStatusTests
     {
         var sessions = new FakePeerSessions();
         using var service = new DeviceStatusService(sessions, null);
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
 
-        sessions.ReceiveDeviceStatus(Phone, new LinkMessage.DeviceStatus(57, false, "normal", false, 3, 2, "  Carrier A ", true, false));
-        Assert.Equal(new LinkMessage.DeviceStatus(57, false, "normal", false, 3, 2, "Carrier A", true, false), service.GetPhoneStatus(Phone));
+        sessions.ReceiveDeviceStatus(Phone, new PeerMessage.DeviceStatus(57, false, "normal", false, 3, 2, "  Carrier A ", true, false));
+        Assert.Equal(new PeerMessage.DeviceStatus(57, false, "normal", false, 3, 2, "Carrier A", true, false), service.GetPhoneStatus(Phone));
 
-        sessions.ReceiveDeviceStatus(Phone, new LinkMessage.DeviceStatus(Wifi: -1, Cell: -1));
-        Assert.Equal(new LinkMessage.DeviceStatus(Wifi: -1, Cell: -1), service.GetPhoneStatus(Phone));
+        sessions.ReceiveDeviceStatus(Phone, new PeerMessage.DeviceStatus(Wifi: -1, Cell: -1));
+        Assert.Equal(new PeerMessage.DeviceStatus(Wifi: -1, Cell: -1), service.GetPhoneStatus(Phone));
 
-        sessions.ReceiveDeviceStatus(Phone, new LinkMessage.DeviceStatus(Wifi: 9, Cell: -2, Carrier: new string('x', 200)));
-        LinkMessage.DeviceStatus sanitized = service.GetPhoneStatus(Phone)!;
+        sessions.ReceiveDeviceStatus(Phone, new PeerMessage.DeviceStatus(Wifi: 9, Cell: -2, Carrier: new string('x', 200)));
+        PeerMessage.DeviceStatus sanitized = service.GetPhoneStatus(Phone)!;
         Assert.Null(sanitized.Wifi);
         Assert.Null(sanitized.Cell);
         Assert.Equal(DeviceStatusService.MaxCarrierLength, sanitized.Carrier!.Length);
@@ -248,13 +248,13 @@ public sealed class ExtendedDeviceStatusTests
         network.Set(3);
         using var service = new DeviceStatusService(sessions, null, network);
 
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
         network.Set(3); // unchanged
         network.Set(4);
         network.Set(7); // out of range: unknown, nothing left to send
 
         Assert.Equal(
-            [new LinkMessage.DeviceStatus(Wifi: 3), new LinkMessage.DeviceStatus(Wifi: 4)],
-            sessions.SentOf<LinkMessage.DeviceStatus>(Phone));
+            [new PeerMessage.DeviceStatus(Wifi: 3), new PeerMessage.DeviceStatus(Wifi: 4)],
+            sessions.SentOf<PeerMessage.DeviceStatus>(Phone));
     }
 }

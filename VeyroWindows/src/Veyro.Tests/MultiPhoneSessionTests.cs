@@ -25,9 +25,9 @@ namespace Veyro.Tests;
 public sealed class MultiPhoneSessionTests : IAsyncLifetime
 {
     private const int AllCompanion =
-        LinkCapabilities.FileTransfer | LinkCapabilities.NotificationMirror | LinkCapabilities.MediaControl |
-        LinkCapabilities.DeviceStatus | LinkCapabilities.Messaging | LinkCapabilities.Calls |
-        LinkCapabilities.Photos | LinkCapabilities.Wallpaper;
+        PeerCapabilities.FileTransfer | PeerCapabilities.NotificationMirror | PeerCapabilities.MediaControl |
+        PeerCapabilities.DeviceStatus | PeerCapabilities.Messaging | PeerCapabilities.Calls |
+        PeerCapabilities.Photos | PeerCapabilities.Wallpaper;
 
     private readonly string _root = Path.Combine(AppContext.BaseDirectory, "veyro-multi-" + Guid.NewGuid().ToString("N"));
     private readonly CancellationTokenSource _timeout = new(TimeSpan.FromSeconds(60));
@@ -39,7 +39,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
 
     private PeerSessionRegistry _registry = null!;
     private FileTrustStore _trustStore = null!;
-    private VeyroLinkServer _server = null!;
+    private LinkServer _server = null!;
 
     private sealed class Phone(string name)
     {
@@ -61,7 +61,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
                 AutoAcceptTransfers: true, DateTimeOffset.UtcNow));
         }
         _registry = new PeerSessionRegistry();
-        _server = new VeyroLinkServer(PcId, "Test PC", _trustStore, Path.Combine(_root, "received"), _pcPublicKey,
+        _server = new LinkServer(PcId, "Test PC", _trustStore, Path.Combine(_root, "received"), _pcPublicKey,
             _ => Task.FromResult(true), sessions: _registry);
         await _server.StartAsync();
     }
@@ -78,14 +78,14 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(LinkJson.Encode(new LinkPreamble(phone.Id, phone.Name, "android"))),
+        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(phone.Id, phone.Name, "android"))),
             WebSocketMessageType.Text, true, Ct);
         byte[] buffer = new byte[4096];
         WebSocketReceiveResult ack = await socket.ReceiveAsync(buffer, Ct);
-        Assert.Equal(LinkPreambleAck.ModeSession, LinkJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
+        Assert.Equal(LinkPreambleAck.ModeSession, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
         var fake = new FakePhone(socket, new SecureLinkSession(socket, phone.Id, phone.Secret, encrypt: true, expectedPeerId: PcId));
-        await fake.Session.SendAsync(new LinkMessage.Hello(phone.Id, phone.Name, "android", capabilities), Ct);
-        await fake.ReceiveAsync<LinkMessage.HelloAck>(Ct);
+        await fake.Session.SendAsync(new PeerMessage.Hello(phone.Id, phone.Name, "android", capabilities), Ct);
+        await fake.ReceiveAsync<PeerMessage.HelloAck>(Ct);
         return fake;
     }
 
@@ -93,12 +93,12 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     private async Task BarrierAsync(FakePhone phone)
     {
         string nonce = Guid.NewGuid().ToString("N");
-        await phone.Session.SendAsync(new LinkMessage.Ping(nonce), Ct);
-        while ((await phone.ReceiveAsync<LinkMessage.Pong>(Ct)).Nonce != nonce) { }
+        await phone.Session.SendAsync(new PeerMessage.Ping(nonce), Ct);
+        while ((await phone.ReceiveAsync<PeerMessage.Pong>(Ct)).Nonce != nonce) { }
     }
 
     /// <summary>A second listener standing in for the phone, trusting this PC with the phone's secret.</summary>
-    private async Task<(VeyroLinkServer Listener, PeerSessionRegistry Registry)> StartPhoneListenerAsync(Phone phone)
+    private async Task<(LinkServer Listener, PeerSessionRegistry Registry)> StartPhoneListenerAsync(Phone phone)
     {
         string root = Path.Combine(_root, "phone-" + phone.Name);
         var trust = new FileTrustStore(Path.Combine(root, "trust"), new byte[32]);
@@ -107,7 +107,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
             Convert.ToBase64String(_pcPublicKey), Convert.ToBase64String(phone.Secret),
             AutoAcceptTransfers: true, DateTimeOffset.UtcNow));
         var registry = new PeerSessionRegistry();
-        var listener = new VeyroLinkServer(phone.Id, phone.Name, trust, Path.Combine(root, "in"), phone.PublicKey,
+        var listener = new LinkServer(phone.Id, phone.Name, trust, Path.Combine(root, "in"), phone.PublicKey,
             _ => Task.FromResult(true), sessions: registry);
         await listener.StartAsync();
         return (listener, registry);
@@ -127,7 +127,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     [Fact]
     public async Task DialledSession_IsRegisteredLikeAnInboundOne_AndCarriesCompanionAndTransfers()
     {
-        (VeyroLinkServer listener, PeerSessionRegistry phoneSide) = await StartPhoneListenerAsync(_one);
+        (LinkServer listener, PeerSessionRegistry phoneSide) = await StartPhoneListenerAsync(_one);
         await using (listener)
         {
             using var mirror = new NotificationMirrorService(_registry);
@@ -142,11 +142,11 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
 
             // The phone answered the PC's Hello: full capabilities, as on an inbound session.
             await capable.Task.WaitAsync(Ct);
-            Assert.Equal(VeyroLinkServer.LocalCapabilities, _registry.GetPeerCapabilities(_one.Id) & VeyroLinkServer.LocalCapabilities);
+            Assert.Equal(LinkServer.LocalCapabilities, _registry.GetPeerCapabilities(_one.Id) & LinkServer.LocalCapabilities);
             await UntilAsync(() => phoneSide.IsConnected(PcId), Ct);
 
             // Phone to PC companion message on the dialled session.
-            await phoneSide.SendAsync(PcId, new LinkMessage.Notification("k1", LinkMessage.Notification.KindPosted, Title: "hi"), Ct);
+            await phoneSide.SendAsync(PcId, new PeerMessage.Notification("k1", PeerMessage.Notification.KindPosted, Title: "hi"), Ct);
             await notified.Task.WaitAsync(Ct);
             Assert.Equal("hi", Assert.Single(mirror.GetNotifications(_one.Id)).Title);
 
@@ -154,8 +154,8 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
             string source = Path.Combine(_root, "out.bin");
             byte[] payload = RandomNumberGenerator.GetBytes(80_000);
             await File.WriteAllBytesAsync(source, payload, Ct);
-            var client = new VeyroLinkClient(PcId, "Test PC") { AllowLoopbackDataPlane = true };
-            Vtc1TransferResult result = await client.SendFilesAsync(_registry, null, trusted, [source], ct: Ct);
+            var client = new LinkClient(PcId, "Test PC") { AllowLoopbackDataPlane = true };
+            BulkTransferResult result = await client.SendFilesAsync(_registry, null, trusted, [source], ct: Ct);
             Assert.Equal(payload.Length, result.BytesTransferred);
             Assert.Equal(payload, await File.ReadAllBytesAsync(Path.Combine(_root, "phone-One", "in", "out.bin"), Ct));
 
@@ -180,21 +180,21 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     {
         string root = Path.Combine(_root, "forgot-us");
         var forgetful = new FileTrustStore(Path.Combine(root, "trust"), new byte[32]);
-        await using var listener = new VeyroLinkServer(_one.Id, _one.Name, forgetful, Path.Combine(root, "in"), _one.PublicKey,
+        await using var listener = new LinkServer(_one.Id, _one.Name, forgetful, Path.Combine(root, "in"), _one.PublicKey,
             _ => Task.FromResult(false));
         await listener.StartAsync();
         TrustedPeer trusted = _trustStore.GetPeer(_one.Id)!;
         var endpoint = new PeerEndpoint("127.0.0.1", listener.Port);
 
         var declined = await Assert.ThrowsAsync<SessionRefusedException>(() =>
-            new VeyroLinkClient(PcId, "Test PC").OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct));
+            new LinkClient(PcId, "Test PC").OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct));
         Assert.False(declined.IsBusy);
 
         var prompt = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         listener.PairingAuthorizer = _ => prompt.Task;
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var unanswered = await Assert.ThrowsAsync<SessionRefusedException>(() =>
-            new VeyroLinkClient(PcId, "Test PC") { PreambleAckTimeout = TimeSpan.FromMilliseconds(300) }
+            new LinkClient(PcId, "Test PC") { PreambleAckTimeout = TimeSpan.FromMilliseconds(300) }
                 .OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct));
         Assert.Equal("no-answer", unanswered.Reason);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10));
@@ -212,7 +212,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         mirror.Changed += change => { if (change.Kind == NotificationChangeKind.Cleared) Interlocked.Increment(ref cleared); };
 
         FakePhone first = await ConnectAsync(_one);
-        await first.Session.SendAsync(new LinkMessage.Notification("k1", LinkMessage.Notification.KindPosted, Title: "old"), Ct);
+        await first.Session.SendAsync(new PeerMessage.Notification("k1", PeerMessage.Notification.KindPosted, Title: "old"), Ct);
         await BarrierAsync(first);
         Assert.Single(mirror.GetNotifications(_one.Id));
 
@@ -225,7 +225,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
 
         // The replaced socket gets a normal close frame naming the reason, and nothing it sends
         // after that is published.
-        await Assert.ThrowsAsync<WebSocketException>(() => first.ReceiveAsync<LinkMessage.Pong>(Ct));
+        await Assert.ThrowsAsync<WebSocketException>(() => first.ReceiveAsync<PeerMessage.Pong>(Ct));
         Assert.Equal(WebSocketCloseStatus.NormalClosure, first.Socket.CloseStatus);
         Assert.Equal("replaced", first.Socket.CloseStatusDescription);
         await first.Socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "ok", Ct);
@@ -236,7 +236,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         Assert.True(_registry.IsConnected(_one.Id));
         Assert.Equal(1, closed);
         Assert.Equal(1, cleared);
-        await second.Session.SendAsync(new LinkMessage.Notification("k2", LinkMessage.Notification.KindPosted, Title: "new"), Ct);
+        await second.Session.SendAsync(new PeerMessage.Notification("k2", PeerMessage.Notification.KindPosted, Title: "new"), Ct);
         await BarrierAsync(second);
         Assert.Equal("new", Assert.Single(mirror.GetNotifications(_one.Id)).Title);
     }
@@ -244,7 +244,7 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     [Fact]
     public async Task PhoneDiallingInWhileThePcsDialIsLive_KeepsExactlyOne_TheNewer()
     {
-        (VeyroLinkServer listener, PeerSessionRegistry phoneSide) = await StartPhoneListenerAsync(_one);
+        (LinkServer listener, PeerSessionRegistry phoneSide) = await StartPhoneListenerAsync(_one);
         await using (listener)
         {
             int closed = 0;
@@ -263,8 +263,8 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
             Assert.Equal(1, closed);
 
             // The surviving session is the phone's: the PC's requests reach it.
-            await _registry.SendAsync(_one.Id, new LinkMessage.DeviceControl(Ring: true), Ct);
-            Assert.True((await inbound.ReceiveAsync<LinkMessage.DeviceControl>(Ct)).Ring);
+            await _registry.SendAsync(_one.Id, new PeerMessage.DeviceControl(Ring: true), Ct);
+            Assert.True((await inbound.ReceiveAsync<PeerMessage.DeviceControl>(Ct)).Ring);
         }
     }
 
@@ -286,13 +286,13 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         async Task ReportAsync(FakePhone phone, int n)
         {
             string tag = n == 1 ? "one" : "two";
-            await phone.Session.SendAsync(new LinkMessage.Notification("k", LinkMessage.Notification.KindPosted, Title: tag), Ct);
-            await phone.Session.SendAsync(new LinkMessage.MediaState([new MediaSessionInfo("s-" + tag, Title: tag, Playing: true)], Volume: n * 10), Ct);
-            await phone.Session.SendAsync(new LinkMessage.DeviceStatus(Battery: n * 11, Ringer: n == 1 ? "silent" : "normal"), Ct);
-            await phone.Session.SendAsync(new LinkMessage.Wallpaper(Convert.ToBase64String([0xFF, 0xD8, 0xFF, (byte)n, 0xD9])), Ct);
-            await phone.Session.SendAsync(new LinkMessage.SmsThreads([new SmsThread(n, ["+1555010" + n], Snippet: tag, Ts: 1)]), Ct);
-            await phone.Session.SendAsync(new LinkMessage.CallState("call-" + tag, "ringing", "in", "+1555020" + n), Ct);
-            await phone.Session.SendAsync(new LinkMessage.Photos([new PhotoInfo(n, tag + ".jpg", 1)]), Ct);
+            await phone.Session.SendAsync(new PeerMessage.Notification("k", PeerMessage.Notification.KindPosted, Title: tag), Ct);
+            await phone.Session.SendAsync(new PeerMessage.MediaState([new MediaSessionInfo("s-" + tag, Title: tag, Playing: true)], Volume: n * 10), Ct);
+            await phone.Session.SendAsync(new PeerMessage.DeviceStatus(Battery: n * 11, Ringer: n == 1 ? "silent" : "normal"), Ct);
+            await phone.Session.SendAsync(new PeerMessage.Wallpaper(Convert.ToBase64String([0xFF, 0xD8, 0xFF, (byte)n, 0xD9])), Ct);
+            await phone.Session.SendAsync(new PeerMessage.SmsThreads([new SmsThread(n, ["+1555010" + n], Snippet: tag, Ts: 1)]), Ct);
+            await phone.Session.SendAsync(new PeerMessage.CallState("call-" + tag, "ringing", "in", "+1555020" + n), Ct);
+            await phone.Session.SendAsync(new PeerMessage.Photos([new PhotoInfo(n, tag + ".jpg", 1)]), Ct);
             await BarrierAsync(phone);
         }
 
@@ -314,8 +314,8 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         // PC-to-phone requests go to the phone they name, and only to it.
         await status.SendControlAsync(_one.Id, ring: true, ct: Ct);
         await status.SendControlAsync(_two.Id, dnd: true, ct: Ct);
-        LinkMessage.DeviceControl toOne = await one.ReceiveAsync<LinkMessage.DeviceControl>(Ct);
-        LinkMessage.DeviceControl toTwo = await two.ReceiveAsync<LinkMessage.DeviceControl>(Ct);
+        PeerMessage.DeviceControl toOne = await one.ReceiveAsync<PeerMessage.DeviceControl>(Ct);
+        PeerMessage.DeviceControl toTwo = await two.ReceiveAsync<PeerMessage.DeviceControl>(Ct);
         Assert.True(toOne.Ring);
         Assert.Null(toOne.Dnd);
         Assert.True(toTwo.Dnd);
@@ -324,10 +324,10 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         // A transfer reply from the other phone never reaches this phone's transfer.
         using (IOutboundTransferChannel channel = _registry.OpenOutboundTransfer(_one.Id, "t-1"))
         {
-            await two.Session.SendAsync(new LinkMessage.TransferDecision("t-1", true), Ct);
+            await two.Session.SendAsync(new PeerMessage.TransferDecision("t-1", true), Ct);
             await BarrierAsync(two);
             await Assert.ThrowsAsync<TimeoutException>(() => channel.WaitForDecisionAsync(TimeSpan.FromMilliseconds(200), Ct));
-            await one.Session.SendAsync(new LinkMessage.TransferDecision("t-1", false, "declined"), Ct);
+            await one.Session.SendAsync(new PeerMessage.TransferDecision("t-1", false, "declined"), Ct);
             Assert.False((await channel.WaitForDecisionAsync(TimeSpan.FromSeconds(10), Ct)).Accept);
         }
 

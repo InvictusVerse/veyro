@@ -59,7 +59,7 @@ public sealed class RelativePathTests
     [Fact]
     public void LimitIs1024Utf8Bytes_MatchingVlpConstant()
     {
-        Assert.Equal(1024, VlpConstants.MaxRelativePathBytes);
+        Assert.Equal(1024, ProtocolConstants.MaxRelativePathBytes);
 
         Assert.IsType<PathValidationResult.Valid>(RelativePath.Validate(new string('a', 1024)));
 

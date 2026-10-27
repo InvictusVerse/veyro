@@ -41,9 +41,9 @@ public interface IDeviceStatusService
     event Action<string>? Changed;
 
     /// <summary>The phone's latest <c>devStatus</c>, or null when none since its session opened.</summary>
-    LinkMessage.DeviceStatus? GetPhoneStatus(string peerId);
+    PeerMessage.DeviceStatus? GetPhoneStatus(string peerId);
 
-    /// <summary>Connected and advertising <see cref="LinkCapabilities.DeviceStatus"/>.</summary>
+    /// <summary>Connected and advertising <see cref="PeerCapabilities.DeviceStatus"/>.</summary>
     bool CanControl(string peerId);
 
     /// <summary>Sends <c>devControl</c>. The phone answers with the resulting <c>devStatus</c>.</summary>
@@ -70,8 +70,8 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
     private readonly IPcBatterySource? _battery;
     private readonly IPcNetworkSource? _network;
     private readonly object _gate = new();
-    private readonly Dictionary<string, LinkMessage.DeviceStatus> _phoneStatus = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, LinkMessage.DeviceStatus> _sentToPeer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PeerMessage.DeviceStatus> _phoneStatus = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PeerMessage.DeviceStatus> _sentToPeer = new(StringComparer.OrdinalIgnoreCase);
 
     public event Action<string>? Changed;
 
@@ -90,7 +90,7 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
     public static bool IsRingerMode(string? value)
         => value is RingerNormal or RingerVibrate or RingerSilent;
 
-    public LinkMessage.DeviceStatus? GetPhoneStatus(string peerId)
+    public PeerMessage.DeviceStatus? GetPhoneStatus(string peerId)
     {
         lock (_gate) return _phoneStatus.GetValueOrDefault(peerId);
     }
@@ -109,7 +109,7 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
             throw new InvalidOperationException("The phone is not connected.");
         if (!IsCapable(peerId))
             throw new InvalidOperationException("The phone does not support device status.");
-        await _sessions.SendAsync(peerId, new LinkMessage.DeviceControl(ring, ringer, dnd), ct).ConfigureAwait(false);
+        await _sessions.SendAsync(peerId, new PeerMessage.DeviceControl(ring, ringer, dnd), ct).ConfigureAwait(false);
     }
 
     public void Dispose()
@@ -122,15 +122,15 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
     }
 
     private bool IsCapable(string peerId)
-        => (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.DeviceStatus) != 0;
+        => (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.DeviceStatus) != 0;
 
-    private void OnDeviceStatus(string peerId, LinkMessage.DeviceStatus status)
+    private void OnDeviceStatus(string peerId, PeerMessage.DeviceStatus status)
     {
         // Untrusted input: out-of-contract fields become "unknown" rather than wrong.
         // The carrier is user data: kept for the UI, never logged.
         string? carrier = string.IsNullOrWhiteSpace(status.Carrier) ? null : status.Carrier.Trim();
         if (carrier is { Length: > MaxCarrierLength }) carrier = carrier[..MaxCarrierLength];
-        var sanitized = new LinkMessage.DeviceStatus(
+        var sanitized = new PeerMessage.DeviceStatus(
             status.Battery is >= 0 and <= 100 ? status.Battery : null,
             status.Charging,
             IsRingerMode(status.Ringer) ? status.Ringer : null,
@@ -189,7 +189,7 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
         if (wifi is not (>= 0 and <= 4)) wifi = null;
         if (reading is null && wifi is null) return; // nothing known: send nothing
 
-        var status = new LinkMessage.DeviceStatus(
+        var status = new PeerMessage.DeviceStatus(
             reading is null ? null : Math.Clamp(reading.Percent, 0, 100),
             reading?.Charging,
             Wifi: wifi);
@@ -206,7 +206,7 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
         _ = SendAsync(peerId, status);
     }
 
-    private async Task SendAsync(string peerId, LinkMessage.DeviceStatus status)
+    private async Task SendAsync(string peerId, PeerMessage.DeviceStatus status)
     {
         try { await _sessions.SendAsync(peerId, status).ConfigureAwait(false); }
         catch (Exception error)

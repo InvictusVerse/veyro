@@ -110,10 +110,10 @@ public sealed partial class ClipboardService : IDisposable
     /// <summary>The PC clipboard changed (text). Sends it to the phones unless it is our own echo.</summary>
     public Task OnLocalTextCopiedAsync(string text)
     {
-        if (!_sendEnabled() || string.IsNullOrEmpty(text) || text.Length > LinkMessage.Clip.MaxTextChars) return Task.CompletedTask;
+        if (!_sendEnabled() || string.IsNullOrEmpty(text) || text.Length > PeerMessage.Clip.MaxTextChars) return Task.CompletedTask;
         string fingerprint = Fingerprint(text, null);
         if (IsEcho(fingerprint) || IsRepeat(fingerprint)) return Task.CompletedTask;
-        return BroadcastAsync(new LinkMessage.Clip(NewId(), LinkMessage.Clip.KindText, Text: text, Ts: Now()));
+        return BroadcastAsync(new PeerMessage.Clip(NewId(), PeerMessage.Clip.KindText, Text: text, Ts: Now()));
     }
 
     /// <summary>The PC clipboard changed (image, already PNG within the cap).</summary>
@@ -124,26 +124,26 @@ public sealed partial class ClipboardService : IDisposable
         // Windows re-encodes a bitmap it was given, so an image echo rarely matches byte for byte:
         // any image change right after Veyro set one is taken as that echo.
         if (IsEcho(fingerprint) || IsRecentImageApply() || IsRepeat(fingerprint)) return Task.CompletedTask;
-        return BroadcastAsync(new LinkMessage.Clip(NewId(), LinkMessage.Clip.KindImage, Image: Convert.ToBase64String(png), Ts: Now()));
+        return BroadcastAsync(new PeerMessage.Clip(NewId(), PeerMessage.Clip.KindImage, Image: Convert.ToBase64String(png), Ts: Now()));
     }
 
-    private async Task BroadcastAsync(LinkMessage.Clip clip)
+    private async Task BroadcastAsync(PeerMessage.Clip clip)
     {
         foreach (string peerId in _sessions.GetConnectedPeers())
         {
-            if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Clipboard) == 0) continue;
+            if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Clipboard) == 0) continue;
             try { await _sessions.SendAsync(peerId, clip).ConfigureAwait(false); }
             catch (Exception error) { VeyroTrace.Warn($"Clipboard not sent: {error.GetType().Name}"); }
         }
     }
 
-    private void OnDeviceMessage(string peerId, LinkMessage message)
+    private void OnDeviceMessage(string peerId, PeerMessage message)
     {
-        if (message is LinkMessage.Clip clip) _ = HandleIncomingAsync(peerId, clip);
+        if (message is PeerMessage.Clip clip) _ = HandleIncomingAsync(peerId, clip);
     }
 
     /// <summary>Incoming clip from a phone. Untrusted input: validated and size-capped.</summary>
-    public async Task HandleIncomingAsync(string peerId, LinkMessage.Clip clip)
+    public async Task HandleIncomingAsync(string peerId, PeerMessage.Clip clip)
     {
         ClipItem? item = Validate(peerId, clip);
         if (item is null) return;
@@ -168,15 +168,15 @@ public sealed partial class ClipboardService : IDisposable
         }
     }
 
-    private static ClipItem? Validate(string peerId, LinkMessage.Clip clip)
+    private static ClipItem? Validate(string peerId, PeerMessage.Clip clip)
     {
         if (string.IsNullOrEmpty(clip.Id) || clip.Id.Length > 64) return null;
         DateTimeOffset at = DateTimeOffset.Now;
         switch (clip.Kind)
         {
-            case LinkMessage.Clip.KindText when !string.IsNullOrEmpty(clip.Text) && clip.Text.Length <= LinkMessage.Clip.MaxTextChars:
+            case PeerMessage.Clip.KindText when !string.IsNullOrEmpty(clip.Text) && clip.Text.Length <= PeerMessage.Clip.MaxTextChars:
                 return new ClipItem(clip.Id, peerId, clip.Kind, clip.Text, null, at);
-            case LinkMessage.Clip.KindImage when clip.Image is { Length: > 0 } b64 && b64.Length <= (LinkMessage.Clip.MaxImageBytes + 2) / 3 * 4:
+            case PeerMessage.Clip.KindImage when clip.Image is { Length: > 0 } b64 && b64.Length <= (PeerMessage.Clip.MaxImageBytes + 2) / 3 * 4:
                 byte[] bytes;
                 try { bytes = Convert.FromBase64String(b64); }
                 catch (FormatException) { return null; }
@@ -189,7 +189,7 @@ public sealed partial class ClipboardService : IDisposable
     /// <summary>PNG or JPEG by magic bytes, within the size cap.</summary>
     public static bool IsAcceptableImage(byte[]? bytes)
     {
-        if (bytes is null || bytes.Length < 4 || bytes.Length > LinkMessage.Clip.MaxImageBytes) return false;
+        if (bytes is null || bytes.Length < 4 || bytes.Length > PeerMessage.Clip.MaxImageBytes) return false;
         bool png = bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47;
         bool jpeg = bytes[0] == 0xFF && bytes[1] == 0xD8;
         return png || jpeg;

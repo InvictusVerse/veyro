@@ -73,9 +73,9 @@ public static class RelativePath
         if (string.IsNullOrEmpty(raw))
             return new PathValidationResult.Rejected(PathRejectReason.Empty, "path is empty");
 
-        if (Encoding.UTF8.GetByteCount(raw) > VlpConstants.MaxRelativePathBytes)
+        if (Encoding.UTF8.GetByteCount(raw) > ProtocolConstants.MaxRelativePathBytes)
             return new PathValidationResult.Rejected(
-                PathRejectReason.TooLong, $"exceeds {VlpConstants.MaxRelativePathBytes} bytes");
+                PathRejectReason.TooLong, $"exceeds {ProtocolConstants.MaxRelativePathBytes} bytes");
 
         // A NUL truncates the path in any C-based syscall layer, so "safe.txt\0/../../x" can pass
         // a naive string check and then open a different file entirely.

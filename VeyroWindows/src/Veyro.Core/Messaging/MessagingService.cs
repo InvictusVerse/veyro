@@ -67,7 +67,7 @@ public interface IMessagingService
     /// <summary>Raised on the session or timer thread; UI subscribers marshal to their dispatcher.</summary>
     event Action<MessagingChange>? Changed;
 
-    /// <summary>Connected and advertising <see cref="LinkCapabilities.Messaging"/>.</summary>
+    /// <summary>Connected and advertising <see cref="PeerCapabilities.Messaging"/>.</summary>
     bool IsAvailable(string peerId);
 
     IReadOnlyList<SimInfo> GetSims(string peerId);
@@ -138,7 +138,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
     }
 
     public bool IsAvailable(string peerId)
-        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Messaging) != 0;
+        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Messaging) != 0;
 
     public IReadOnlyList<SimInfo> GetSims(string peerId)
     {
@@ -191,7 +191,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
         {
             try
             {
-                await _sessions.SendAsync(peerId, new LinkMessage.SmsThreadsRequest(Math.Clamp(limit, 1, 200)), ct).ConfigureAwait(false);
+                await _sessions.SendAsync(peerId, new PeerMessage.SmsThreadsRequest(Math.Clamp(limit, 1, 200)), ct).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -209,8 +209,8 @@ public sealed class MessagingService : IMessagingService, IDisposable
     public async Task<Conversation> LoadOlderAsync(string peerId, long threadId, CancellationToken ct = default)
     {
         EnsureAvailable(peerId);
-        ReplyWaiter<LinkMessage.SmsMessages> waiter;
-        LinkMessage.SmsMessagesRequest? request = null;
+        ReplyWaiter<PeerMessage.SmsMessages> waiter;
+        PeerMessage.SmsMessagesRequest? request = null;
         lock (_gate)
         {
             PeerState state = StateOf(peerId);
@@ -221,11 +221,11 @@ public sealed class MessagingService : IMessagingService, IDisposable
             if (state.PageWaiters.TryGetValue(threadId, out var existing)) waiter = existing;
             else
             {
-                waiter = new ReplyWaiter<LinkMessage.SmsMessages>();
+                waiter = new ReplyWaiter<PeerMessage.SmsMessages>();
                 state.PageWaiters[threadId] = waiter;
                 waiter.StartTimeout(_time, RequestTimeout, () => TimeOutPage(peerId, threadId, waiter));
                 long? beforeTs = conversation is { HasFirstPage: true } ? conversation.OldestPhoneTs() : null;
-                request = new LinkMessage.SmsMessagesRequest(threadId, beforeTs, PageSize);
+                request = new PeerMessage.SmsMessagesRequest(threadId, beforeTs, PageSize);
             }
         }
         if (request is not null)
@@ -282,7 +282,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
 
         try
         {
-            await _sessions.SendAsync(peerId, new LinkMessage.SmsSend(clientId, normalized, body, sim), ct).ConfigureAwait(false);
+            await _sessions.SendAsync(peerId, new PeerMessage.SmsSend(clientId, normalized, body, sim), ct).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -334,7 +334,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
 
     // ── Inbound (session thread) ──────────────────────────────────────────────────────
 
-    private void OnSimList(string peerId, LinkMessage.SimList message)
+    private void OnSimList(string peerId, PeerMessage.SimList message)
     {
         // Untrusted input: SIM ids must be unique; labels are shown, never logged.
         var sims = (message.Sims ?? [])
@@ -346,7 +346,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
         Raise(new MessagingChange(peerId, MessagingChangeKind.Sims));
     }
 
-    private void OnSmsThreads(string peerId, LinkMessage.SmsThreads message)
+    private void OnSmsThreads(string peerId, PeerMessage.SmsThreads message)
     {
         ReplyWaiter<IReadOnlyList<SmsThread>>? waiter;
         IReadOnlyList<SmsThread> threads;
@@ -370,10 +370,10 @@ public sealed class MessagingService : IMessagingService, IDisposable
         Raise(new MessagingChange(peerId, MessagingChangeKind.Threads));
     }
 
-    private void OnSmsMessages(string peerId, LinkMessage.SmsMessages message)
+    private void OnSmsMessages(string peerId, PeerMessage.SmsMessages message)
     {
         if (message.ThreadId <= 0) return;
-        ReplyWaiter<LinkMessage.SmsMessages>? waiter;
+        ReplyWaiter<PeerMessage.SmsMessages>? waiter;
         int count;
         lock (_gate)
         {
@@ -396,7 +396,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
         Raise(new MessagingChange(peerId, MessagingChangeKind.Conversation, message.ThreadId));
     }
 
-    private void OnSmsNew(string peerId, LinkMessage.SmsNew update)
+    private void OnSmsNew(string peerId, PeerMessage.SmsNew update)
     {
         if (update.Message is not { ThreadId: > 0 } raw) return;
         SmsMessage message = raw with { Address = raw.Address ?? string.Empty, Body = raw.Body ?? string.Empty };
@@ -447,7 +447,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
         if (incoming) Raise(new MessagingChange(peerId, MessagingChangeKind.Incoming, threadId, message));
     }
 
-    private void OnSmsSendResult(string peerId, LinkMessage.SmsSendResult result)
+    private void OnSmsSendResult(string peerId, PeerMessage.SmsSendResult result)
     {
         if (string.IsNullOrEmpty(result.ClientId)) return;
         Resolve(peerId, result.ClientId, result.Ok, result.Ok ? null : NormalizeError(result.Error));
@@ -569,7 +569,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(peerId);
         if (!_sessions.IsConnected(peerId)) throw new InvalidOperationException("The phone is not connected.");
-        if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Messaging) == 0)
+        if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Messaging) == 0)
             throw new InvalidOperationException("The phone does not support messages.");
     }
 
@@ -592,7 +592,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
         waiter.Fail(new TimeoutException("The phone did not answer the thread list request."));
     }
 
-    private void TimeOutPage(string peerId, long threadId, ReplyWaiter<LinkMessage.SmsMessages> waiter)
+    private void TimeOutPage(string peerId, long threadId, ReplyWaiter<PeerMessage.SmsMessages> waiter)
     {
         lock (_gate)
         {
@@ -655,7 +655,7 @@ public sealed class MessagingService : IMessagingService, IDisposable
         public Dictionary<string, ITimer> Pending { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, SendRequest> Sends { get; } = new(StringComparer.Ordinal);
         public ReplyWaiter<IReadOnlyList<SmsThread>>? ThreadsWaiter { get; set; }
-        public Dictionary<long, ReplyWaiter<LinkMessage.SmsMessages>> PageWaiters { get; } = [];
+        public Dictionary<long, ReplyWaiter<PeerMessage.SmsMessages>> PageWaiters { get; } = [];
         public long NextDraftId { get; set; } = -1;
 
         public SmsThread? FindThread(long threadId) => Threads.FirstOrDefault(t => t.ThreadId == threadId);

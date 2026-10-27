@@ -146,7 +146,7 @@ public sealed class UdpDiscoveryService : IDiscoveryService
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes("veyro-pk-v1").Concat(_publicKey).ToArray())[..8];
         var record = new PresenceRecord
         {
-            Version = VlpConstants.VlpVersion,
+            Version = ProtocolConstants.VlpVersion,
             DeviceId = _localDeviceId,
             Platform = PlatformType.Windows,
             CapabilityBits = 1,

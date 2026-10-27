@@ -37,7 +37,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
 
     private PeerSessionRegistry _registry = null!;
     private FileTrustStore _trustStore = null!;
-    private VeyroLinkServer _server = null!;
+    private LinkServer _server = null!;
     private int _legacyPrompts;
 
     public async Task InitializeAsync()
@@ -46,7 +46,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
         _trustStore = new FileTrustStore(Path.Combine(_root, "trust"), new byte[32]);
         await TrustPhoneAsync(autoAccept: false);
         _registry = new PeerSessionRegistry();
-        _server = new VeyroLinkServer(PcId, "Test PC", _trustStore, Received, _pcPublicKey,
+        _server = new LinkServer(PcId, "Test PC", _trustStore, Received, _pcPublicKey,
             _ =>
             {
                 Interlocked.Increment(ref _legacyPrompts);
@@ -72,30 +72,30 @@ public sealed class ReceivePathTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(LinkJson.Encode(new LinkPreamble(PhoneId, "Pixel", "android"))),
+        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Pixel", "android"))),
             WebSocketMessageType.Text, true, Ct);
         byte[] buffer = new byte[4096];
         WebSocketReceiveResult ack = await socket.ReceiveAsync(buffer, Ct);
-        Assert.Equal(LinkPreambleAck.ModeSession, LinkJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
+        Assert.Equal(LinkPreambleAck.ModeSession, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
         var phone = new SessionTransferTests.FakePhone(socket, new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId));
-        await phone.Session.SendAsync(new LinkMessage.Hello(PhoneId, "Pixel", "android",
-            LinkCapabilities.FileTransfer | LinkCapabilities.Photos), Ct);
-        await phone.ReceiveAsync<LinkMessage.HelloAck>(Ct);
+        await phone.Session.SendAsync(new PeerMessage.Hello(PhoneId, "Pixel", "android",
+            PeerCapabilities.FileTransfer | PeerCapabilities.Photos), Ct);
+        await phone.ReceiveAsync<PeerMessage.HelloAck>(Ct);
         return phone;
     }
 
-    private static LinkMessage.TransferOffer AndroidOffer(string transferId, string relPath, long size, string? requestId = null)
+    private static PeerMessage.TransferOffer AndroidOffer(string transferId, string relPath, long size, string? requestId = null)
         => new(transferId, [new LinkItem(0, relPath, size, 0)], size, "Pixel",
             [RouteWireNames.WifiDirect, RouteWireNames.LanTcp], RequestId: requestId);
 
-    private sealed record AndroidSend(LinkMessage.TransferDecision Decision, LinkMessage.ItemResult? ItemResult, LinkMessage.TransferEnd? End);
+    private sealed record AndroidSend(PeerMessage.TransferDecision Decision, PeerMessage.ItemResult? ItemResult, PeerMessage.TransferEnd? End);
 
     /// <summary>Android's TransferRunner.send, step for step, against the PC's live session.</summary>
     private async Task<AndroidSend> AndroidSendAsync(
         SessionTransferTests.FakePhone phone, string transferId, string relPath, byte[] payload, string? requestId = null)
     {
         await phone.Session.SendAsync(AndroidOffer(transferId, relPath, payload.Length, requestId), Ct);
-        var decision = await phone.ReceiveAsync<LinkMessage.TransferDecision>(Ct);
+        var decision = await phone.ReceiveAsync<PeerMessage.TransferDecision>(Ct);
         Assert.Equal(transferId, decision.TransferId);
         if (!decision.Accept) return new AndroidSend(decision, null, null);
 
@@ -108,7 +108,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
 
         int chunkCount = (payload.Length + AndroidChunk - 1) / AndroidChunk;
         await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemBegin(seq++, transferId, 0, payload.Length, chunkCount, AndroidChunk), ct: Ct);
-        await phone.Session.SendAsync(new LinkMessage.ItemBegin(transferId, 0, payload.Length, chunkCount, AndroidChunk), Ct);
+        await phone.Session.SendAsync(new PeerMessage.ItemBegin(transferId, 0, payload.Length, chunkCount, AndroidChunk), Ct);
         for (int chunk = 0; chunk < chunkCount; chunk++)
         {
             int offset = chunk * AndroidChunk;
@@ -118,10 +118,10 @@ public sealed class ReceivePathTests : IAsyncLifetime
         }
         string sha = Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
         await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemEnd(seq++, transferId, 0, sha), ct: Ct);
-        await phone.Session.SendAsync(new LinkMessage.ItemEnd(transferId, 0, sha), Ct);
+        await phone.Session.SendAsync(new PeerMessage.ItemEnd(transferId, 0, sha), Ct);
 
         // mailbox.awaitItemResult: the session message, with Android's step timeout (shortened).
-        LinkMessage.ItemResult itemResult;
+        PeerMessage.ItemResult itemResult;
         using (var step = CancellationTokenSource.CreateLinkedTokenSource(Ct))
         {
             step.CancelAfter(TimeSpan.FromSeconds(10));
@@ -129,7 +129,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
             {
                 while (true)
                 {
-                    var candidate = await phone.ReceiveAsync<LinkMessage.ItemResult>(step.Token);
+                    var candidate = await phone.ReceiveAsync<PeerMessage.ItemResult>(step.Token);
                     if (candidate.TransferId == transferId) { itemResult = candidate; break; }
                 }
             }
@@ -140,9 +140,9 @@ public sealed class ReceivePathTests : IAsyncLifetime
         }
 
         await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.TransferEnd(seq, transferId, itemResult.Ok), ct: Ct);
-        await phone.Session.SendAsync(new LinkMessage.TransferEnd(transferId, itemResult.Ok), Ct);
+        await phone.Session.SendAsync(new PeerMessage.TransferEnd(transferId, itemResult.Ok), Ct);
         tcp.Client.Shutdown(SocketShutdown.Send);
-        var end = await phone.ReceiveAsync<LinkMessage.TransferEnd>(Ct);
+        var end = await phone.ReceiveAsync<PeerMessage.TransferEnd>(Ct);
         return new AndroidSend(decision, itemResult, end);
     }
 
@@ -178,12 +178,12 @@ public sealed class ReceivePathTests : IAsyncLifetime
 
         AndroidSend sent = await AndroidSendAsync(phone, "a1b2c3d4", "IMG_0001.jpg", payload);
 
-        LinkMessage.TransferDecision decision = sent.Decision;
+        PeerMessage.TransferDecision decision = sent.Decision;
         Assert.True(decision.Accept, decision.Reason);
         Assert.Equal("LAN_TCP", decision.Route);
         Assert.Equal("127.0.0.1", decision.TcpHost); // loopback peer; a LAN peer gets the session's local address
         Assert.Equal(decision.TcpHost, decision.FallbackHost);
-        Assert.InRange(decision.TcpPort!.Value, VeyroLinkServer.PortRangeStart, VeyroLinkServer.PortRangeEnd);
+        Assert.InRange(decision.TcpPort!.Value, LinkServer.PortRangeStart, LinkServer.PortRangeEnd);
         Assert.Matches("^[0-9A-F]{64}$", decision.AuthToken);
         Assert.True(sent.ItemResult!.Ok);
         Assert.True(sent.End!.Completed);
@@ -206,7 +206,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
         await WaitUntilAsync(() => photos.IsAvailable(PhoneId));
 
         Task<string> fetch = photos.FetchOriginalAsync(PhoneId, 4021);
-        var request = await phone.ReceiveAsync<LinkMessage.PhotoFetch>(Ct);
+        var request = await phone.ReceiveAsync<PeerMessage.PhotoFetch>(Ct);
         byte[] original = RandomNumberGenerator.GetBytes(2 * AndroidChunk + 77);
 
         AndroidSend sent = await AndroidSendAsync(phone, "9f8e7d6c", "IMG_20261026_101500.jpg", original, request.RequestId);
@@ -229,8 +229,8 @@ public sealed class ReceivePathTests : IAsyncLifetime
         _server.DataConnectTimeout = TimeSpan.FromMilliseconds(300);
         await using var phone = await ConnectPhoneAsync();
         await phone.Session.SendAsync(AndroidOffer("dead0001", "lost.bin", 10), Ct);
-        Assert.True((await phone.ReceiveAsync<LinkMessage.TransferDecision>(Ct)).Accept);
-        Assert.False((await phone.ReceiveAsync<LinkMessage.TransferEnd>(Ct)).Completed);
+        Assert.True((await phone.ReceiveAsync<PeerMessage.TransferDecision>(Ct)).Accept);
+        Assert.False((await phone.ReceiveAsync<PeerMessage.TransferEnd>(Ct)).Completed);
 
         AndroidSend next = await AndroidSendAsync(phone, "live0002", "ok.bin", RandomNumberGenerator.GetBytes(100));
         Assert.True(next.Decision.Accept, next.Decision.Reason);
@@ -274,7 +274,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
     [Fact]
     public async Task PcLockAndWallpaper_FromTheLiveSession_ReachTheRegistry()
     {
-        var received = new List<LinkMessage>();
+        var received = new List<PeerMessage>();
         var got = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _registry.DeviceMessageReceived += (peer, message) =>
         {
@@ -286,13 +286,13 @@ public sealed class ReceivePathTests : IAsyncLifetime
             }
         };
         await using var phone = await ConnectPhoneAsync();
-        await phone.Session.SendAsync(new LinkMessage.PcLock(), Ct);
-        await phone.Session.SendAsync(new LinkMessage.Wallpaper("/9j/4AAQSkZJRg=="), Ct);
+        await phone.Session.SendAsync(new PeerMessage.PcLock(), Ct);
+        await phone.Session.SendAsync(new PeerMessage.Wallpaper("/9j/4AAQSkZJRg=="), Ct);
         await got.Task.WaitAsync(Ct);
 
-        Assert.IsType<LinkMessage.PcLock>(received[0]);
-        Assert.IsType<LinkMessage.Wallpaper>(received[1]);
-        Assert.NotEqual(0, _registry.GetPeerCapabilities(PhoneId) & LinkCapabilities.Wallpaper);
+        Assert.IsType<PeerMessage.PcLock>(received[0]);
+        Assert.IsType<PeerMessage.Wallpaper>(received[1]);
+        Assert.NotEqual(0, _registry.GetPeerCapabilities(PhoneId) & PeerCapabilities.Wallpaper);
     }
 
     [Fact]
@@ -373,7 +373,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
         await using var phone = await ConnectPhoneAsync();
         await phone.Session.SendAsync(AndroidOffer("gone0001", "a.bin", 1), Ct);
         await opened.Task.WaitAsync(Ct);
-        await phone.Session.SendAsync(new LinkMessage.Cancel("gone0001", "cancelled"), Ct);
+        await phone.Session.SendAsync(new PeerMessage.Cancel("gone0001", "cancelled"), Ct);
         await WaitUntilAsync(() => ui.LastToken.IsCancellationRequested);
 
         ui.Notification = (_, _) => Task.FromResult<bool?>(true);
@@ -443,19 +443,19 @@ public sealed class ReceivePathTests : IAsyncLifetime
         IPAddress phone = IPAddress.Parse("192.168.1.50");
 
         Assert.Equal(IPAddress.Parse("192.168.1.20"),
-            VeyroLinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone, IPAddress.Parse("192.168.1.20")), local));
+            LinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone, IPAddress.Parse("192.168.1.20")), local));
         // Local address unknown: the phone's subnet, not the first adapter.
         Assert.Equal(IPAddress.Parse("192.168.1.20"),
-            VeyroLinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone, null), local));
+            LinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone, null), local));
         // A dual-stack socket reports IPv4-mapped IPv6; it must still match.
         Assert.Equal(IPAddress.Parse("192.168.1.20"),
-            VeyroLinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone.MapToIPv6(), IPAddress.IPv6Any), local));
+            LinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone.MapToIPv6(), IPAddress.IPv6Any), local));
         // Prefix length is honoured: 10.x/8 matches a phone at 10.200.1.1.
         Assert.Equal(IPAddress.Parse("10.0.0.7"),
-            VeyroLinkServer.ChooseAdvertisableAddress(new SessionAddresses(IPAddress.Parse("10.200.1.1"), null), local));
+            LinkServer.ChooseAdvertisableAddress(new SessionAddresses(IPAddress.Parse("10.200.1.1"), null), local));
         Assert.Equal(IPAddress.Loopback,
-            VeyroLinkServer.ChooseAdvertisableAddress(new SessionAddresses(IPAddress.Loopback, IPAddress.Loopback), local));
-        Assert.Null(VeyroLinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone, null), [new(IPAddress.Parse("169.254.1.1"), 16)]));
+            LinkServer.ChooseAdvertisableAddress(new SessionAddresses(IPAddress.Loopback, IPAddress.Loopback), local));
+        Assert.Null(LinkServer.ChooseAdvertisableAddress(new SessionAddresses(phone, null), [new(IPAddress.Parse("169.254.1.1"), 16)]));
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────────

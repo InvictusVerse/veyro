@@ -11,42 +11,42 @@ namespace Veyro.Tests;
 internal sealed class FakePeerSessions : IPeerSessionRegistry
 {
     private readonly Dictionary<string, int> _peers = new(StringComparer.OrdinalIgnoreCase);
-    public List<(string Peer, LinkMessage Message)> Sent { get; } = [];
+    public List<(string Peer, PeerMessage Message)> Sent { get; } = [];
 
     public event Action<string>? SessionOpened;
     public event Action<string>? SessionClosed;
     public event Action<string>? CapabilitiesChanged;
-    public event Action<string, LinkMessage.Notification>? NotificationReceived;
-    public event Action<string, LinkMessage.MediaState>? MediaStateReceived;
-    public event Action<string, LinkMessage.MediaCommand>? MediaCommandReceived;
-    public event Action<string, LinkMessage.DeviceStatus>? DeviceStatusReceived;
-    public event Action<string, LinkMessage.SimList>? SimListReceived;
-    public event Action<string, LinkMessage.SmsThreads>? SmsThreadsReceived;
-    public event Action<string, LinkMessage.SmsMessages>? SmsMessagesReceived;
-    public event Action<string, LinkMessage.SmsNew>? SmsNewReceived;
-    public event Action<string, LinkMessage.SmsSendResult>? SmsSendResultReceived;
-    public event Action<string, LinkMessage.CallState>? CallStateReceived;
-    public event Action<string, LinkMessage.CallLog>? CallLogReceived;
-    public event Action<string, LinkMessage>? PhotosMessageReceived;
-    public event Action<string, LinkMessage>? DeviceMessageReceived;
+    public event Action<string, PeerMessage.Notification>? NotificationReceived;
+    public event Action<string, PeerMessage.MediaState>? MediaStateReceived;
+    public event Action<string, PeerMessage.MediaCommand>? MediaCommandReceived;
+    public event Action<string, PeerMessage.DeviceStatus>? DeviceStatusReceived;
+    public event Action<string, PeerMessage.SimList>? SimListReceived;
+    public event Action<string, PeerMessage.SmsThreads>? SmsThreadsReceived;
+    public event Action<string, PeerMessage.SmsMessages>? SmsMessagesReceived;
+    public event Action<string, PeerMessage.SmsNew>? SmsNewReceived;
+    public event Action<string, PeerMessage.SmsSendResult>? SmsSendResultReceived;
+    public event Action<string, PeerMessage.CallState>? CallStateReceived;
+    public event Action<string, PeerMessage.CallLog>? CallLogReceived;
+    public event Action<string, PeerMessage>? PhotosMessageReceived;
+    public event Action<string, PeerMessage>? DeviceMessageReceived;
 
-    public void Receive(string peerId, LinkMessage message)
+    public void Receive(string peerId, PeerMessage message)
     {
         switch (message)
         {
-            case LinkMessage.PcLock or LinkMessage.Wallpaper or LinkMessage.Clip:
+            case PeerMessage.PcLock or PeerMessage.Wallpaper or PeerMessage.Clip:
                 DeviceMessageReceived?.Invoke(peerId, message);
                 break;
-            case LinkMessage.Photos or LinkMessage.PhotoThumb or LinkMessage.PhotoNew or LinkMessage.PhotoRemoved:
+            case PeerMessage.Photos or PeerMessage.PhotoThumb or PeerMessage.PhotoNew or PeerMessage.PhotoRemoved:
                 PhotosMessageReceived?.Invoke(peerId, message);
                 break;
-            case LinkMessage.SimList m: SimListReceived?.Invoke(peerId, m); break;
-            case LinkMessage.SmsThreads m: SmsThreadsReceived?.Invoke(peerId, m); break;
-            case LinkMessage.SmsMessages m: SmsMessagesReceived?.Invoke(peerId, m); break;
-            case LinkMessage.SmsNew m: SmsNewReceived?.Invoke(peerId, m); break;
-            case LinkMessage.SmsSendResult m: SmsSendResultReceived?.Invoke(peerId, m); break;
-            case LinkMessage.CallState m: CallStateReceived?.Invoke(peerId, m); break;
-            case LinkMessage.CallLog m: CallLogReceived?.Invoke(peerId, m); break;
+            case PeerMessage.SimList m: SimListReceived?.Invoke(peerId, m); break;
+            case PeerMessage.SmsThreads m: SmsThreadsReceived?.Invoke(peerId, m); break;
+            case PeerMessage.SmsMessages m: SmsMessagesReceived?.Invoke(peerId, m); break;
+            case PeerMessage.SmsNew m: SmsNewReceived?.Invoke(peerId, m); break;
+            case PeerMessage.SmsSendResult m: SmsSendResultReceived?.Invoke(peerId, m); break;
+            case PeerMessage.CallState m: CallStateReceived?.Invoke(peerId, m); break;
+            case PeerMessage.CallLog m: CallLogReceived?.Invoke(peerId, m); break;
             default: throw new ArgumentException("Unsupported fake message", nameof(message));
         }
     }
@@ -55,7 +55,7 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
     public IReadOnlyList<string> GetConnectedPeers() => _peers.Keys.ToList();
     public int GetPeerCapabilities(string peerId) => _peers.GetValueOrDefault(peerId);
 
-    public Task SendAsync(string peerId, LinkMessage message, CancellationToken ct = default)
+    public Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default)
     {
         if (!_peers.ContainsKey(peerId)) throw new InvalidOperationException("not connected");
         Sent.Add((peerId, message));
@@ -79,12 +79,12 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
         SessionClosed?.Invoke(peerId);
     }
 
-    public void ReceiveNotification(string peerId, LinkMessage.Notification message) => NotificationReceived?.Invoke(peerId, message);
-    public void ReceiveMediaState(string peerId, LinkMessage.MediaState message) => MediaStateReceived?.Invoke(peerId, message);
-    public void ReceiveMediaCommand(string peerId, LinkMessage.MediaCommand message) => MediaCommandReceived?.Invoke(peerId, message);
-    public void ReceiveDeviceStatus(string peerId, LinkMessage.DeviceStatus message) => DeviceStatusReceived?.Invoke(peerId, message);
+    public void ReceiveNotification(string peerId, PeerMessage.Notification message) => NotificationReceived?.Invoke(peerId, message);
+    public void ReceiveMediaState(string peerId, PeerMessage.MediaState message) => MediaStateReceived?.Invoke(peerId, message);
+    public void ReceiveMediaCommand(string peerId, PeerMessage.MediaCommand message) => MediaCommandReceived?.Invoke(peerId, message);
+    public void ReceiveDeviceStatus(string peerId, PeerMessage.DeviceStatus message) => DeviceStatusReceived?.Invoke(peerId, message);
 
-    public List<T> SentOf<T>(string peerId) where T : LinkMessage
+    public List<T> SentOf<T>(string peerId) where T : PeerMessage
         => Sent.Where(entry => entry.Peer == peerId).Select(entry => entry.Message).OfType<T>().ToList();
 }
 
@@ -135,17 +135,17 @@ internal sealed class ManualTimeProvider : TimeProvider
 
 internal sealed class FakeMediaSource : IPcMediaSource
 {
-    public LinkMessage.MediaState Current { get; private set; } = MediaSnapshots.Empty;
-    public List<LinkMessage.MediaCommand> Executed { get; } = [];
+    public PeerMessage.MediaState Current { get; private set; } = MediaSnapshots.Empty;
+    public List<PeerMessage.MediaCommand> Executed { get; } = [];
     public event Action? Changed;
 
-    public void Set(LinkMessage.MediaState state)
+    public void Set(PeerMessage.MediaState state)
     {
         Current = state;
         Changed?.Invoke();
     }
 
-    public Task ExecuteAsync(LinkMessage.MediaCommand command, CancellationToken ct = default)
+    public Task ExecuteAsync(PeerMessage.MediaCommand command, CancellationToken ct = default)
     {
         Executed.Add(command);
         return Task.CompletedTask;
@@ -195,19 +195,19 @@ public sealed class MediaStatusVectorTests
         string type = vector.GetProperty("type").GetString()!;
         string json = vector.GetProperty("json").GetString()!;
 
-        LinkMessage? decoded = LinkJson.Decode<LinkMessage>(json);
+        PeerMessage? decoded = PeerMessageJson.Decode<PeerMessage>(json);
         Type expected = type switch
         {
-            "mediaState" => typeof(LinkMessage.MediaState),
-            "mediaCmd" => typeof(LinkMessage.MediaCommand),
-            "devStatus" => typeof(LinkMessage.DeviceStatus),
-            "devControl" => typeof(LinkMessage.DeviceControl),
+            "mediaState" => typeof(PeerMessage.MediaState),
+            "mediaCmd" => typeof(PeerMessage.MediaCommand),
+            "devStatus" => typeof(PeerMessage.DeviceStatus),
+            "devControl" => typeof(PeerMessage.DeviceControl),
             _ => throw new InvalidOperationException($"Unexpected vector type {type}")
         };
         Assert.NotNull(decoded);
         Assert.IsType(expected, decoded);
 
-        string reEncoded = LinkJson.Encode(decoded);
+        string reEncoded = PeerMessageJson.Encode(decoded);
         Assert.True(
             JsonNode.DeepEquals(JsonNode.Parse(json), JsonNode.Parse(reEncoded)),
             $"Re-encoded JSON differs for vector {index}: {reEncoded}");
@@ -218,7 +218,7 @@ public sealed class PhoneMediaServiceTests
 {
     private const string Phone = "PHONE";
 
-    private static LinkMessage.MediaState State(params MediaSessionInfo[] sessions) => new(sessions, 40, false);
+    private static PeerMessage.MediaState State(params MediaSessionInfo[] sessions) => new(sessions, 40, false);
 
     private static MediaSessionInfo Session(string id, long? duration = 200_000)
         => new(id, App: "Music", Title: "Song", Playing: true, PositionMs: 1000, DurationMs: duration, Ts: 1, CanPrev: true, CanNext: true, CanSeek: true);
@@ -227,50 +227,50 @@ public sealed class PhoneMediaServiceTests
     public async Task SessionActions_RequireIdFromLatestSnapshot()
     {
         var sessions = new FakePeerSessions();
-        sessions.Connect(Phone, LinkCapabilities.MediaControl);
+        sessions.Connect(Phone, PeerCapabilities.MediaControl);
         using var service = new PhoneMediaService(sessions);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Toggle, "s1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Toggle, "s1"));
         sessions.ReceiveMediaState(Phone, State(Session("s1")));
-        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Next, "nope"));
-        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Play));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Next, "nope"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Play));
         await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, "rewind", "s1"));
         Assert.Empty(sessions.Sent);
 
-        await service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Toggle, "s1");
-        await service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Seek, "s1", 999_999);
+        await service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Toggle, "s1");
+        await service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Seek, "s1", 999_999);
 
         Assert.Equal(
-            [new LinkMessage.MediaCommand("toggle", "s1"), new LinkMessage.MediaCommand("seek", "s1", 200_000)],
-            sessions.SentOf<LinkMessage.MediaCommand>(Phone));
+            [new PeerMessage.MediaCommand("toggle", "s1"), new PeerMessage.MediaCommand("seek", "s1", 200_000)],
+            sessions.SentOf<PeerMessage.MediaCommand>(Phone));
     }
 
     [Fact]
     public async Task Volume_IsClampedAndIgnoresId_MuteIsBinary()
     {
         var sessions = new FakePeerSessions();
-        sessions.Connect(Phone, LinkCapabilities.MediaControl);
+        sessions.Connect(Phone, PeerCapabilities.MediaControl);
         using var service = new PhoneMediaService(sessions);
 
-        await service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Volume, "whatever", 140);
-        await service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Volume, null, -5);
-        await service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Mute, null, 7);
-        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Volume));
+        await service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Volume, "whatever", 140);
+        await service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Volume, null, -5);
+        await service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Mute, null, 7);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Volume));
 
         Assert.Equal(
-            [new LinkMessage.MediaCommand("volume", null, 100), new LinkMessage.MediaCommand("volume", null, 0), new LinkMessage.MediaCommand("mute", null, 1)],
-            sessions.SentOf<LinkMessage.MediaCommand>(Phone));
+            [new PeerMessage.MediaCommand("volume", null, 100), new PeerMessage.MediaCommand("volume", null, 0), new PeerMessage.MediaCommand("mute", null, 1)],
+            sessions.SentOf<PeerMessage.MediaCommand>(Phone));
     }
 
     [Fact]
     public async Task Commands_RequireLiveSessionWithCapability()
     {
         var sessions = new FakePeerSessions();
-        sessions.Connect(Phone, LinkCapabilities.NotificationMirror);
+        sessions.Connect(Phone, PeerCapabilities.NotificationMirror);
         using var service = new PhoneMediaService(sessions);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Volume, null, 10));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Volume, null, 10));
         sessions.Disconnect(Phone);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendCommandAsync(Phone, LinkMessage.MediaCommand.Volume, null, 10));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendCommandAsync(Phone, PeerMessage.MediaCommand.Volume, null, 10));
         Assert.Empty(sessions.Sent);
     }
 
@@ -278,13 +278,13 @@ public sealed class PhoneMediaServiceTests
     public void State_IsSanitizedPerPeer_AndClearedOnSessionClose()
     {
         var sessions = new FakePeerSessions();
-        sessions.Connect(Phone, LinkCapabilities.MediaControl);
-        sessions.Connect("OTHER", LinkCapabilities.MediaControl);
+        sessions.Connect(Phone, PeerCapabilities.MediaControl);
+        sessions.Connect("OTHER", PeerCapabilities.MediaControl);
         using var service = new PhoneMediaService(sessions);
         var changed = new List<string>();
         service.Changed += changed.Add;
 
-        sessions.ReceiveMediaState(Phone, new LinkMessage.MediaState(
+        sessions.ReceiveMediaState(Phone, new PeerMessage.MediaState(
             [Session("s1"), Session("s1"), Session(""), Session("s2") with { Art = new string('A', MediaSnapshots.MaxArtBase64Length + 4) }],
             Volume: 250));
         sessions.ReceiveMediaState("OTHER", State(Session("o1")));
@@ -316,7 +316,7 @@ public sealed class PcMediaPublisherTests
 {
     private const string Phone = "PHONE";
 
-    private static LinkMessage.MediaState State(string title, string id = "app") => new(
+    private static PeerMessage.MediaState State(string title, string id = "app") => new(
         [new MediaSessionInfo(id, App: "Player", Title: title, Playing: true, PositionMs: 0, DurationMs: 60_000, Ts: 1, CanSeek: true)],
         50, false);
 
@@ -329,11 +329,11 @@ public sealed class PcMediaPublisherTests
         source.Set(State("a"));
         using var publisher = new PcMediaPublisher(sessions, source, time);
 
-        sessions.Connect(Phone, LinkCapabilities.MediaControl);
-        sessions.Connect("LEGACY", LinkCapabilities.FileTransfer);
+        sessions.Connect(Phone, PeerCapabilities.MediaControl);
+        sessions.Connect("LEGACY", PeerCapabilities.FileTransfer);
 
-        Assert.Same(source.Current, Assert.Single(sessions.SentOf<LinkMessage.MediaState>(Phone)));
-        Assert.Empty(sessions.SentOf<LinkMessage.MediaState>("LEGACY"));
+        Assert.Same(source.Current, Assert.Single(sessions.SentOf<PeerMessage.MediaState>(Phone)));
+        Assert.Empty(sessions.SentOf<PeerMessage.MediaState>("LEGACY"));
     }
 
     [Fact]
@@ -343,26 +343,26 @@ public sealed class PcMediaPublisherTests
         var sessions = new FakePeerSessions();
         var source = new FakeMediaSource();
         using var publisher = new PcMediaPublisher(sessions, source, time);
-        sessions.Connect(Phone, LinkCapabilities.MediaControl); // send #1 at t=0
+        sessions.Connect(Phone, PeerCapabilities.MediaControl); // send #1 at t=0
 
         time.Advance(TimeSpan.FromMilliseconds(100));
         source.Set(State("b"));
         source.Set(State("c"));
         time.Advance(TimeSpan.FromMilliseconds(200));
         source.Set(State("d"));
-        Assert.Single(sessions.SentOf<LinkMessage.MediaState>(Phone));
+        Assert.Single(sessions.SentOf<PeerMessage.MediaState>(Phone));
 
         time.Advance(TimeSpan.FromMilliseconds(199)); // t=499
-        Assert.Single(sessions.SentOf<LinkMessage.MediaState>(Phone));
+        Assert.Single(sessions.SentOf<PeerMessage.MediaState>(Phone));
         time.Advance(TimeSpan.FromMilliseconds(1)); // t=500
-        var sent = sessions.SentOf<LinkMessage.MediaState>(Phone);
+        var sent = sessions.SentOf<PeerMessage.MediaState>(Phone);
         Assert.Equal(2, sent.Count);
         Assert.Equal("d", sent[1].Sessions[0].Title);
 
         // Quiet for longer than the interval: the next change goes out at once.
         time.Advance(TimeSpan.FromMilliseconds(600));
         source.Set(State("e"));
-        Assert.Equal(3, sessions.SentOf<LinkMessage.MediaState>(Phone).Count);
+        Assert.Equal(3, sessions.SentOf<PeerMessage.MediaState>(Phone).Count);
     }
 
     [Fact]
@@ -372,7 +372,7 @@ public sealed class PcMediaPublisherTests
         var sessions = new FakePeerSessions();
         var source = new FakeMediaSource();
         using var publisher = new PcMediaPublisher(sessions, source, time);
-        sessions.Connect(Phone, LinkCapabilities.MediaControl);
+        sessions.Connect(Phone, PeerCapabilities.MediaControl);
         source.Set(State("b"));
         sessions.Disconnect(Phone);
         time.Advance(TimeSpan.FromSeconds(1));
@@ -386,7 +386,7 @@ public sealed class PcMediaPublisherTests
         var source = new FakeMediaSource();
         source.Set(State("a", id: "Spotify.exe"));
         using var publisher = new PcMediaPublisher(sessions, source, new ManualTimeProvider());
-        sessions.Connect(Phone, LinkCapabilities.MediaControl);
+        sessions.Connect(Phone, PeerCapabilities.MediaControl);
 
         sessions.ReceiveMediaCommand(Phone, new("toggle", "Chrome"));
         sessions.ReceiveMediaCommand(Phone, new("next"));
@@ -399,10 +399,10 @@ public sealed class PcMediaPublisherTests
 
         Assert.Equal(
             [
-                new LinkMessage.MediaCommand("toggle", "Spotify.exe"),
-                new LinkMessage.MediaCommand("seek", "Spotify.exe", 60_000),
-                new LinkMessage.MediaCommand("volume", null, 100),
-                new LinkMessage.MediaCommand("mute", null, 0)
+                new PeerMessage.MediaCommand("toggle", "Spotify.exe"),
+                new PeerMessage.MediaCommand("seek", "Spotify.exe", 60_000),
+                new PeerMessage.MediaCommand("volume", null, 100),
+                new PeerMessage.MediaCommand("mute", null, 0)
             ],
             source.Executed);
     }
@@ -420,16 +420,16 @@ public sealed class DeviceStatusServiceTests
         battery.Set(new PcBatteryReading(80, false));
         using var service = new DeviceStatusService(sessions, battery);
 
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
-        sessions.Connect("LEGACY", LinkCapabilities.FileTransfer);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
+        sessions.Connect("LEGACY", PeerCapabilities.FileTransfer);
         battery.Set(new PcBatteryReading(80, false)); // no change
         battery.Set(new PcBatteryReading(79, false)); // 1 point
         battery.Set(new PcBatteryReading(79, true));  // charging flip
 
         Assert.Equal(
-            [new LinkMessage.DeviceStatus(80, false), new LinkMessage.DeviceStatus(79, false), new LinkMessage.DeviceStatus(79, true)],
-            sessions.SentOf<LinkMessage.DeviceStatus>(Phone));
-        Assert.Empty(sessions.SentOf<LinkMessage.DeviceStatus>("LEGACY"));
+            [new PeerMessage.DeviceStatus(80, false), new PeerMessage.DeviceStatus(79, false), new PeerMessage.DeviceStatus(79, true)],
+            sessions.SentOf<PeerMessage.DeviceStatus>(Phone));
+        Assert.Empty(sessions.SentOf<PeerMessage.DeviceStatus>("LEGACY"));
     }
 
     [Fact]
@@ -438,13 +438,13 @@ public sealed class DeviceStatusServiceTests
         var sessions = new FakePeerSessions();
         var battery = new FakeBatterySource();
         using var service = new DeviceStatusService(sessions, battery);
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
         Assert.Empty(sessions.Sent);
 
         battery.Set(new PcBatteryReading(50, true));
         sessions.Disconnect(Phone);
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
-        Assert.Equal(2, sessions.SentOf<LinkMessage.DeviceStatus>(Phone).Count);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
+        Assert.Equal(2, sessions.SentOf<PeerMessage.DeviceStatus>(Phone).Count);
     }
 
     [Fact]
@@ -452,14 +452,14 @@ public sealed class DeviceStatusServiceTests
     {
         var sessions = new FakePeerSessions();
         using var service = new DeviceStatusService(sessions, null);
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
-        sessions.Connect("OTHER", LinkCapabilities.DeviceStatus);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
+        sessions.Connect("OTHER", PeerCapabilities.DeviceStatus);
 
-        sessions.ReceiveDeviceStatus(Phone, new LinkMessage.DeviceStatus(82, true, "vibrate", false));
-        sessions.ReceiveDeviceStatus("OTHER", new LinkMessage.DeviceStatus(140, null, "loud", true));
+        sessions.ReceiveDeviceStatus(Phone, new PeerMessage.DeviceStatus(82, true, "vibrate", false));
+        sessions.ReceiveDeviceStatus("OTHER", new PeerMessage.DeviceStatus(140, null, "loud", true));
 
-        Assert.Equal(new LinkMessage.DeviceStatus(82, true, "vibrate", false), service.GetPhoneStatus(Phone));
-        Assert.Equal(new LinkMessage.DeviceStatus(null, null, null, true), service.GetPhoneStatus("OTHER"));
+        Assert.Equal(new PeerMessage.DeviceStatus(82, true, "vibrate", false), service.GetPhoneStatus(Phone));
+        Assert.Equal(new PeerMessage.DeviceStatus(null, null, null, true), service.GetPhoneStatus("OTHER"));
 
         sessions.Disconnect(Phone);
         Assert.Null(service.GetPhoneStatus(Phone));
@@ -471,18 +471,18 @@ public sealed class DeviceStatusServiceTests
     {
         var sessions = new FakePeerSessions();
         using var service = new DeviceStatusService(sessions, null);
-        sessions.Connect(Phone, LinkCapabilities.DeviceStatus);
+        sessions.Connect(Phone, PeerCapabilities.DeviceStatus);
 
         await service.SendControlAsync(Phone, ring: true);
         await service.SendControlAsync(Phone, ringer: "silent", dnd: true);
         await Assert.ThrowsAsync<ArgumentException>(() => service.SendControlAsync(Phone));
         await Assert.ThrowsAsync<ArgumentException>(() => service.SendControlAsync(Phone, ringer: "loud"));
 
-        sessions.Connect("LEGACY", LinkCapabilities.FileTransfer);
+        sessions.Connect("LEGACY", PeerCapabilities.FileTransfer);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendControlAsync("LEGACY", ring: true));
 
         Assert.Equal(
-            [new LinkMessage.DeviceControl(Ring: true), new LinkMessage.DeviceControl(null, "silent", true)],
-            sessions.SentOf<LinkMessage.DeviceControl>(Phone));
+            [new PeerMessage.DeviceControl(Ring: true), new PeerMessage.DeviceControl(null, "silent", true)],
+            sessions.SentOf<PeerMessage.DeviceControl>(Phone));
     }
 }

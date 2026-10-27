@@ -11,7 +11,7 @@ namespace Veyro.ViewModels;
 /// </summary>
 public sealed class PairingViewModel : BaseViewModel
 {
-    private readonly VeyroLinkServer _server;
+    private readonly LinkServer _server;
     private readonly IDiscoveryService _discovery;
     private readonly ITrustStore _trustStore;
     private readonly IIdentityManager _identity;
@@ -33,7 +33,7 @@ public sealed class PairingViewModel : BaseViewModel
     private NetworkCheckResult? _lastCheck;
 
     public PairingViewModel(
-        VeyroLinkServer server,
+        LinkServer server,
         IDiscoveryService discovery,
         ITrustStore trustStore,
         IIdentityManager identity,

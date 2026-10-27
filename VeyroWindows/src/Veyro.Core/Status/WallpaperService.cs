@@ -96,7 +96,7 @@ public interface IWallpaperService
 /// <summary>
 /// Wallpapers in both directions (04-PROTOCOL.md 6.2.1, ADR-038): keeps each phone's latest
 /// wallpaper (cleared when its session closes) and sends the PC's to peers advertising
-/// <see cref="LinkCapabilities.Wallpaper"/> on connect and on change. Image bytes are user data:
+/// <see cref="PeerCapabilities.Wallpaper"/> on connect and on change. Image bytes are user data:
 /// never logged.
 /// </summary>
 public sealed class WallpaperService : IWallpaperService, IDisposable
@@ -135,11 +135,11 @@ public sealed class WallpaperService : IWallpaperService, IDisposable
     }
 
     private bool IsCapable(string peerId)
-        => (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.Wallpaper) != 0;
+        => (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Wallpaper) != 0;
 
-    private void OnDeviceMessage(string peerId, LinkMessage message)
+    private void OnDeviceMessage(string peerId, PeerMessage message)
     {
-        if (message is not LinkMessage.Wallpaper wallpaper) return;
+        if (message is not PeerMessage.Wallpaper wallpaper) return;
         byte[]? bytes = WallpaperEncoding.DecodeIncoming(wallpaper.Jpeg);
         lock (_gate)
         {
@@ -199,7 +199,7 @@ public sealed class WallpaperService : IWallpaperService, IDisposable
                 if (_version != version) return;
             }
             if (!_sessions.IsConnected(peerId)) return;
-            await _sessions.SendAsync(peerId, new LinkMessage.Wallpaper(jpeg)).ConfigureAwait(false);
+            await _sessions.SendAsync(peerId, new PeerMessage.Wallpaper(jpeg)).ConfigureAwait(false);
         }
         catch (Exception error)
         {

@@ -334,7 +334,7 @@ public sealed class DevicesViewModel : BaseViewModel
     {
         if (sessions?.IsConnected(deviceId) == true)
         {
-            try { await sessions.SendAsync(deviceId, new Veyro.Core.Link.LinkMessage.Unpair()); }
+            try { await sessions.SendAsync(deviceId, new Veyro.Core.Link.PeerMessage.Unpair()); }
             catch (Exception error) { Veyro.Core.Diagnostics.VeyroTrace.Warn($"Unpair notice not sent: {error.GetType().Name}"); }
         }
         await trustStore.RemoveAsync(deviceId);

@@ -45,9 +45,9 @@ public sealed class CallRouterTests
         string? linkedPeer = Phone, bool ringing = true)
     {
         var sessions = new FakePeerSessions();
-        sessions.Connect(Phone, LinkCapabilities.Calls);
+        sessions.Connect(Phone, PeerCapabilities.Calls);
         var calls = new CallService(sessions);
-        if (ringing) sessions.Receive(Phone, new LinkMessage.CallState("k-1", "ringing", "in"));
+        if (ringing) sessions.Receive(Phone, new PeerMessage.CallState("k-1", "ringing", "in"));
         var line = new FakeBluetoothLine { LinkedPeerId = linkedPeer };
         var time = new ManualTimeProvider();
         return (sessions, line, time, new CallRouter(calls, line, time), calls);
@@ -76,7 +76,7 @@ public sealed class CallRouterTests
         line.HasIncomingCall = true;
         Assert.Equal(CallAnswerRoute.Bluetooth, await router.AnswerAsync(Phone));
         Assert.Equal(1, line.Answers);
-        Assert.Empty(sessions.SentOf<LinkMessage.CallAction>(Phone));
+        Assert.Empty(sessions.SentOf<PeerMessage.CallAction>(Phone));
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public sealed class CallRouterTests
         Assert.False(answer.IsCompleted);
         line.Ring();
         Assert.Equal(CallAnswerRoute.Bluetooth, await answer);
-        Assert.Empty(sessions.SentOf<LinkMessage.CallAction>(Phone));
+        Assert.Empty(sessions.SentOf<PeerMessage.CallAction>(Phone));
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class CallRouterTests
         time.Advance(CallRouter.IncomingWait);
         Assert.Equal(CallAnswerRoute.WiFi, await answer);
         Assert.Equal(0, line.Answers);
-        Assert.Equal(new LinkMessage.CallAction("answer", "k-1"), Assert.Single(sessions.SentOf<LinkMessage.CallAction>(Phone)));
+        Assert.Equal(new PeerMessage.CallAction("answer", "k-1"), Assert.Single(sessions.SentOf<PeerMessage.CallAction>(Phone)));
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public sealed class CallRouterTests
         line.HasIncomingCall = true;
         line.AnswerSucceeds = false;
         Assert.Equal(CallAnswerRoute.WiFi, await router.AnswerAsync(Phone));
-        Assert.Single(sessions.SentOf<LinkMessage.CallAction>(Phone));
+        Assert.Single(sessions.SentOf<PeerMessage.CallAction>(Phone));
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class CallRouterTests
         line.HasIncomingCall = true;
         Assert.Equal(CallAnswerRoute.WiFi, await router.AnswerAsync(Phone));
         Assert.Equal(0, line.Answers);
-        Assert.Single(sessions.SentOf<LinkMessage.CallAction>(Phone));
+        Assert.Single(sessions.SentOf<PeerMessage.CallAction>(Phone));
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public sealed class CallRouterTests
         line.HasIncomingCall = true;
         Assert.Equal(CallAnswerRoute.WiFi, await router.DeclineAsync(Phone));
         Assert.Equal(0, line.Rejects);
-        Assert.Equal(new LinkMessage.CallAction("decline", "k-1"), Assert.Single(sessions.SentOf<LinkMessage.CallAction>(Phone)));
+        Assert.Equal(new PeerMessage.CallAction("decline", "k-1"), Assert.Single(sessions.SentOf<PeerMessage.CallAction>(Phone)));
 
         // Wi-Fi down: the hands-free line still lets the PC reject the call.
         sessions.Disconnect(Phone);

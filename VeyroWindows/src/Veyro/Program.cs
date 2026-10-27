@@ -1,7 +1,7 @@
 using Microsoft.Windows.AppLifecycle;
-using Veyro.Platforms.Windows.Handoff;
-using Veyro.Platforms.Windows.Interop;
-using Veyro.Platforms.Windows.Shell;
+using Veyro.Platform.Handoff;
+using Veyro.Platform.Interop;
+using Veyro.Platform.Shell;
 using Windows.ApplicationModel.Activation;
 
 namespace Veyro;

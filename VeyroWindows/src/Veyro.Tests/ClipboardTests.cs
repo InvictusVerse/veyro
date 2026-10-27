@@ -28,8 +28,8 @@ public sealed class ClipboardVectorTests
         foreach (JsonElement vector in vectors)
         {
             string json = vector.GetProperty("json").GetString()!;
-            var clip = Assert.IsType<LinkMessage.Clip>(LinkJson.Decode<LinkMessage>(json));
-            string reEncoded = LinkJson.Encode<LinkMessage>(clip);
+            var clip = Assert.IsType<PeerMessage.Clip>(PeerMessageJson.Decode<PeerMessage>(json));
+            string reEncoded = PeerMessageJson.Encode<PeerMessage>(clip);
             Assert.True(JsonNode.DeepEquals(JsonNode.Parse(json), JsonNode.Parse(reEncoded)), $"Re-encoded JSON differs: {reEncoded}");
         }
     }
@@ -39,9 +39,9 @@ public sealed class ClipboardVectorTests
     {
         using var doc = LoadVectors();
         var clips = doc.RootElement.GetProperty("vectors").EnumerateArray()
-            .Select(v => Assert.IsType<LinkMessage.Clip>(LinkJson.Decode<LinkMessage>(v.GetProperty("json").GetString()!)))
+            .Select(v => Assert.IsType<PeerMessage.Clip>(PeerMessageJson.Decode<PeerMessage>(v.GetProperty("json").GetString()!)))
             .ToList();
-        Assert.Equal(new LinkMessage.Clip("c-1", "text", Text: "https://youtu.be/dQw4w9WgXcQ", Apply: true, Ts: 1793011200000), clips[0]);
+        Assert.Equal(new PeerMessage.Clip("c-1", "text", Text: "https://youtu.be/dQw4w9WgXcQ", Apply: true, Ts: 1793011200000), clips[0]);
         Assert.False(clips[1].Apply);
         Assert.Equal("image", clips[2].Kind);
         Assert.Equal("iVBORw0KGgo=", clips[2].Image);
@@ -51,7 +51,7 @@ public sealed class ClipboardVectorTests
     [Fact]
     public void ThePcAdvertisesClipboardAt0x0008()
     {
-        Assert.Equal(0x0008, LinkCapabilities.Clipboard);
+        Assert.Equal(0x0008, PeerCapabilities.Clipboard);
     }
 }
 
@@ -93,17 +93,17 @@ public sealed class ClipboardServiceTests
                 Sink = Sink,
                 Notifier = Notifier,
             };
-            Sessions.Connect(Phone, LinkCapabilities.Clipboard);
+            Sessions.Connect(Phone, PeerCapabilities.Clipboard);
         }
 
-        public List<LinkMessage.Clip> SentClips => Sessions.SentOf<LinkMessage.Clip>(Phone);
+        public List<PeerMessage.Clip> SentClips => Sessions.SentOf<PeerMessage.Clip>(Phone);
     }
 
     [Fact]
     public async Task SharedText_IsPutOnTheClipboard_StoredAndToasted()
     {
         var rig = new Rig();
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip("1", "text", Text: "https://youtu.be/x", Apply: true));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip("1", "text", Text: "https://youtu.be/x", Apply: true));
 
         Assert.Equal(["https://youtu.be/x"], rig.Sink.Texts);
         Assert.Single(rig.Notifier.Applied);
@@ -115,7 +115,7 @@ public sealed class ClipboardServiceTests
     public async Task SentClipboard_IsStoredOnly()
     {
         var rig = new Rig();
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip("1", "text", Text: "note", Apply: false));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip("1", "text", Text: "note", Apply: false));
 
         Assert.Empty(rig.Sink.Texts);
         Assert.Single(rig.Notifier.Stored);
@@ -126,7 +126,7 @@ public sealed class ClipboardServiceTests
     public async Task AppliedText_IsNotEchoedBack_ButANewCopyIs()
     {
         var rig = new Rig();
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip("1", "text", Text: "a\nb", Apply: true));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip("1", "text", Text: "a\nb", Apply: true));
         // Windows may hand the same text back with CRLF line endings.
         await rig.Service.OnLocalTextCopiedAsync("a\r\nb");
         Assert.Empty(rig.SentClips);
@@ -168,14 +168,14 @@ public sealed class ClipboardServiceTests
         rig.Sessions.Connect("OLD", 0);
         rig.Now += TimeSpan.FromSeconds(5);
         await rig.Service.OnLocalTextCopiedAsync("only to capable phones");
-        Assert.Empty(rig.Sessions.SentOf<LinkMessage.Clip>("OLD"));
+        Assert.Empty(rig.Sessions.SentOf<PeerMessage.Clip>("OLD"));
     }
 
     [Fact]
     public async Task AnImageChangeRightAfterVeyroSetOne_IsTakenAsTheEcho()
     {
         var rig = new Rig { ImagesEnabled = true };
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip("1", "image", Image: Convert.ToBase64String(Png), Apply: true));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip("1", "image", Image: Convert.ToBase64String(Png), Apply: true));
         Assert.Single(rig.Sink.Images);
 
         byte[] reEncoded = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3];
@@ -196,7 +196,7 @@ public sealed class ClipboardServiceTests
     public async Task InvalidItems_AreDropped(string id, string kind, string? text, string? image)
     {
         var rig = new Rig();
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip(id, kind, text, image, Apply: true));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip(id, kind, text, image, Apply: true));
         Assert.Empty(rig.Service.Items);
         Assert.Empty(rig.Sink.Texts);
         Assert.Empty(rig.Notifier.Applied);
@@ -206,7 +206,7 @@ public sealed class ClipboardServiceTests
     public async Task OversizedText_IsDropped()
     {
         var rig = new Rig();
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip("1", "text", Text: new string('x', LinkMessage.Clip.MaxTextChars + 1)));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip("1", "text", Text: new string('x', PeerMessage.Clip.MaxTextChars + 1)));
         Assert.Empty(rig.Service.Items);
     }
 
@@ -215,8 +215,8 @@ public sealed class ClipboardServiceTests
     {
         var rig = new Rig();
         for (int i = 0; i < 60; i++)
-            await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip($"id{i}", "text", Text: $"t{i}"));
-        await rig.Service.HandleIncomingAsync(Phone, new LinkMessage.Clip("id59", "text", Text: "t59"));
+            await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip($"id{i}", "text", Text: $"t{i}"));
+        await rig.Service.HandleIncomingAsync(Phone, new PeerMessage.Clip("id59", "text", Text: "t59"));
 
         Assert.Equal(ClipboardService.MaxItems, rig.Service.Items.Count);
         Assert.Equal("id59", rig.Service.Items[0].Id);
@@ -249,7 +249,7 @@ public sealed class ClipboardServiceTests
         Assert.True(ClipboardService.IsAcceptableImage([0xFF, 0xD8, 0, 0]));
         Assert.False(ClipboardService.IsAcceptableImage(null));
         Assert.False(ClipboardService.IsAcceptableImage("GIF89a"u8.ToArray()));
-        byte[] huge = new byte[LinkMessage.Clip.MaxImageBytes + 1];
+        byte[] huge = new byte[PeerMessage.Clip.MaxImageBytes + 1];
         Png.CopyTo(huge, 0);
         Assert.False(ClipboardService.IsAcceptableImage(huge));
     }

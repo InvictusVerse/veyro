@@ -127,7 +127,7 @@ public sealed class SessionKeeperTests
         using var rig = new Rig();
         rig.Discovery.See((Phone, "192.168.1.20"));
         rig.Wait(5);
-        rig.Sessions.Connect(Phone, LinkCapabilities.FileTransfer);
+        rig.Sessions.Connect(Phone, PeerCapabilities.FileTransfer);
         rig.Wait(60);
         rig.Discovery.See((Phone, "192.168.1.20"));
         rig.Wait(60);
@@ -227,7 +227,7 @@ public sealed class SessionKeeperTests
     public void SessionClosing_GivesThePhoneTheGraceBeforeAnyDial()
     {
         using var rig = new Rig();
-        rig.Sessions.Connect(Phone, LinkCapabilities.FileTransfer);
+        rig.Sessions.Connect(Phone, PeerCapabilities.FileTransfer);
         rig.Discovery.See((Phone, "192.168.1.20"));
         rig.Wait(30);
         Assert.Empty(rig.Dialer.Calls);
@@ -245,7 +245,7 @@ public sealed class SessionKeeperTests
         using var rig = new Rig();
         rig.Discovery.See((Phone, "192.168.1.20"));
         rig.Wait(10.1);
-        rig.Sessions.Connect(Phone, LinkCapabilities.FileTransfer);
+        rig.Sessions.Connect(Phone, PeerCapabilities.FileTransfer);
         rig.Dialer.Succeed(Phone);
         Assert.False(rig.Keeper.IsDialing(Phone));
         rig.Wait(600);
@@ -267,7 +267,7 @@ public sealed class SessionKeeperTests
         Assert.Same(refresh, rig.Keeper.ConnectNowAsync(Phone));
         Assert.Single(rig.Dialer.Calls);
 
-        rig.Sessions.Connect(Phone, LinkCapabilities.FileTransfer);
+        rig.Sessions.Connect(Phone, PeerCapabilities.FileTransfer);
         rig.Dialer.Succeed(Phone);
         Assert.True(refresh.Wait(TimeSpan.FromSeconds(5)) && refresh.Result);
     }
@@ -300,7 +300,7 @@ public sealed class SessionKeeperTests
         Assert.Equal(0, rig.Dialer.CountFor("STRANGER"));
 
         // Phone A connects; B keeps backing off on its own schedule.
-        rig.Sessions.Connect(Phone, LinkCapabilities.FileTransfer);
+        rig.Sessions.Connect(Phone, PeerCapabilities.FileTransfer);
         rig.Dialer.Succeed(Phone);
         rig.Dialer.Fail(Other);
         rig.Wait(5.1);
@@ -326,7 +326,7 @@ public sealed class SessionKeeperTests
         rig.Dialer.Refuse(Phone);
 
         // The phone connects by itself (it trusts this PC again): automatic dials resume later.
-        rig.Sessions.Connect(Phone, LinkCapabilities.FileTransfer);
+        rig.Sessions.Connect(Phone, PeerCapabilities.FileTransfer);
         rig.Sessions.Disconnect(Phone);
         rig.Wait(10.1);
         Assert.Equal(3, rig.Dialer.Calls.Count);

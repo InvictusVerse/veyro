@@ -120,7 +120,7 @@ internal sealed class MemorySeedStore(byte[]? seed = null) : ISeedStore
 /// Android initiator does (ConnectionManager.runOutboundConfirm).
 /// </summary>
 [Collection(LinkServerCollection.Name)]
-public sealed class VeyroLinkServerConfirmPairingTests
+public sealed class LinkServerConfirmPairingTests
 {
     private sealed class TestPhone
     {
@@ -140,7 +140,7 @@ public sealed class VeyroLinkServerConfirmPairingTests
         public string Root { get; } = Path.Combine(AppContext.BaseDirectory, "veyro-confirm-" + Guid.NewGuid().ToString("N"));
         public DefaultIdentityManager Pc { get; } = new(new MemorySeedStore());
         public FileTrustStore TrustStore { get; }
-        public VeyroLinkServer Server { get; }
+        public LinkServer Server { get; }
         public List<InboundPairingRequest> Prompts { get; } = [];
         public TaskCompletionSource<bool> Answer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -148,7 +148,7 @@ public sealed class VeyroLinkServerConfirmPairingTests
         {
             Directory.CreateDirectory(Root);
             TrustStore = new FileTrustStore(Root, new byte[32]);
-            Server = new VeyroLinkServer(
+            Server = new LinkServer(
                 Pc.DeviceId.Value, "Test PC", TrustStore, Path.Combine(Root, "received"), Pc.PublicKey.Span,
                 _ => Task.FromResult(false),
                 deriveSharedKey: (peerKey, salt, info) => Pc.DeriveSharedKey(peerKey, salt, info));
@@ -183,8 +183,8 @@ public sealed class VeyroLinkServerConfirmPairingTests
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{f.Server.Port}/veyro"), ct);
-        await SendTextAsync(socket, LinkJson.Encode(preamble), ct);
-        return (socket, LinkJson.Decode<LinkPreambleAck>(await ReceiveTextAsync(socket, ct)));
+        await SendTextAsync(socket, PeerMessageJson.Encode(preamble), ct);
+        return (socket, PeerMessageJson.Decode<LinkPreambleAck>(await ReceiveTextAsync(socket, ct)));
     }
 
     /// <summary>The phone's side up to and including pairHello, with every check Android makes.</summary>
@@ -198,8 +198,8 @@ public sealed class VeyroLinkServerConfirmPairingTests
         Assert.True(DeviceId.Matches(f.Pc.DeviceId, pkB), "the PC key must hash to the dialled id");
 
         byte[] nA = PairConfirm.NewNonce();
-        await SendTextAsync(socket, LinkJson.Encode(LinkPairNonce.For(nA)), ct);
-        LinkPairNonce reply = LinkJson.Decode<LinkPairNonce>(await ReceiveTextAsync(socket, ct))!;
+        await SendTextAsync(socket, PeerMessageJson.Encode(LinkPairNonce.For(nA)), ct);
+        LinkPairNonce reply = PeerMessageJson.Decode<LinkPairNonce>(await ReceiveTextAsync(socket, ct))!;
         Assert.Equal(LinkPairNonce.Type, reply.T);
         byte[] nB = Convert.FromBase64String(reply.N);
         Assert.True(PairConfirm.VerifyCommitment(commit, pkB, phone.PublicKey, nB), "nB must match the commitment");
@@ -207,7 +207,7 @@ public sealed class VeyroLinkServerConfirmPairingTests
         string code = PairConfirm.Code(phone.PublicKey, pkB, nA, nB);
         byte[] key = PairConfirm.BootstrapKey(X25519Crypto.SharedSecret(phone.Seed, pkB), nA, nB, phone.Id, f.Pc.DeviceId.Value);
         var secure = new SecureLinkSession(socket, phone.Id, key, encrypt: false, expectedPeerId: f.Pc.DeviceId.Value);
-        await secure.SendAsync(new LinkMessage.PairHello(phone.Id, "Phone", "android", "1.0",
+        await secure.SendAsync(new PeerMessage.PairHello(phone.Id, "Phone", "android", "1.0",
             PublicKeyB64: Convert.ToBase64String(phone.PublicKey)), ct);
         return new PhoneSide(socket, secure, code, pkB);
     }
@@ -244,19 +244,19 @@ public sealed class VeyroLinkServerConfirmPairingTests
             Assert.Null(f.TrustStore.GetPeer(phone.Id));
 
             // While the user decides, the PC still answers pings.
-            await side.Secure.SendAsync(new LinkMessage.Ping("p1"), ct);
-            var pong = Assert.IsType<LinkMessage.Pong>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
+            await side.Secure.SendAsync(new PeerMessage.Ping("p1"), ct);
+            var pong = Assert.IsType<PeerMessage.Pong>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.Equal("p1", pong.Nonce);
 
             f.Answer.SetResult(true);
-            var pairOk = Assert.IsType<LinkMessage.PairOk>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
+            var pairOk = Assert.IsType<PeerMessage.PairOk>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.Equal(f.Pc.DeviceId.Value, pairOk.DeviceId);
             Assert.Equal(side.PcPublicKey, Convert.FromBase64String(pairOk.PublicKeyB64!));
 
             // The receive the PC held during the prompt now reads under the session key.
             side.Secure.Rekey(Convert.FromBase64String(pairOk.SessionSecretB64));
-            await side.Secure.SendAsync(new LinkMessage.Hello(phone.Id, "Phone", "android"), ct);
-            Assert.IsType<LinkMessage.HelloAck>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
+            await side.Secure.SendAsync(new PeerMessage.Hello(phone.Id, "Phone", "android"), ct);
+            Assert.IsType<PeerMessage.HelloAck>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
 
             TrustedPeer peer = await completed.Task.WaitAsync(ct);
             Assert.Equal(phone.Id, peer.DeviceId);
@@ -281,7 +281,7 @@ public sealed class VeyroLinkServerConfirmPairingTests
         {
             await WaitForPromptAsync(f, ct);
             f.Answer.SetResult(false);
-            var fail = Assert.IsType<LinkMessage.PairFail>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
+            var fail = Assert.IsType<PeerMessage.PairFail>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.Equal("declined", fail.Reason);
             Assert.Null(f.TrustStore.GetPeer(phone.Id));
         }
@@ -301,7 +301,7 @@ public sealed class VeyroLinkServerConfirmPairingTests
         await using (side.Secure)
         {
             InboundPairingRequest prompt = await WaitForPromptAsync(f, ct);
-            var fail = Assert.IsType<LinkMessage.PairFail>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
+            var fail = Assert.IsType<PeerMessage.PairFail>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.Equal("timeout", fail.Reason);
             Assert.True(prompt.Abandoned.IsCancellationRequested, "the dialog must be told to close");
             Assert.Null(f.TrustStore.GetPeer(phone.Id));
@@ -322,7 +322,7 @@ public sealed class VeyroLinkServerConfirmPairingTests
         await using (side.Secure)
         {
             prompt = await WaitForPromptAsync(f, ct);
-            await side.Secure.SendAsync(new LinkMessage.PairFail("cancelled"), ct);
+            await side.Secure.SendAsync(new PeerMessage.PairFail("cancelled"), ct);
         }
         while (!prompt.Abandoned.IsCancellationRequested) await Task.Delay(20, ct);
         f.Answer.SetResult(true); // too late: the request is gone

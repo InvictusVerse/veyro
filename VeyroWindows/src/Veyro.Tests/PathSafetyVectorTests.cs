@@ -116,7 +116,7 @@ public sealed class PathSafetyVectorTests
         int maxBytes = limits.GetProperty("maxUtf8Bytes").GetInt32();
         int maxSegments = limits.GetProperty("maxSegments").GetInt32();
 
-        Assert.Equal(VlpConstants.MaxRelativePathBytes, maxBytes);
+        Assert.Equal(ProtocolConstants.MaxRelativePathBytes, maxBytes);
 
         // Exactly at the limit is accepted; one past it is not.
         Assert.IsType<PathValidationResult.Valid>(RelativePath.Validate(new string('a', maxBytes)));

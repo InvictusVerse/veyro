@@ -67,13 +67,13 @@ public sealed class ControlMessageVectorTests
 
         string json = vector.GetProperty("json").GetString()!;
 
-        var decoded = LinkJson.Decode<LinkMessage>(json);
+        var decoded = PeerMessageJson.Decode<PeerMessage>(json);
         Assert.NotNull(decoded);
 
         // Re-encoding must produce the same key set, and decoding that must give an equal object.
-        string reEncoded = LinkJson.Encode(decoded);
+        string reEncoded = PeerMessageJson.Encode(decoded);
         Assert.Equal(KeysOf(json), KeysOf(reEncoded));
-        Assert.Equal(decoded, LinkJson.Decode<LinkMessage>(reEncoded));
+        Assert.Equal(decoded, PeerMessageJson.Decode<PeerMessage>(reEncoded));
 
         AssertKeyPolicy(vector, reEncoded);
 
@@ -89,7 +89,7 @@ public sealed class ControlMessageVectorTests
         using var doc = LoadVectors();
         var v = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray().First();
 
-        var decoded = LinkJson.Decode<LinkPreamble>(v.GetProperty("json").GetString()!);
+        var decoded = PeerMessageJson.Decode<LinkPreamble>(v.GetProperty("json").GetString()!);
         Assert.NotNull(decoded);
         Assert.Equal("6JE8415YZQQYQMBD34569HVYX4", decoded!.Id);
         Assert.Equal("android", decoded.Platform);
@@ -97,7 +97,7 @@ public sealed class ControlMessageVectorTests
         Assert.Equal(2, LinkProtocol.Version);
 
         // encodeDefaults: platform and protocolVersion must be emitted even at their defaults.
-        string emitted = LinkJson.Encode(new LinkPreamble("X", "Y"));
+        string emitted = PeerMessageJson.Encode(new LinkPreamble("X", "Y"));
         var keys = KeysOf(emitted);
         Assert.Contains("platform", keys);
         Assert.Contains("protocolVersion", keys);
@@ -112,22 +112,22 @@ public sealed class ControlMessageVectorTests
         JsonElement Named(string name) => vectors.Single(v => v.TryGetProperty("name", out var n) && n.GetString() == name);
 
         var preambleVector = Named("LinkPreamble for confirm pairing");
-        var preamble = LinkJson.Decode<LinkPreamble>(preambleVector.GetProperty("json").GetString()!)!;
+        var preamble = PeerMessageJson.Decode<LinkPreamble>(preambleVector.GetProperty("json").GetString()!)!;
         Assert.Equal(LinkPreamble.PairConfirm, preamble.Pair);
         Assert.Equal("hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=", preamble.Pk);
-        AssertKeyPolicy(preambleVector, LinkJson.Encode(preamble));
+        AssertKeyPolicy(preambleVector, PeerMessageJson.Encode(preamble));
 
         var ackVector = Named("LinkPreambleAck for confirm pairing");
-        var ack = LinkJson.Decode<LinkPreambleAck>(ackVector.GetProperty("json").GetString()!)!;
+        var ack = PeerMessageJson.Decode<LinkPreambleAck>(ackVector.GetProperty("json").GetString()!)!;
         Assert.Equal(LinkPreambleAck.ModePairingConfirm, ack.Mode);
         Assert.Equal("SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=", ack.Commit);
-        AssertKeyPolicy(ackVector, LinkJson.Encode(ack));
+        AssertKeyPolicy(ackVector, PeerMessageJson.Encode(ack));
 
         var nonceVector = Named("pairNonce");
-        var nonce = LinkJson.Decode<LinkPairNonce>(nonceVector.GetProperty("json").GetString()!)!;
+        var nonce = PeerMessageJson.Decode<LinkPairNonce>(nonceVector.GetProperty("json").GetString()!)!;
         Assert.Equal(LinkPairNonce.Type, nonce.T);
         Assert.Equal(32, Convert.FromBase64String(nonce.N).Length);
-        AssertKeyPolicy(nonceVector, LinkJson.Encode(nonce));
+        AssertKeyPolicy(nonceVector, PeerMessageJson.Encode(nonce));
     }
 
     [Fact]
@@ -136,15 +136,15 @@ public sealed class ControlMessageVectorTests
         using var doc = LoadVectors();
         var vectors = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray().ToList();
 
-        var accept = LinkJson.Decode<LinkPreambleAck>(vectors[1].GetProperty("json").GetString()!);
+        var accept = PeerMessageJson.Decode<LinkPreambleAck>(vectors[1].GetProperty("json").GetString()!);
         Assert.Equal("session", accept!.Mode);
         Assert.Null(accept.Reason);
-        AssertKeyPolicy(vectors[1], LinkJson.Encode(accept));
+        AssertKeyPolicy(vectors[1], PeerMessageJson.Encode(accept));
 
-        var refused = LinkJson.Decode<LinkPreambleAck>(vectors[2].GetProperty("json").GetString()!);
+        var refused = PeerMessageJson.Decode<LinkPreambleAck>(vectors[2].GetProperty("json").GetString()!);
         Assert.Equal("refused", refused!.Mode);
         Assert.Equal("not paired", refused.Reason);
-        AssertKeyPolicy(vectors[2], LinkJson.Encode(refused));
+        AssertKeyPolicy(vectors[2], PeerMessageJson.Encode(refused));
     }
 
     [Fact]
@@ -168,15 +168,15 @@ public sealed class ControlMessageVectorTests
         using var doc = LoadVectors();
         var vectors = doc.RootElement.GetProperty("wireFrameVectors").EnumerateArray().ToList();
 
-        var session = LinkJson.Decode<LinkWireFrame>(vectors[0].GetProperty("json").GetString()!);
+        var session = PeerMessageJson.Decode<LinkWireFrame>(vectors[0].GetProperty("json").GetString()!);
         Assert.NotNull(session!.Ciphertext);
         Assert.Null(session.Plaintext);
-        AssertKeyPolicy(vectors[0], LinkJson.Encode(session));
+        AssertKeyPolicy(vectors[0], PeerMessageJson.Encode(session));
 
-        var pairing = LinkJson.Decode<LinkWireFrame>(vectors[1].GetProperty("json").GetString()!);
+        var pairing = PeerMessageJson.Decode<LinkWireFrame>(vectors[1].GetProperty("json").GetString()!);
         Assert.NotNull(pairing!.Plaintext);
         Assert.Null(pairing.Ciphertext);
-        AssertKeyPolicy(vectors[1], LinkJson.Encode(pairing));
+        AssertKeyPolicy(vectors[1], PeerMessageJson.Encode(pairing));
     }
 
     [Fact]
@@ -185,17 +185,17 @@ public sealed class ControlMessageVectorTests
         using var doc = LoadVectors();
         var v = doc.RootElement.GetProperty("envelopeVectors").EnumerateArray().First();
 
-        var env = LinkJson.Decode<LinkEnvelope>(v.GetProperty("json").GetString()!);
+        var env = PeerMessageJson.Decode<LinkEnvelope>(v.GetProperty("json").GetString()!);
         Assert.NotNull(env);
 
         var expected = v.GetProperty("expected");
         Assert.Equal(expected.GetProperty("v").GetInt32(), env!.V);
         Assert.Equal(expected.GetProperty("seq").GetInt64(), env.Seq);
 
-        var ping = Assert.IsType<LinkMessage.Ping>(env.Payload);
+        var ping = Assert.IsType<PeerMessage.Ping>(env.Payload);
         Assert.Equal("abc", ping.Nonce);
 
-        AssertKeyPolicy(v, LinkJson.Encode(env));
+        AssertKeyPolicy(v, PeerMessageJson.Encode(env));
     }
 
     [Fact]
@@ -205,17 +205,17 @@ public sealed class ControlMessageVectorTests
         var vectors = doc.RootElement.GetProperty("forwardCompatibilityVectors").EnumerateArray().ToList();
 
         // Unknown field inside a known message.
-        var ping = LinkJson.Decode<LinkMessage>(vectors[0].GetProperty("json").GetString()!);
-        var p = Assert.IsType<LinkMessage.Ping>(ping);
+        var ping = PeerMessageJson.Decode<PeerMessage>(vectors[0].GetProperty("json").GetString()!);
+        var p = Assert.IsType<PeerMessage.Ping>(ping);
         Assert.Equal("abc", p.Nonce);
 
         // Unknown field inside the envelope.
-        var env = LinkJson.Decode<LinkEnvelope>(vectors[1].GetProperty("json").GetString()!);
+        var env = PeerMessageJson.Decode<LinkEnvelope>(vectors[1].GetProperty("json").GetString()!);
         Assert.NotNull(env);
 
         // Unknown message type must be refused rather than guessed.
         Assert.ThrowsAny<JsonException>(
-            () => LinkJson.Decode<LinkMessage>(vectors[2].GetProperty("json").GetString()!));
+            () => PeerMessageJson.Decode<PeerMessage>(vectors[2].GetProperty("json").GetString()!));
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public sealed class ControlMessageVectorTests
     {
         // The null policy matters: a peer emitting "reason": null instead of omitting it is a
         // conformance bug even though a tolerant parser accepts it.
-        var decision = new LinkMessage.TransferDecision(
+        var decision = new PeerMessage.TransferDecision(
             TransferId: "tx-1",
             Accept: true,
             Route: "LAN_TCP",
@@ -231,7 +231,7 @@ public sealed class ControlMessageVectorTests
             TcpPort: 47651,
             AuthToken: "0123456789abcdef");
 
-        var keys = KeysOf(LinkJson.Encode(decision));
+        var keys = KeysOf(PeerMessageJson.Encode(decision));
 
         Assert.Contains("route", keys);
         Assert.Contains("authToken", keys);
@@ -247,7 +247,7 @@ public sealed class ControlMessageVectorTests
             "{\"t\":\"offer\",\"transferId\":\"tx-1\",\"items\":[],\"totalBytes\":0," +
             "\"senderName\":\"PC\",\"preferredRoutes\":[\"LAN_TCP\",\"WIFI_DIRECT\"]}";
 
-        var offer = Assert.IsType<LinkMessage.TransferOffer>(LinkJson.Decode<LinkMessage>(json));
+        var offer = Assert.IsType<PeerMessage.TransferOffer>(PeerMessageJson.Decode<PeerMessage>(json));
         Assert.Equal(["LAN_TCP", "WIFI_DIRECT"], offer.PreferredRoutes);
     }
 }

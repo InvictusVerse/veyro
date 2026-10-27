@@ -58,8 +58,8 @@ public static class BeaconCodec
                 $"payload of {payload.Length} bytes exceeds the beacon limit", nameof(record));
 
         byte[] o = new byte[HeaderBytes + payload.Length];
-        VlpConstants.UdpMagic.CopyTo(o.AsSpan(0, 4));
-        o[4] = (byte)VlpConstants.VlpVersion;
+        ProtocolConstants.UdpMagic.CopyTo(o.AsSpan(0, 4));
+        o[4] = (byte)ProtocolConstants.VlpVersion;
         o[5] = (byte)type;
         BinaryPrimitives.WriteUInt16BigEndian(o.AsSpan(6, 2), (ushort)payload.Length);
         payload.CopyTo(o.AsSpan(HeaderBytes));
@@ -70,8 +70,8 @@ public static class BeaconCodec
     public static byte[] EncodeBareQuery()
     {
         byte[] o = new byte[HeaderBytes];
-        VlpConstants.UdpMagic.CopyTo(o.AsSpan(0, 4));
-        o[4] = (byte)VlpConstants.VlpVersion;
+        ProtocolConstants.UdpMagic.CopyTo(o.AsSpan(0, 4));
+        o[4] = (byte)ProtocolConstants.VlpVersion;
         o[5] = (byte)BeaconType.Query;
         return o; // length stays 0
     }
@@ -93,10 +93,10 @@ public static class BeaconCodec
 
         // Almost every packet on a busy multicast group is something else entirely, so this is
         // the normal path, not an error worth logging.
-        if (!bytes.AsSpan(0, 4).SequenceEqual(VlpConstants.UdpMagic))
+        if (!bytes.AsSpan(0, 4).SequenceEqual(ProtocolConstants.UdpMagic))
             return new BeaconResult.Invalid(BeaconRejectReason.BadMagic, "not a Veyro beacon");
 
-        if (bytes[4] != VlpConstants.VlpVersion)
+        if (bytes[4] != ProtocolConstants.VlpVersion)
             return new BeaconResult.Invalid(BeaconRejectReason.BadVersion, $"version {bytes[4]}");
 
         if (!Enum.IsDefined(typeof(BeaconType), bytes[5]))

@@ -11,7 +11,7 @@ public sealed record RequestedOfferClaim(string DestinationDirectory);
 public interface IRequestedOfferHandler
 {
     /// <summary>Session thread. Non-null claims the offer; null leaves it to the normal path.</summary>
-    RequestedOfferClaim? TryClaim(string peerId, LinkMessage.TransferOffer offer);
+    RequestedOfferClaim? TryClaim(string peerId, PeerMessage.TransferOffer offer);
 
     /// <summary>The claimed transfer finished and verified. Paths are absolute, inside the claim's folder.</summary>
     void OnCompleted(string peerId, string requestId, IReadOnlyList<string> filePaths);

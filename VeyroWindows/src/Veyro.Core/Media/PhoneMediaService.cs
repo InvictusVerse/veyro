@@ -5,7 +5,7 @@ namespace Veyro.Core.Media;
 /// <summary>The phone's latest media snapshot as received by the PC.</summary>
 public sealed record PhoneMediaSnapshot(
     string PeerId,
-    LinkMessage.MediaState State,
+    PeerMessage.MediaState State,
     /// <summary>Local clock (epoch ms) at receipt, the fallback for position extrapolation.</summary>
     long ReceivedAtMs);
 
@@ -19,7 +19,7 @@ public interface IPhoneMediaService
 
     PhoneMediaSnapshot? GetState(string peerId);
 
-    /// <summary>Connected and advertising <see cref="LinkCapabilities.MediaControl"/>.</summary>
+    /// <summary>Connected and advertising <see cref="PeerCapabilities.MediaControl"/>.</summary>
     bool CanControl(string peerId);
 
     /// <summary>
@@ -58,33 +58,33 @@ public sealed class PhoneMediaService : IPhoneMediaService, IDisposable
     }
 
     public bool CanControl(string peerId)
-        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.MediaControl) != 0;
+        => _sessions.IsConnected(peerId) && (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.MediaControl) != 0;
 
     public async Task SendCommandAsync(string peerId, string action, string? id = null, long? value = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(peerId);
         ArgumentException.ThrowIfNullOrWhiteSpace(action);
-        LinkMessage.MediaCommand command;
+        PeerMessage.MediaCommand command;
         switch (action)
         {
-            case LinkMessage.MediaCommand.Volume:
+            case PeerMessage.MediaCommand.Volume:
                 if (value is null) throw new ArgumentException("Volume needs a value.", nameof(value));
                 command = new(action, null, Math.Clamp(value.Value, 0, 100));
                 break;
-            case LinkMessage.MediaCommand.Mute:
+            case PeerMessage.MediaCommand.Mute:
                 if (value is null) throw new ArgumentException("Mute needs a value.", nameof(value));
                 command = new(action, null, value.Value != 0 ? 1 : 0);
                 break;
-            case LinkMessage.MediaCommand.Play:
-            case LinkMessage.MediaCommand.Pause:
-            case LinkMessage.MediaCommand.Toggle:
-            case LinkMessage.MediaCommand.Next:
-            case LinkMessage.MediaCommand.Prev:
-            case LinkMessage.MediaCommand.Seek:
+            case PeerMessage.MediaCommand.Play:
+            case PeerMessage.MediaCommand.Pause:
+            case PeerMessage.MediaCommand.Toggle:
+            case PeerMessage.MediaCommand.Next:
+            case PeerMessage.MediaCommand.Prev:
+            case PeerMessage.MediaCommand.Seek:
                 MediaSessionInfo session = FindSession(peerId, id)
                     ?? throw new ArgumentException("No such media session on the phone.", nameof(id));
                 long? sessionValue = null;
-                if (action == LinkMessage.MediaCommand.Seek)
+                if (action == PeerMessage.MediaCommand.Seek)
                 {
                     if (value is null) throw new ArgumentException("Seek needs a position.", nameof(value));
                     sessionValue = Math.Clamp(value.Value, 0, session.DurationMs ?? long.MaxValue);
@@ -97,7 +97,7 @@ public sealed class PhoneMediaService : IPhoneMediaService, IDisposable
 
         if (!_sessions.IsConnected(peerId))
             throw new InvalidOperationException("The phone is not connected.");
-        if ((_sessions.GetPeerCapabilities(peerId) & LinkCapabilities.MediaControl) == 0)
+        if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.MediaControl) == 0)
             throw new InvalidOperationException("The phone does not support media control.");
         await _sessions.SendAsync(peerId, command, ct).ConfigureAwait(false);
     }
@@ -120,7 +120,7 @@ public sealed class PhoneMediaService : IPhoneMediaService, IDisposable
         }
     }
 
-    private void OnMediaState(string peerId, LinkMessage.MediaState state)
+    private void OnMediaState(string peerId, PeerMessage.MediaState state)
     {
         var snapshot = new PhoneMediaSnapshot(peerId, MediaSnapshots.Sanitize(state), _time.GetUtcNow().ToUnixTimeMilliseconds());
         lock (_gate) _byPeer[peerId] = snapshot;

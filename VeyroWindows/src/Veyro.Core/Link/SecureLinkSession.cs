@@ -42,13 +42,13 @@ public sealed class SecureLinkSession : IAsyncDisposable
         _expectedPeerId = expectedPeerId;
     }
 
-    public async Task SendAsync(LinkMessage message, CancellationToken ct = default)
+    public async Task SendAsync(PeerMessage message, CancellationToken ct = default)
         => await SendInternalAsync(message, encrypt: _encrypt, ct).ConfigureAwait(false);
 
-    public async Task SendSealedAsync(LinkMessage message, CancellationToken ct = default)
+    public async Task SendSealedAsync(PeerMessage message, CancellationToken ct = default)
         => await SendInternalAsync(message, encrypt: true, ct).ConfigureAwait(false);
 
-    private async Task SendInternalAsync(LinkMessage message, bool encrypt, CancellationToken ct)
+    private async Task SendInternalAsync(PeerMessage message, bool encrypt, CancellationToken ct)
     {
         // The sequence number is allocated and the frame written under one gate. Allocating it
         // outside would let two concurrent senders (receive loop answering a Ping while the app
@@ -65,9 +65,9 @@ public sealed class SecureLinkSession : IAsyncDisposable
                 Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 Payload = message
             };
-            string payloadJson = LinkJson.Encode(envelope);
+            string payloadJson = PeerMessageJson.Encode(envelope);
             SealedFrame sealedFrame = FrameCrypto.Seal(payloadJson, _key, encrypt, _localDeviceId);
-            string wire = LinkJson.Encode(new LinkWireFrame
+            string wire = PeerMessageJson.Encode(new LinkWireFrame
             {
                 From = sealedFrame.FromDeviceId,
                 Nonce = Convert.ToBase64String(sealedFrame.Nonce),
@@ -100,7 +100,7 @@ public sealed class SecureLinkSession : IAsyncDisposable
             byte[] bytes = await ReceiveTextAsync(ct).ConfigureAwait(false);
             if (bytes.Length > MaxFrameSizeBytes) throw new InvalidDataException("Control frame exceeds the protocol limit.");
 
-            LinkWireFrame? wire = LinkJson.Decode<LinkWireFrame>(Encoding.UTF8.GetString(bytes));
+            LinkWireFrame? wire = PeerMessageJson.Decode<LinkWireFrame>(Encoding.UTF8.GetString(bytes));
             if (wire is null || string.IsNullOrWhiteSpace(wire.From) || wire.Ciphertext is not null == (wire.Plaintext is not null))
                 throw new InvalidDataException("Malformed VLP control frame.");
             if (_encrypt && wire.Plaintext is not null)
@@ -118,7 +118,7 @@ public sealed class SecureLinkSession : IAsyncDisposable
             LinkEnvelope? envelope;
             try
             {
-                envelope = LinkJson.Decode<LinkEnvelope>(json);
+                envelope = PeerMessageJson.Decode<LinkEnvelope>(json);
             }
             catch (Exception error) when (error is JsonException or NotSupportedException)
             {
@@ -174,7 +174,7 @@ public sealed class SecureLinkSession : IAsyncDisposable
         }
     }
 
-    private static readonly HashSet<string> KnownPayloadTypes = typeof(LinkMessage)
+    private static readonly HashSet<string> KnownPayloadTypes = typeof(PeerMessage)
         .GetCustomAttributes(typeof(JsonDerivedTypeAttribute), inherit: false)
         .Cast<JsonDerivedTypeAttribute>()
         .Select(attribute => attribute.TypeDiscriminator as string)

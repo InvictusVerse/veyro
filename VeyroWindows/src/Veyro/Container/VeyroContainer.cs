@@ -1,7 +1,7 @@
 using Veyro.Core.Diagnostics;
-using Veyro.Platforms.Windows.Calling;
-using Veyro.Platforms.Windows.Interop;
-using Veyro.Platforms.Windows.Services;
+using Veyro.Platform.Calling;
+using Veyro.Platform.Interop;
+using Veyro.Platform.Services;
 using Veyro.Services;
 using Veyro.ViewModels.Settings;
 
@@ -22,10 +22,10 @@ public sealed class VeyroContainer
     public ITrustStore TrustStore { get; }
     public ITransferHistoryStore HistoryStore { get; }
     public IDiscoveryService DiscoveryService { get; }
-    public VeyroLinkServer LinkServer { get; }
+    public LinkServer LinkServer { get; }
     public PeerSessionRegistry PeerSessions { get; }
     public Veyro.Core.Clipboard.ClipboardService Clipboard { get; }
-    public Veyro.Platforms.Windows.Services.WindowsClipboard WindowsClipboard { get; }
+    public Veyro.Platform.Services.WindowsClipboard WindowsClipboard { get; }
     public ClipboardViewModel ClipboardViewModel { get; }
     public NotificationMirrorService NotificationMirror { get; }
     public PhoneMediaService PhoneMedia { get; }
@@ -83,7 +83,7 @@ public sealed class VeyroContainer
         TrustStore = new FileTrustStore(DataDirectory, IdentityManager.DeriveLocalKey("trust-store-hmac"));
         HistoryStore = new FileTransferHistoryStore(DataDirectory);
         PeerSessions = new PeerSessionRegistry();
-        LinkServer = new VeyroLinkServer(
+        LinkServer = new LinkServer(
             IdentityManager.DeviceId.Value,
             SettingsStore.Current.DeviceName,
             TrustStore,
@@ -106,7 +106,7 @@ public sealed class VeyroContainer
         // ADR-038 "Lock PC": the server raises pcLock only from a trusted peer's live session.
         PeerSessions.DeviceMessageReceived += (peerId, message) =>
         {
-            if (message is not LinkMessage.PcLock || !PeerSessions.IsConnected(peerId)) return;
+            if (message is not PeerMessage.PcLock || !PeerSessions.IsConnected(peerId)) return;
             if (!InteropHelpers.LockWorkStation()) VeyroTrace.Warn("Locking the PC failed");
         };
         // ADR-043: clipboard both ways; virtual clipboard in memory. The watcher starts on the UI

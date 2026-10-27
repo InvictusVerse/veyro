@@ -3,7 +3,7 @@ using Microsoft.UI.Xaml.Media;
 using System.ComponentModel;
 using Veyro.Dialogs;
 using Veyro.Core.Diagnostics;
-using Veyro.Platforms.Windows.Interop;
+using Veyro.Platform.Interop;
 using Veyro.Views;
 using WinRT.Interop;
 

@@ -24,7 +24,7 @@ public interface INetworkChangeSignal
 }
 
 /// <summary>
-/// The production <see cref="IPeerDialer"/>: <see cref="VeyroLinkClient.OpenPersistentSessionAsync"/>
+/// The production <see cref="IPeerDialer"/>: <see cref="LinkClient.OpenPersistentSessionAsync"/>
 /// run by the listener's session loop. Discovery endpoints are untrusted, so only a plain unicast
 /// IP address is dialled; the stored session secret is what authenticates the phone.
 /// </summary>
@@ -39,7 +39,7 @@ public sealed class PersistentSessionDialer(
     {
         if (!IsDiallable(endpoint, allowLoopback))
             throw new InvalidOperationException("The discovered endpoint is not a dialable unicast address.");
-        return new VeyroLinkClient(localDeviceId, localName()).OpenPersistentSessionAsync(endpoint, peer, runner, sessions, ct);
+        return new LinkClient(localDeviceId, localName()).OpenPersistentSessionAsync(endpoint, peer, runner, sessions, ct);
     }
 
     /// <summary>An IPv4/IPv6 unicast address and a valid port. Loopback only when allowed (tests).</summary>
