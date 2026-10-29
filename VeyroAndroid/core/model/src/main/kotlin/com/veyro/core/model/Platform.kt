@@ -63,6 +63,24 @@ public value class Capabilities(public val bits: Int) {
             Capability.PHOTOS,
             Capability.WALLPAPER,
         )
+
+        /**
+         * What one phone uses with another (ADR-052): files, media control in both directions,
+         * and battery status. Everything else Android advertises exists to serve a PC
+         * (notifications, messages, calls, photos, wallpaper, clipboard) and must not flow from
+         * phone to phone.
+         */
+        public val PHONE_TO_PHONE: Capabilities = of(
+            Capability.FILE_TRANSFER,
+            Capability.FOLDER_TRANSFER,
+            Capability.RESUME,
+            Capability.MEDIA_CONTROL,
+            Capability.DEVICE_STATUS,
+        )
+
+        /** The part of [advertised] this phone uses with a peer running on [platform]. */
+        public fun usedWith(platform: Platform, advertised: Capabilities): Capabilities =
+            if (platform == Platform.ANDROID) advertised intersect PHONE_TO_PHONE else advertised
     }
 }
 

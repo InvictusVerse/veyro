@@ -233,6 +233,7 @@ public class VeyroContainer(context: Context) {
             identityManager = identityManager,
             trustStore = trustStore,
             deviceName = { runCatching { settingsStore.deviceName.first() }.getOrDefault("Veyro device") },
+            listenPortFile = File(appContext.noBackupFilesDir, "listen-port"),
         ).also { connectionManagerReady.value = it }
     }
 
@@ -250,24 +251,46 @@ public class VeyroContainer(context: Context) {
         connectionManagerReady.flatMapLatest { manager -> manager?.connections ?: flowOf(emptyMap()) }
     }
 
-    /** Every live paired session as a [CompanionLink]; each companion feature fans out over it. */
-    private val companionLinks: Flow<List<CompanionLink>> by lazy {
-        liveConnections.map { connections -> connections.values.map { it.asCompanionLink() } }
+    /**
+     * Each paired device's platform, by id (ADR-052). Read only once the connection layer exists,
+     * so the trust store is still not built at launch just for this.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val peerPlatforms: Flow<Map<String, Platform>> by lazy {
+        connectionManagerReady.flatMapLatest { manager ->
+            if (manager == null) flowOf(emptyMap()) else trustStore.peers.map { peers -> peers.associate { it.deviceId.value to it.platform } }
+        }.distinctUntilChanged()
     }
+
+    /**
+     * Every live paired session as a [CompanionLink]; each companion feature fans out over it.
+     * Scoped by platform: with another phone only files, media and battery are visible (ADR-052).
+     */
+    private val companionLinks: Flow<List<CompanionLink>> by lazy {
+        scopedLinks(liveConnections)
+    }
+
+    private fun scopedLinks(connections: Flow<Map<String, com.veyro.core.link.PeerConnection>>): Flow<List<CompanionLink>> =
+        combine(connections, peerPlatforms) { live, platforms ->
+            live.map { (id, connection) -> connection.asCompanionLink(platforms[id] ?: Platform.UNKNOWN) }
+        }
 
     /** Device ids of the PCs with a live session, for Home and the Devices list. */
     public val connectedPeerIds: Flow<Set<String>> by lazy {
         liveConnections.map { it.keys.toSet() }.distinctUntilChanged()
     }
 
-    /** What each connected PC advertised in its hello, by device id, for Lock PC (ADR-038). */
+    /**
+     * What each connected device advertised in its hello, by device id, for Lock PC (ADR-038);
+     * scoped like [companionLinks], so Home never offers a PC feature for a phone (ADR-052).
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     public val connectedPeerCapabilities: Flow<Map<String, Capabilities>> by lazy {
-        liveConnections.flatMapLatest { connections ->
-            if (connections.isEmpty()) {
+        companionLinks.flatMapLatest { links ->
+            if (links.isEmpty()) {
                 flowOf(emptyMap())
             } else {
-                combine(connections.map { (id, c) -> c.peerCapabilities.map { id to it } }) { it.toMap() }
+                combine(links.map { link -> link.peerCapabilities.map { link.peerDeviceId.orEmpty() to it } }) { it.toMap() }
             }
         }
     }
@@ -404,13 +427,14 @@ public class VeyroContainer(context: Context) {
         TransferRunner(dispatchers, wifiDirectManager, localAddressProvider)
     }
 
+    /** Last endpoints discovery reported per device, when, and the device's platform (ADR-052 TTL). */
+    private val lastKnownEndpoints = ConcurrentHashMap<DeviceId, Triple<List<Endpoint>, Long, Platform>>()
+
     /**
      * The one surface the Send and Receive screens use.
      *
      * Backed by [connectionManager] (connection + session) and [transferRunner] (chunk streaming).
      */
-    private val lastKnownEndpoints = ConcurrentHashMap<DeviceId, Pair<List<Endpoint>, Long>>()
-
     public val transferCoordinator: TransferCoordinator by lazy {
         TransferCoordinator(
             connectionManager = connectionManager,
@@ -439,19 +463,22 @@ public class VeyroContainer(context: Context) {
         )
     }
 
-    /** What discovery currently reports for [id], else what it reported in the last minute. */
+    /**
+     * What discovery currently reports for [id], else what it reported recently: a minute for a
+     * PC, which beacons all the time anyway; [PHONE_ENDPOINT_TTL_MS] for a phone, which is silent
+     * in the background but keeps the same address and port (ADR-052). A stale entry costs one
+     * failed dial, after which the caller looks again.
+     */
     private fun knownEndpoints(id: DeviceId): List<Endpoint> {
-        val current = discoveryManager.peers.value.firstOrNull { it.deviceId == id }?.endpoints.orEmpty()
+        val seen = discoveryManager.peers.value.firstOrNull { it.deviceId == id }
+        val current = seen?.endpoints.orEmpty()
         if (current.isNotEmpty()) {
-            lastKnownEndpoints[id] = current to System.currentTimeMillis()
+            lastKnownEndpoints[id] = Triple(current, System.currentTimeMillis(), seen?.platform ?: Platform.UNKNOWN)
             return current
         }
-        val cached = lastKnownEndpoints[id]
-        return if (cached != null && (System.currentTimeMillis() - cached.second) < LAST_KNOWN_ENDPOINT_TTL_MS) {
-            cached.first
-        } else {
-            emptyList()
-        }
+        val cached = lastKnownEndpoints[id] ?: return emptyList()
+        val ttl = if (cached.third == Platform.ANDROID) PHONE_ENDPOINT_TTL_MS else LAST_KNOWN_ENDPOINT_TTL_MS
+        return if ((System.currentTimeMillis() - cached.second) < ttl) cached.first else emptyList()
     }
 
     /** Opens one bounded discovery window and waits up to [timeoutMs] for [id] to appear. */
@@ -467,11 +494,12 @@ public class VeyroContainer(context: Context) {
             withTimeoutOrNull(timeoutMs) {
                 discoveryManager.peers
                     .mapNotNull { peers ->
-                        peers.firstOrNull { it.deviceId == id }?.endpoints?.takeIf { it.isNotEmpty() }
+                        peers.firstOrNull { it.deviceId == id }?.takeIf { it.endpoints.isNotEmpty() }
                     }
                     .first()
-            }?.also { fresh ->
-                lastKnownEndpoints[id] = fresh to System.currentTimeMillis()
+            }?.let { fresh ->
+                lastKnownEndpoints[id] = Triple(fresh.endpoints, System.currentTimeMillis(), fresh.platform)
+                fresh.endpoints
             }.orEmpty()
         } finally {
             handle.close()
@@ -480,6 +508,7 @@ public class VeyroContainer(context: Context) {
 
     private companion object {
         const val LAST_KNOWN_ENDPOINT_TTL_MS = 60_000L
+        const val PHONE_ENDPOINT_TTL_MS = 12L * 60 * 60 * 1000
         const val THUMBNAIL_PX = 192
         const val CLIP_PREVIEW_PX = 480
     }
@@ -553,8 +582,7 @@ public class VeyroContainer(context: Context) {
      */
     public val notificationMirror: NotificationMirror by lazy {
         NotificationMirror(
-            links = flow { emitAll(connectionManager.connections) }
-                .map { connections -> connections.values.map { it.asCompanionLink() } },
+            links = scopedLinks(flow { emitAll(connectionManager.connections) }),
             enabled = flow { emitAll(settingsStore.notificationMirrorEnabled) },
             source = notificationSource,
             executor = notificationSource,

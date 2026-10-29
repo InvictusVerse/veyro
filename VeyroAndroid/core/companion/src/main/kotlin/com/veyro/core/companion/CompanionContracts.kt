@@ -3,6 +3,7 @@ package com.veyro.core.companion
 import com.veyro.core.link.PeerMessage
 import com.veyro.core.link.PeerConnection
 import com.veyro.core.model.Capabilities
+import com.veyro.core.model.Platform
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -63,15 +64,24 @@ public interface CompanionLink {
 /**
  * Adapts a live [PeerConnection]. A data class so two adapters of one connection are equal.
  * [connection] is public so `:app` can route a photo original over this same session (ADR-034).
+ *
+ * [peerPlatform] scopes what the features see (ADR-052): with another phone only
+ * [Capabilities.PHONE_TO_PHONE] is visible, so every feature that serves a PC stays off on that
+ * link without each one checking the platform.
  */
-public data class PeerConnectionLink(public val connection: PeerConnection) : CompanionLink {
+public data class PeerConnectionLink(
+    public val connection: PeerConnection,
+    public val peerPlatform: Platform = Platform.UNKNOWN,
+) : CompanionLink {
     override val peerDeviceId: String? get() = connection.peerDeviceId
-    override val peerCapabilities: Flow<Capabilities> get() = connection.peerCapabilities
+    override val peerCapabilities: Flow<Capabilities>
+        get() = connection.peerCapabilities.map { Capabilities.usedWith(peerPlatform, it) }
     override val incoming: Flow<PeerMessage> get() = connection.incoming.map { it.payload }
     override suspend fun send(message: PeerMessage): Unit = connection.send(message)
 }
 
-public fun PeerConnection.asCompanionLink(): CompanionLink = PeerConnectionLink(this)
+public fun PeerConnection.asCompanionLink(peerPlatform: Platform = Platform.UNKNOWN): CompanionLink =
+    PeerConnectionLink(this, peerPlatform)
 
 /** One optional link as the list every companion feature takes (a single PC, or tests). */
 public fun Flow<CompanionLink?>.asLinkList(): Flow<List<CompanionLink>> = map { listOfNotNull(it) }

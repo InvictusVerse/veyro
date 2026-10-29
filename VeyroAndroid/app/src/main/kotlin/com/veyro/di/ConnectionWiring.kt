@@ -26,6 +26,8 @@ internal object ConnectionWiring {
         identityManager: IdentityManager,
         trustStore: TrustStore,
         deviceName: suspend () -> String,
+        /** ADR-052: one small file holding the listening port of the previous run. */
+        listenPortFile: java.io.File? = null,
     ): ConnectionManager = ConnectionManager(
         dispatchers = dispatchers,
         scope = scope,
@@ -47,7 +49,19 @@ internal object ConnectionWiring {
         forgetTrustedPeer = { raw ->
             com.veyro.core.model.DeviceId.parseOrNull(raw)?.let { trustStore.remove(it) }
         },
+        listenPortStore = listenPortFile?.let(::FileListenPortStore) ?: ConnectionManager.ListenPortStore.NONE,
     )
+
+    /** The port as decimal text. A missing or unreadable file means "no preference". */
+    private class FileListenPortStore(private val file: java.io.File) : ConnectionManager.ListenPortStore {
+        override fun load(): Int = runCatching { file.readText().trim().toInt() }.getOrDefault(0)
+
+        override fun save(port: Int) {
+            if (port <= 0 || load() == port) return
+            runCatching { file.writeText(port.toString()) }
+                .onFailure { VeyroLog.w(TAG) { "Listening port not saved: ${it.javaClass.simpleName}" } }
+        }
+    }
 }
 
 /** Legacy alias for backwards compatibility. */

@@ -20,7 +20,7 @@ import java.net.Socket
 import javax.net.SocketFactory
 
 /**
- * Embedded WebSocket server on an OS-allocated ephemeral port.
+ * Embedded WebSocket server on an OS-allocated port, reused across runs when free (ADR-052).
  *
  * ## Provenance and why WebSocket at all
  *
@@ -49,6 +49,10 @@ public class ConnectionServer(
     public companion object {
         private const val TAG = "ConnectionServer"
         public const val DEFAULT_PATH: String = "/veyro"
+
+        /** Below this a preferred port is ignored: the OS never hands those out as ephemeral. */
+        private const val MIN_PREFERRED_PORT = 1024
+        private const val MAX_PORT = 65535
     }
 
     private var engine: EmbeddedServer<*, *>? = null
@@ -57,11 +61,27 @@ public class ConnectionServer(
     public var port: Int = 0
         private set
 
-    /** Binds to an ephemeral port and returns it. Idempotent. */
-    public fun start(): Int {
+    /**
+     * Binds and returns the port. Idempotent. [preferredPort] (the port of the previous run, ADR-052)
+     * is tried first, so a phone that restarts comes back on the address its paired phones remember;
+     * when it is taken or invalid, the OS picks one as before. The port is advertised either way.
+     */
+    public fun start(preferredPort: Int = 0): Int {
         engine?.let { return port }
+        if (preferredPort in MIN_PREFERRED_PORT..MAX_PORT && isFree(preferredPort)) {
+            val bound = runCatching { bind(preferredPort) }
+                .onFailure { VeyroLog.i(TAG) { "Port $preferredPort not available (${it.javaClass.simpleName}); letting the OS pick" } }
+                .getOrDefault(0)
+            if (bound != 0) return bound
+        }
+        return bind(0)
+    }
 
-        val server = embeddedServer(CIO, port = 0, host = "0.0.0.0") {
+    private fun isFree(candidate: Int): Boolean =
+        runCatching { java.net.ServerSocket(candidate).use { true } }.getOrDefault(false)
+
+    private fun bind(requested: Int): Int {
+        val server = embeddedServer(CIO, port = requested, host = "0.0.0.0") {
             install(ServerWebSockets) {
                 // Protocol-level keepalive, a backstop to the application heartbeat in
                 // PeerConnection, which already detects a dead connection (ADR-048). Kept slow:
@@ -87,12 +107,18 @@ public class ConnectionServer(
                 }
             }
         }
-        engine = server.start(wait = false)
-
-        // Port 0 means the OS picked one; read it back so it can be advertised. This is why Veyro
-        // needs no port configuration and has nothing to collide on.
-        port = runBlocking {
-            engine?.engine?.resolvedConnectors()?.firstOrNull()?.port ?: 0
+        try {
+            engine = server.start(wait = false)
+            // Port 0 means the OS picked one; read it back so it can be advertised. This is why
+            // Veyro needs no port configuration and has nothing to collide on.
+            port = runBlocking {
+                engine?.engine?.resolvedConnectors()?.firstOrNull()?.port ?: 0
+            }
+        } catch (t: Throwable) {
+            runCatching { server.stop(0, 0) }
+            engine = null
+            port = 0
+            throw t
         }
         VeyroLog.i(TAG) { "Listening on port $port at $path" }
         return port

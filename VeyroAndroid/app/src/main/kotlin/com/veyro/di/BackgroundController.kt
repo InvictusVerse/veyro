@@ -42,10 +42,10 @@ import kotlinx.coroutines.launch
  * Runs Veyro in the background (ADR-036): decides when [VeyroBackgroundService] should run, feeds
  * it the status line, and owns the [CompanionKeeper] that reconnects to the paired PC.
  *
- * Runs when "Run in background" is on (default), a Windows PC is paired, and the user has not
- * pressed Disconnect on the notification since they last connected. Every paired Windows PC is
- * kept connected, one keeper loop each (multiple PCs), except a PC the user disconnected on Home
- * until they connect it again.
+ * Runs when "Run in background" is on (default), a PC or another phone is paired, and the user
+ * has not pressed Disconnect on the notification since they last connected. Every paired device
+ * is kept connected, one keeper loop each (multiple PCs, ADR-052 for phones), except one the user
+ * disconnected on Home until they connect it again.
  *
  * Nothing here is touched at process start: [observe] is first called when the app becomes
  * visible, at boot, or when a sticky restart brings the service back, so a process started only
@@ -72,6 +72,8 @@ public class BackgroundController(
 
         /** One reconnect attempt's discovery window. Bounded: the keeper backs off between them. */
         const val DISCOVERY_WINDOW_MS = 8_000L
+
+        val KEPT_PLATFORMS = setOf(Platform.WINDOWS, Platform.ANDROID)
     }
 
     /** Set by the notification's Disconnect; cleared when the user connects again or toggles the setting. */
@@ -89,11 +91,15 @@ public class BackgroundController(
         connections.map { it.keys.toSet() }.distinctUntilChanged()
     }
 
-    /** Every paired Windows PC the user has not disconnected, most recently used first. */
+    /**
+     * Every paired PC and phone the user has not disconnected, most recently used first. Phones
+     * are kept too (ADR-052): the other phone can then send files and control media while this
+     * one is in a pocket.
+     */
     private val targets: Flow<List<KeepTarget>> by lazy {
         combine(trustStore.peers, pausedPeers) { peers, paused ->
             peers
-                .filter { !it.revoked && it.platform == Platform.WINDOWS && it.deviceId.value !in paused }
+                .filter { !it.revoked && it.platform in KEPT_PLATFORMS && it.deviceId.value !in paused }
                 .sortedWith(compareByDescending<TrustedPeer> { it.lastConnectedEpochMillis }.thenByDescending { it.pairedAtEpochMillis })
                 .map { KeepTarget(it.deviceId.value, it.name) }
         }.distinctUntilChanged()
@@ -242,9 +248,12 @@ public class BackgroundController(
         val network = runCatching { networkMonitor.currentStatus() }.getOrNull()
         if (network != null && !network.hasUsableNetwork) return false
         val id = DeviceId.parseOrNull(t.deviceId) ?: return false
-        val endpoints = knownEndpoints(id).ifEmpty { discoverEndpoints(id, DISCOVERY_WINDOW_MS) }
-        if (endpoints.isEmpty()) return false
-        return connectionManager().connect(t.deviceId, t.name, endpoints)
+        val known = knownEndpoints(id)
+        if (known.isNotEmpty() && connectionManager().connect(t.deviceId, t.name, known)) return true
+        // A phone's address is remembered longer (ADR-052), so it can be out of date: look once.
+        val found = discoverEndpoints(id, DISCOVERY_WINDOW_MS)
+        if (found.isEmpty() || found == known) return false
+        return connectionManager().connect(t.deviceId, t.name, found)
     }
 
     /** A usable network appearing or changing (NetworkCallback), or the PC turning up in discovery. */

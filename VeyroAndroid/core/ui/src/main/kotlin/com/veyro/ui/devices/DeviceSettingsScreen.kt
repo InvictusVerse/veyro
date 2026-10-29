@@ -54,6 +54,7 @@ import com.veyro.core.designsystem.components.padding
 import com.veyro.core.designsystem.components.preference.SwitchPreferenceWidget
 import com.veyro.core.designsystem.components.preference.TextPreferenceWidget
 import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.core.model.Platform
 import com.veyro.core.model.fingerprint
 import com.veyro.ui.components.DeviceAvatar
 import com.veyro.ui.home.ConnectionStatus
@@ -69,7 +70,9 @@ import java.util.Locale
  *
  * Veyro changes: rows map to Veyro's stores. Rename, fingerprint and auto-accept are per device
  * (trust store). Notifications, messages and calls, media and ring are the phone's companion
- * switches (settings store) and apply to every paired PC, which the section label says. Turning
+ * switches (settings store) and apply to every paired PC, which the section label says. Another
+ * phone (ADR-052) gets only "Share my media", since files and media are all that work between
+ * phones. Turning
  * one on asks for exactly what it still lacks, then the switch reflects the real grant, as in
  * Sefirah. Remove asks for confirmation before revoking trust.
  */
@@ -184,128 +187,148 @@ public fun DeviceSettingsScreen(
                 )
             }
 
-            item {
-                Text(
-                    text = "Phone features (all paired PCs)",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(
-                        start = 20.dp,
-                        end = 20.dp,
-                        top = MaterialTheme.padding.medium,
-                        bottom = MaterialTheme.padding.small,
-                    ),
-                )
-            }
+            if (peer.platform == Platform.ANDROID) {
+                // ADR-052: between phones only files and media work, so only media has a switch.
+                item { SectionLabel("Between phones") }
 
-            item {
-                SwitchPreferenceWidget(
-                    title = "Notifications on PC",
-                    subtitle = "Show this phone's notifications on a connected PC, where you can reply, " +
-                        "run their actions or dismiss them." +
-                        if (settings.notificationAccessGranted) "" else " Needs notification access.",
-                    checkedIcon = VeyroIcons.NotificationsFill,
-                    uncheckedIcon = VeyroIcons.Notifications,
-                    checked = settings.notificationMirrorEnabled && settings.notificationAccessGranted,
-                    onCheckedChanged = { on ->
-                        settingsViewModel.setNotificationMirrorEnabled(on)
-                        if (on && !settings.notificationAccessGranted) openNotificationAccess(context)
-                    },
-                )
-            }
-
-            item {
-                val allGranted = settings.missingMessagingPermissions.isEmpty()
-                SwitchPreferenceWidget(
-                    title = "Messages and calls on PC",
-                    subtitle = "Read and send SMS, see and handle calls and read the call log from the PC. " +
-                        "Call audio stays on the phone.",
-                    checkedIcon = VeyroIcons.ChatFill,
-                    uncheckedIcon = VeyroIcons.Chat,
-                    checked = settings.messagesAndCallsEnabled && allGranted,
-                    onCheckedChanged = { on ->
-                        settingsViewModel.setMessagesAndCallsEnabled(on)
-                        if (on && !allGranted) onRequestMessagingPermissions()
-                    },
-                    onContentClick = onOpenMessagesSettings,
-                )
-            }
-
-            item {
-                val granted = settings.photosPermissionGranted
-                SwitchPreferenceWidget(
-                    title = "Photos on PC",
-                    subtitle = "Show this phone's recent camera photos and screenshots on the PC, which " +
-                        "can open, copy or save them." + if (granted) "" else " Needs photo access.",
-                    icon = VeyroIcons.Image,
-                    checked = settings.photosEnabled && granted,
-                    onCheckedChanged = { on ->
-                        settingsViewModel.setPhotosEnabled(on)
-                        if (on && !granted) onRequestPhotosPermission()
-                    },
-                )
-            }
-
-            item {
-                // ADR-038. On by default. Android 14+ gives the wallpaper image only to apps with
-                // "All files access"; without it the PC gets a picture in the wallpaper's colours.
-                val context = androidx.compose.ui.platform.LocalContext.current
-                val exact = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R ||
-                    android.os.Environment.isExternalStorageManager()
-                SwitchPreferenceWidget(
-                    title = "Show my wallpaper on PC",
-                    subtitle = if (exact) {
-                        "The PC draws this phone with your wallpaper."
-                    } else {
-                        "The PC shows your wallpaper's colours. Android only lets apps read the picture " +
-                            "itself with All files access: tap \"Show the exact wallpaper\" below."
-                    },
-                    icon = VeyroIcons.Mobile,
-                    checked = settings.wallpaperShareEnabled,
-                    onCheckedChanged = { on -> settingsViewModel.setWallpaperShareEnabled(on) },
-                )
-                if (!exact && settings.wallpaperShareEnabled) {
-                    TextButton(
-                        onClick = {
-                            val intent = android.content.Intent(
-                                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                android.net.Uri.fromParts("package", context.packageName, null),
-                            )
-                            runCatching { context.startActivity(intent) }
+                item {
+                    SwitchPreferenceWidget(
+                        title = "Share my media",
+                        subtitle = "Let ${peer.name} see what is playing on this phone and play, pause, skip, " +
+                            "seek and set the volume. Applies to your PCs too." +
+                            if (settings.notificationAccessGranted) "" else " Needs notification access.",
+                        checkedIcon = VeyroIcons.PlayCircleFill,
+                        uncheckedIcon = VeyroIcons.PlayCircle,
+                        checked = settings.mediaShareEnabled && settings.notificationAccessGranted,
+                        onCheckedChanged = { on ->
+                            settingsViewModel.setMediaShareEnabled(on)
+                            if (on && !settings.notificationAccessGranted) openNotificationAccess(context)
                         },
-                        modifier = Modifier.padding(start = 56.dp),
-                    ) { Text("Show the exact wallpaper") }
+                        onContentClick = onOpenMediaSettings,
+                    )
                 }
-            }
 
-            item {
-                SwitchPreferenceWidget(
-                    title = "Share media with PC",
-                    subtitle = "Show what is playing on this phone on the PC, which can then play, pause, " +
-                        "skip, seek and set the volume.",
-                    checkedIcon = VeyroIcons.PlayCircleFill,
-                    uncheckedIcon = VeyroIcons.PlayCircle,
-                    checked = settings.mediaShareEnabled && settings.notificationAccessGranted,
-                    onCheckedChanged = { on ->
-                        settingsViewModel.setMediaShareEnabled(on)
-                        if (on && !settings.notificationAccessGranted) openNotificationAccess(context)
-                    },
-                    onContentClick = onOpenMediaSettings,
-                )
-            }
+                item {
+                    Text(
+                        text = "To control ${peer.name}'s media from here, turn on Share my media on ${peer.name} " +
+                            "too. Notifications, messages, photos and the clipboard work with PCs only.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
+            } else {
+                item { SectionLabel("Phone features (all paired PCs)") }
 
-            item {
-                SwitchPreferenceWidget(
-                    title = "Ring and sound mode",
-                    subtitle = "Let the PC ring this phone to find it, and switch its ringer mode or " +
-                        "Do Not Disturb." +
-                        if (settings.policyAccessGranted) "" else " Changing the sound mode needs Do Not Disturb access; tap to grant it.",
-                    checkedIcon = VeyroIcons.VolumeUp,
-                    uncheckedIcon = VeyroIcons.VolumeOff,
-                    checked = settings.deviceControlAllowed,
-                    onCheckedChanged = settingsViewModel::setDeviceControlAllowed,
-                    onContentClick = { openPolicyAccess(context) },
-                )
+                item {
+                    SwitchPreferenceWidget(
+                        title = "Notifications on PC",
+                        subtitle = "Show this phone's notifications on a connected PC, where you can reply, " +
+                            "run their actions or dismiss them." +
+                            if (settings.notificationAccessGranted) "" else " Needs notification access.",
+                        checkedIcon = VeyroIcons.NotificationsFill,
+                        uncheckedIcon = VeyroIcons.Notifications,
+                        checked = settings.notificationMirrorEnabled && settings.notificationAccessGranted,
+                        onCheckedChanged = { on ->
+                            settingsViewModel.setNotificationMirrorEnabled(on)
+                            if (on && !settings.notificationAccessGranted) openNotificationAccess(context)
+                        },
+                    )
+                }
+
+                item {
+                    val allGranted = settings.missingMessagingPermissions.isEmpty()
+                    SwitchPreferenceWidget(
+                        title = "Messages and calls on PC",
+                        subtitle = "Read and send SMS, see and handle calls and read the call log from the PC. " +
+                            "Call audio stays on the phone.",
+                        checkedIcon = VeyroIcons.ChatFill,
+                        uncheckedIcon = VeyroIcons.Chat,
+                        checked = settings.messagesAndCallsEnabled && allGranted,
+                        onCheckedChanged = { on ->
+                            settingsViewModel.setMessagesAndCallsEnabled(on)
+                            if (on && !allGranted) onRequestMessagingPermissions()
+                        },
+                        onContentClick = onOpenMessagesSettings,
+                    )
+                }
+
+                item {
+                    val granted = settings.photosPermissionGranted
+                    SwitchPreferenceWidget(
+                        title = "Photos on PC",
+                        subtitle = "Show this phone's recent camera photos and screenshots on the PC, which " +
+                            "can open, copy or save them." + if (granted) "" else " Needs photo access.",
+                        icon = VeyroIcons.Image,
+                        checked = settings.photosEnabled && granted,
+                        onCheckedChanged = { on ->
+                            settingsViewModel.setPhotosEnabled(on)
+                            if (on && !granted) onRequestPhotosPermission()
+                        },
+                    )
+                }
+
+                item {
+                    // ADR-038. On by default. Android 14+ gives the wallpaper image only to apps with
+                    // "All files access"; without it the PC gets a picture in the wallpaper's colours.
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    val exact = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R ||
+                        android.os.Environment.isExternalStorageManager()
+                    SwitchPreferenceWidget(
+                        title = "Show my wallpaper on PC",
+                        subtitle = if (exact) {
+                            "The PC draws this phone with your wallpaper."
+                        } else {
+                            "The PC shows your wallpaper's colours. Android only lets apps read the picture " +
+                                "itself with All files access: tap \"Show the exact wallpaper\" below."
+                        },
+                        icon = VeyroIcons.Mobile,
+                        checked = settings.wallpaperShareEnabled,
+                        onCheckedChanged = { on -> settingsViewModel.setWallpaperShareEnabled(on) },
+                    )
+                    if (!exact && settings.wallpaperShareEnabled) {
+                        TextButton(
+                            onClick = {
+                                val intent = android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    android.net.Uri.fromParts("package", context.packageName, null),
+                                )
+                                runCatching { context.startActivity(intent) }
+                            },
+                            modifier = Modifier.padding(start = 56.dp),
+                        ) { Text("Show the exact wallpaper") }
+                    }
+                }
+
+                item {
+                    SwitchPreferenceWidget(
+                        title = "Share media with PC",
+                        subtitle = "Show what is playing on this phone on the PC, which can then play, pause, " +
+                            "skip, seek and set the volume.",
+                        checkedIcon = VeyroIcons.PlayCircleFill,
+                        uncheckedIcon = VeyroIcons.PlayCircle,
+                        checked = settings.mediaShareEnabled && settings.notificationAccessGranted,
+                        onCheckedChanged = { on ->
+                            settingsViewModel.setMediaShareEnabled(on)
+                            if (on && !settings.notificationAccessGranted) openNotificationAccess(context)
+                        },
+                        onContentClick = onOpenMediaSettings,
+                    )
+                }
+
+                item {
+                    SwitchPreferenceWidget(
+                        title = "Ring and sound mode",
+                        subtitle = "Let the PC ring this phone to find it, and switch its ringer mode or " +
+                            "Do Not Disturb." +
+                            if (settings.policyAccessGranted) "" else " Changing the sound mode needs Do Not Disturb access; tap to grant it.",
+                        checkedIcon = VeyroIcons.VolumeUp,
+                        uncheckedIcon = VeyroIcons.VolumeOff,
+                        checked = settings.deviceControlAllowed,
+                        onCheckedChanged = settingsViewModel::setDeviceControlAllowed,
+                        onContentClick = { openPolicyAccess(context) },
+                    )
+                }
             }
 
             item { Spacer(Modifier.height(16.dp)) }
@@ -347,6 +370,22 @@ public fun DeviceSettingsScreen(
             },
         )
     }
+}
+
+/** A section heading in the primary colour, like the settings screens use. */
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(
+            start = 20.dp,
+            end = 20.dp,
+            top = MaterialTheme.padding.medium,
+            bottom = MaterialTheme.padding.small,
+        ),
+    )
 }
 
 @Composable

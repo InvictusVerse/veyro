@@ -126,7 +126,7 @@ private fun PlaybackSession(
             ) {
                 // App name
                 Text(
-                    text = session.app ?: "On your PC",
+                    text = session.app ?: "Playing now",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     maxLines = 1,

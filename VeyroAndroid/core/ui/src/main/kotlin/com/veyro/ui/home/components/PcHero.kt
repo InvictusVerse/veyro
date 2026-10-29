@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -60,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.core.model.Platform
 import com.veyro.ui.home.ConnectionStatus
 import com.veyro.ui.home.PairedDeviceUi
 import com.veyro.ui.home.lastSeenLabel
@@ -88,30 +90,35 @@ internal fun PcHero(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LaptopIllustration(
-            wallpaper = wallpaper,
-            dimmed = pc == null || !pc.isConnected,
-            contentDescription = if (pc == null) "No PC paired" else "${pc.name}, drawn with its wallpaper",
-        )
+        if (pc != null && pc.platform == Platform.ANDROID) {
+            // ADR-052: another phone is drawn as a phone.
+            PhoneIllustration(dimmed = !pc.isConnected, contentDescription = "${pc.name}, a phone")
+        } else {
+            LaptopIllustration(
+                wallpaper = wallpaper,
+                dimmed = pc == null || !pc.isConnected,
+                contentDescription = if (pc == null) "No device paired" else "${pc.name}, drawn with its wallpaper",
+            )
+        }
         Spacer(Modifier.height(20.dp))
 
         if (pc == null) {
             Text(
-                text = "No PC paired yet",
+                text = "No device paired yet",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.semantics { heading() },
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Pair your Windows PC once and it reconnects on its own.",
+                text = "Pair your Windows PC or another phone once and it reconnects on its own.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
             Spacer(Modifier.height(16.dp))
-            FilledTonalButton(onClick = onAddPc) { Text("Pair a PC") }
+            FilledTonalButton(onClick = onAddPc) { Text("Pair a device") }
             return@Column
         }
 
@@ -163,7 +170,7 @@ private fun PcSwitcher(
                     role = Role.DropdownList
                     stateDescription = buildString {
                         append(if (pc.isConnected) "Connected" else "Not connected")
-                        if (allPcs.size > 1) append(". ${allPcs.size} PCs paired, $connectedCount connected")
+                        if (allPcs.size > 1) append(". ${allPcs.size} devices paired, $connectedCount connected")
                     }
                 },
         ) {
@@ -191,7 +198,8 @@ private fun PcSwitcher(
                         Column {
                             Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                text = if (item.isConnected) "Connected" else "Not connected",
+                                text = (if (item.platform == Platform.ANDROID) "Phone · " else "PC · ") +
+                                    if (item.isConnected) "connected" else "not connected",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -213,7 +221,7 @@ private fun PcSwitcher(
             }
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text("PC settings") },
+                text = { Text(if (pc.platform == Platform.ANDROID) "Phone settings" else "PC settings") },
                 leadingIcon = { Icon(VeyroIcons.SettingsFill, contentDescription = null) },
                 onClick = {
                     open = false
@@ -221,7 +229,7 @@ private fun PcSwitcher(
                 },
             )
             DropdownMenuItem(
-                text = { Text("Pair another PC") },
+                text = { Text("Pair another device") },
                 leadingIcon = { Icon(VeyroIcons.Add, contentDescription = null) },
                 onClick = {
                     open = false
@@ -376,6 +384,54 @@ private fun LaptopIllustration(wallpaper: ByteArray?, dimmed: Boolean, contentDe
                         .clip(RoundedCornerShape(bottomStart = 4.dp, bottomEnd = 4.dp))
                         .background(notch),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Another phone (ADR-052), drawn from shapes like the laptop: a dark frame with rounded corners,
+ * a camera dot, and a screen in the theme's gradient. Phones share no wallpaper with each other.
+ */
+@Composable
+private fun PhoneIllustration(dimmed: Boolean, contentDescription: String) {
+    val scheme = MaterialTheme.colorScheme
+    val dark = scheme.background.luminance() < 0.5f
+    val frame = if (dark) Color(0xFF3A3F45) else Color(0xFF23272C)
+    val screen = Brush.linearGradient(listOf(scheme.primaryContainer, scheme.tertiaryContainer, scheme.secondaryContainer))
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        // The same height as the laptop's lid, so Home does not jump when switching devices.
+        val height = ((maxWidth * 0.62f).coerceAtMost(300.dp) * (10f / 16f)) + 11.dp
+        Box(
+            modifier = Modifier
+                .height(height)
+                .aspectRatio(9f / 18.5f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(frame)
+                .padding(5.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(screen),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(frame),
+                )
+                if (dimmed) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (dark) 0.45f else 0.28f)))
+                }
             }
         }
     }

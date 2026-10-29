@@ -197,12 +197,27 @@ public data class HomeUiState(
     val selectedWallpaper: ByteArray?
         get() = selectedPc?.let { pcWallpapers[it.deviceId.value] }
 
+    /**
+     * The selected device is another phone (ADR-052): Home shows only what works between phones,
+     * Send files and that phone's media, and none of the PC rows.
+     */
+    val selectedIsPhone: Boolean
+        get() = selectedPc?.platform == Platform.ANDROID
+
     /** Lock PC needs the live session with that PC, and that PC must understand `pcLock`. */
     val canLockPc: Boolean
         get() {
             val pc = selectedPc ?: return false
+            if (pc.platform == Platform.ANDROID) return false
             return pc.isConnected && Capability.DEVICE_STATUS in (peerCapabilities[pc.deviceId.value] ?: Capabilities.NONE)
         }
+
+    /**
+     * A connected phone that shares no media yet: Home says how to turn it on there. Null otherwise.
+     * (A PC shares its media on its own; it never needs this hint.)
+     */
+    val mediaHintFor: PairedDeviceUi?
+        get() = selectedPc?.takeIf { selectedIsPhone && it.isConnected && pcMedia == null }
 
     /** Send files asks "Send to" only when more than one PC is connected. */
     val sendNeedsChoice: Boolean
@@ -222,7 +237,7 @@ public data class HomeUiState(
                 fileName = first ?: if (transfer.direction == TransferDirection.RECEIVE) "Received files" else "Sent files",
                 moreCount = (files.size - 1).coerceAtLeast(0),
                 direction = transfer.direction,
-                peerName = transfer.peerDisplayName ?: "your PC",
+                peerName = transfer.peerDisplayName ?: "your device",
                 destinationUri = transfer.destinationUri ?: files.firstOrNull()?.destinationUri,
                 kind = first?.let(::fileKindOf) ?: FileKind.OTHER,
                 finishedAtEpochMillis = transfer.finishedAtEpochMillis ?: transfer.startedAtEpochMillis,

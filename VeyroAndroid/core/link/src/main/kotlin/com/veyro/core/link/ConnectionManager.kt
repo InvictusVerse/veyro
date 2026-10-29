@@ -101,7 +101,22 @@ public class ConnectionManager(
         { _, _, _ -> throw IllegalStateException("confirm pairing is not configured") },
     /** Deletes the trust record for a device id (ADR-042: the peer removed us, or we removed it). */
     private val forgetTrustedPeer: suspend (peerDeviceId: String) -> Unit = {},
+    /** Where the listening port is kept between runs (ADR-052). The default keeps none. */
+    private val listenPortStore: ListenPortStore = ListenPortStore.NONE,
 ) {
+
+    /** The listening port of the previous run, so the next one can try it first (ADR-052). */
+    public interface ListenPortStore {
+        public fun load(): Int
+        public fun save(port: Int)
+
+        public companion object {
+            public val NONE: ListenPortStore = object : ListenPortStore {
+                override fun load(): Int = 0
+                override fun save(port: Int) = Unit
+            }
+        }
+    }
 
     /**
      * Invoked once per established connection, on both the inbound and outbound side.
@@ -340,8 +355,10 @@ public class ConnectionManager(
     public fun startListening(): Int {
         server?.let { if (it.isRunning) return it.port }
         val created = ConnectionServer(onConnection = ::handleInbound)
-        val port = created.start()
+        // ADR-052: the previous run's port first, so paired phones find this one where it was.
+        val port = created.start(preferredPort = runCatching { listenPortStore.load() }.getOrDefault(0))
         server = created
+        runCatching { listenPortStore.save(port) }
         return port
     }
 

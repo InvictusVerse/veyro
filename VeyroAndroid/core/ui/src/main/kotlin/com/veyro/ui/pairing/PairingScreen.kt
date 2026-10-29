@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.veyro.core.designsystem.icons.VeyroIcons
 import com.veyro.core.model.Platform
 import com.veyro.core.model.fingerprint
+import com.veyro.ui.components.platformIcon
 import kotlinx.coroutines.delay
 
 /**
@@ -71,7 +72,8 @@ public fun PairingScreen(
         }
     }
 
-    val pcs = state.candidates.filter { it.platform != Platform.ANDROID }
+    // PCs and phones (ADR-052), PCs first: they are what most people pair.
+    val devices = state.candidates.sortedBy { if (it.platform == Platform.ANDROID) 1 else 0 }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -111,7 +113,7 @@ public fun PairingScreen(
 
         item(key = "nearby") {
             NearbyList(
-                pcs = pcs,
+                devices = devices,
                 searching = state.isSearching,
                 busy = state.pairingBusy,
                 onPair = viewModel::pairWith,
@@ -153,13 +155,13 @@ private fun Hero() {
         }
         Spacer(Modifier.height(20.dp))
         Text(
-            text = "Connect to your PC",
+            text = "Connect a PC or phone",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "Open Veyro on your PC and keep both on the same Wi-Fi. Then scan its QR code, or pick it below.",
+            text = "Open Veyro on the other device and keep both on the same Wi-Fi. Scan the PC's QR code, or pick the device below.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -181,14 +183,14 @@ private fun DeviceBadge(content: @Composable () -> Unit) {
 
 @Composable
 private fun NearbyList(
-    pcs: List<PairingViewModel.Candidate>,
+    devices: List<PairingViewModel.Candidate>,
     searching: Boolean,
     busy: Boolean,
     onPair: (PairingViewModel.Candidate) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "PCs nearby",
+            text = "Nearby devices",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
@@ -200,17 +202,21 @@ private fun NearbyList(
         ) {
             // A thin bar instead of a countdown: it is always looking while this screen is open.
             if (searching) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
-            if (pcs.isEmpty()) {
+            if (devices.isEmpty()) {
                 Text(
-                    text = if (searching) "Looking for PCs running Veyro..." else "No PC found yet.",
+                    text = if (searching) "Looking for PCs and phones running Veyro..." else "Nothing found yet.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
                 )
             } else {
-                pcs.forEachIndexed { index, pc ->
+                devices.forEachIndexed { index, device ->
                     if (index > 0) HorizontalDivider(modifier = Modifier.padding(start = 76.dp))
-                    PcRow(pc = pc, enabled = !busy && !pc.isAlreadyPaired && pc.endpoints.isNotEmpty(), onPair = { onPair(pc) })
+                    DeviceRow(
+                        device = device,
+                        enabled = !busy && !device.isAlreadyPaired && device.endpoints.isNotEmpty(),
+                        onPair = { onPair(device) },
+                    )
                 }
             }
         }
@@ -218,7 +224,7 @@ private fun NearbyList(
 }
 
 @Composable
-private fun PcRow(pc: PairingViewModel.Candidate, enabled: Boolean, onPair: () -> Unit) {
+private fun DeviceRow(device: PairingViewModel.Candidate, enabled: Boolean, onPair: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -233,24 +239,28 @@ private fun PcRow(pc: PairingViewModel.Candidate, enabled: Boolean, onPair: () -
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.secondaryContainer),
             contentAlignment = Alignment.Center,
-        ) { Icon(VeyroIcons.Desktop, contentDescription = null, modifier = Modifier.size(22.dp)) }
+        ) { Icon(platformIcon(device.platform), contentDescription = null, modifier = Modifier.size(22.dp)) }
         Spacer(Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = pc.name,
+                text = device.name,
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = if (pc.isAlreadyPaired) "Already paired" else "Code ${pc.deviceId.fingerprint()}",
+                text = when {
+                    device.isAlreadyPaired -> "Already paired"
+                    device.platform == Platform.ANDROID -> "Phone · code ${device.deviceId.fingerprint()}"
+                    else -> "PC · code ${device.deviceId.fingerprint()}"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (pc.isAlreadyPaired) {
+        if (device.isAlreadyPaired) {
             Icon(VeyroIcons.Check, contentDescription = "Already paired", tint = MaterialTheme.colorScheme.primary)
         } else {
             TextButton(onClick = onPair, enabled = enabled) { Text("Connect") }
@@ -273,12 +283,12 @@ private fun InlineMessage(text: String, isError: Boolean, onDismiss: () -> Unit)
 private fun Troubleshooting() {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
         Text(
-            text = "Can't see your PC?",
+            text = "Can't see your device?",
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.padding(bottom = 6.dp),
         )
         listOf(
-            "Veyro is open on the PC.",
+            "Veyro is open on the other device. A phone shows up while Veyro is on screen.",
             "Both devices are on the same Wi-Fi or hotspot.",
             "On the PC the network is set to Private, and Veyro was allowed through the firewall.",
         ).forEach { line ->

@@ -60,10 +60,14 @@ import kotlinx.coroutines.delay
 
 /**
  * Home, laid out like Microsoft's Link to Windows app (ADR-038): a round settings button, the PC
- * drawn as a laptop showing its wallpaper, its name (a switcher for several PCs), Wi-Fi and
+ * drawn as a laptop showing its wallpaper, its name (a switcher for several devices), Wi-Fi and
  * battery, when it was last seen; then two outlined tiles, Lock PC and Send files; the newest
  * transfer under Recent; and outlined rows below. There is no Receive button: receiving is always
  * on. The PC's media and volume follow when the PC shares them (ADR-026).
+ *
+ * Another phone (ADR-052) is drawn as a phone and gets only what works between phones: Send files
+ * across the row, its media and volume, or a hint to turn sharing on there. No Lock PC, no
+ * clipboard.
  *
  * The discovery window is open only while this screen is started (NFR-02); pull to refresh
  * restarts it.
@@ -154,28 +158,32 @@ public fun HomeScreen(
 
                 if (pc != null) {
                     item(key = "tiles") {
+                        val send: () -> Unit = {
+                            // Several devices connected: ask which. Otherwise straight to the one.
+                            if (state.sendNeedsChoice) {
+                                askSendTo = true
+                            } else {
+                                viewModel.defaultSendTarget()?.let { onSendFiles(listOf(it)) }
+                            }
+                        }
                         Row(modifier = Modifier.fillMaxWidth()) {
+                            // ADR-052: a phone cannot be locked, so Send files takes the whole row.
+                            if (!state.selectedIsPhone) {
+                                ActionTile(
+                                    label = "Lock PC",
+                                    icon = VeyroIcons.Lock,
+                                    enabled = state.canLockPc,
+                                    onClick = viewModel::lockSelectedPc,
+                                    disabledReason = if (pc.isConnected) "Not supported by this PC" else "PC not connected",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                            }
                             ActionTile(
-                                label = "Lock PC",
-                                icon = VeyroIcons.Lock,
-                                enabled = state.canLockPc,
-                                onClick = viewModel::lockSelectedPc,
-                                disabledReason = if (pc.isConnected) "Not supported by this PC" else "PC not connected",
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            ActionTile(
-                                label = "Send files",
+                                label = if (state.selectedIsPhone) "Send files to ${pc.name}" else "Send files",
                                 icon = VeyroIcons.Upload,
                                 enabled = state.canSendFiles,
-                                onClick = {
-                                    // Several PCs connected: ask which. Otherwise straight to the one.
-                                    if (state.sendNeedsChoice) {
-                                        askSendTo = true
-                                    } else {
-                                        viewModel.defaultSendTarget()?.let { onSendFiles(listOf(it)) }
-                                    }
-                                },
+                                onClick = send,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -195,17 +203,31 @@ public fun HomeScreen(
                     HomeRow(
                         label = "Received files",
                         icon = VeyroIcons.Folder,
-                        supporting = "Everything from your PC is in Download/Veyro, sorted into Photos, Videos, Music, Documents and more.",
+                        supporting = "Everything you receive is in Download/Veyro, sorted into Photos, Videos, Music, Documents and more.",
                         onClick = { if (!FileActions.openReceivedFolder(context)) onOpenHistory() },
                     )
                 }
-                item(key = "clipboard") {
-                    HomeRow(
-                        label = "Clipboard",
-                        icon = VeyroIcons.Clipboard,
-                        supporting = "What your PC copies, ready to paste here. Share text or a link to Veyro to send it to the PC.",
-                        onClick = onOpenClipboard,
-                    )
+                // The clipboard works with PCs only (ADR-052).
+                if (!state.selectedIsPhone) {
+                    item(key = "clipboard") {
+                        HomeRow(
+                            label = "Clipboard",
+                            icon = VeyroIcons.Clipboard,
+                            supporting = "What your PC copies, ready to paste here. Share text or a link to Veyro to send it to the PC.",
+                            onClick = onOpenClipboard,
+                        )
+                    }
+                }
+
+                state.mediaHintFor?.let { phone ->
+                    item(key = "media_hint") {
+                        HomeRow(
+                            label = "Control media on ${phone.name}",
+                            icon = VeyroIcons.PlayCircle,
+                            supporting = "On ${phone.name}, open Veyro and turn on Share my media. Its music and videos then show here.",
+                            onClick = { onPcSettings(phone.deviceId) },
+                        )
+                    }
                 }
 
                 val sessions = state.pcMedia?.sessions.orEmpty()

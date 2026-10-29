@@ -358,6 +358,43 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `a paired phone gets the phone layout - no Lock PC, its media, and a hint until it shares`() {
+        val office = trusted(1, "Office PC")
+        val pixel = trusted(3, "Pixel").copy(platform = Platform.ANDROID)
+        val media = MutableStateFlow<Map<String, PeerMessage.MediaState>>(emptyMap())
+        val commands = mutableListOf<Pair<String, PeerMessage.MediaCommand>>()
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            connectedPeerIds = MutableStateFlow(setOf(pixel.deviceId.value)),
+            pcStatus = MutableStateFlow(mapOf(pixel.deviceId.value to PeerMessage.DeviceStatus(battery = 64))),
+            pcMedia = media,
+            // DEVICE_STATUS is what a phone uses for its battery; it must not unlock "Lock PC".
+            peerCapabilities = MutableStateFlow(mapOf(pixel.deviceId.value to Capabilities.PHONE_TO_PHONE)),
+            trustedPeers = MutableStateFlow(listOf(office, pixel)),
+            sendMediaCommand = { id, command -> commands += id to command; true },
+        )
+
+        assertEquals("the connected phone is selected", "Pixel", vm.state.value.selectedPc?.name)
+        assertTrue(vm.state.value.selectedIsPhone)
+        assertFalse(vm.state.value.canLockPc)
+        assertTrue(vm.state.value.canSendFiles)
+        assertEquals(64, vm.state.value.selectedPc?.battery)
+        assertEquals("Pixel", vm.state.value.mediaHintFor?.name)
+
+        val song = PeerMessage.MediaSessionInfo(id = "s1", app = "Music", title = "Song", playing = true)
+        media.value = mapOf(pixel.deviceId.value to PeerMessage.MediaState(sessions = listOf(song), volume = 40))
+        assertNull("sharing: no hint", vm.state.value.mediaHintFor)
+        assertEquals("s1", vm.state.value.pcMediaSession?.id)
+        vm.mediaCommand(PeerMessage.MediaCommand.TOGGLE, id = "s1")
+        assertEquals(pixel.deviceId.value, commands.single().first)
+
+        vm.selectPc(office.deviceId)
+        assertFalse(vm.state.value.selectedIsPhone)
+        assertNull("a PC never gets the phone hint", vm.state.value.mediaHintFor)
+    }
+
+    @Test
     fun `with one PC connected Send files goes straight to it even if an offline PC is selected`() {
         val office = trusted(1, "Office PC")
         val laptop = trusted(2, "Laptop")
