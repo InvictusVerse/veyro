@@ -41,6 +41,7 @@ import com.veyro.core.discovery.NsdMdnsBrowser
 import com.veyro.core.discovery.UdpBeaconImpl
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
+import com.veyro.core.model.TrustedPeer
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -349,20 +350,36 @@ public class VeyroContainer(context: Context) {
     }
 
     /**
-     * Keeps the share sheet's Direct Share row ("Send to <PC>") in step with the paired PCs, most
-     * recently used first (ADR-043). Called once from the Application.
+     * Keeps the share sheet's Direct Share row ("Send to <device>") in step with the paired PCs
+     * and phones (ADR-043, ADR-054): connected ones first, then most recently used. Called once
+     * from the Application.
      */
     public fun startShareShortcuts() {
         appScope.launch {
-            trustStore.peers
-                .map { peers ->
-                    peers.filterNot { it.revoked }
-                        .filter { it.platform != com.veyro.core.model.Platform.ANDROID }
-                        .sortedByDescending { maxOf(it.lastConnectedEpochMillis, it.pairedAtEpochMillis) }
-                }
+            combine(trustStore.peers, connectedPeerIds) { peers, connected ->
+                peers.filterNot { it.revoked }
+                    .sortedWith(
+                        compareByDescending<TrustedPeer> { it.deviceId.value in connected }
+                            .thenByDescending { maxOf(it.lastConnectedEpochMillis, it.pairedAtEpochMillis) },
+                    )
+            }
                 .distinctUntilChanged { a, b -> a.map { it.deviceId to it.name } == b.map { it.deviceId to it.name } }
                 .collect { ShareShortcuts.publish(appContext, it) }
         }
+    }
+
+    /**
+     * The paired devices connected right now, Home's selected one first, for the share sheet's
+     * "Send to" chooser (ADR-054). Empty while the connection layer has not been built.
+     */
+    public suspend fun connectedShareTargets(): List<TrustedPeer> {
+        val manager = connectionManagerReady.value ?: return emptyList()
+        val live = manager.connections.value.keys
+        if (live.isEmpty()) return emptyList()
+        val selected = manager.activeConnection.value?.peerDeviceId
+        return runCatching { trustStore.snapshot() }.getOrDefault(emptyList())
+            .filter { !it.revoked && it.deviceId.value in live }
+            .sortedByDescending { it.deviceId.value == selected }
     }
 
     /**
@@ -783,8 +800,10 @@ public class VeyroContainer(context: Context) {
     }
 
     /**
-     * "Send to PC" from the share sheet or text selection. Runs in the app scope, so the sharing
-     * Activity can finish at once; [onResult] gets how many PCs it reached, on the main thread.
+     * "Send with Veyro" from the share sheet or text selection: to [target], or to every connected
+     * PC and phone when null. A PC puts it on its clipboard; a phone shows it as a clipboard
+     * notification (ADR-054). Runs in the app scope, so the sharing Activity can finish at once;
+     * [onResult] gets how many devices it reached, on the main thread.
      */
     public fun shareTextToPcs(text: String, target: String? = null, onResult: (reached: Int) -> Unit) {
         appScope.launch {

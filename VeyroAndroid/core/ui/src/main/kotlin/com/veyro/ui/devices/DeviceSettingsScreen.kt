@@ -211,7 +211,8 @@ public fun DeviceSettingsScreen(
                 item {
                     Text(
                         text = "To control ${peer.name}'s media from here, turn on Share my media on ${peer.name} " +
-                            "too. Notifications, messages, photos and the clipboard work with PCs only.",
+                            "too. Text and links you share with \"Send with Veyro\" arrive on ${peer.name} as a " +
+                            "notification with Copy. Notifications, messages and photos work with PCs only.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),

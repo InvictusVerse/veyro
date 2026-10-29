@@ -66,8 +66,8 @@ import kotlinx.coroutines.delay
  * on. The PC's media and volume follow when the PC shares them (ADR-026).
  *
  * Another phone (ADR-052) is drawn as a phone and gets only what works between phones: Send files
- * across the row, its media and volume, or a hint to turn sharing on there. No Lock PC, no
- * clipboard.
+ * across the row, its media and volume, or a hint to turn sharing on there, and the clipboard
+ * list, since shared text reaches phones too (ADR-054). No Lock PC.
  *
  * The discovery window is open only while this screen is started (NFR-02); pull to refresh
  * restarts it.
@@ -207,16 +207,18 @@ public fun HomeScreen(
                         onClick = { if (!FileActions.openReceivedFolder(context)) onOpenHistory() },
                     )
                 }
-                // The clipboard works with PCs only (ADR-052).
-                if (!state.selectedIsPhone) {
-                    item(key = "clipboard") {
-                        HomeRow(
-                            label = "Clipboard",
-                            icon = VeyroIcons.Clipboard,
-                            supporting = "What your PC copies, ready to paste here. Share text or a link to Veyro to send it to the PC.",
-                            onClick = onOpenClipboard,
-                        )
-                    }
+                // ADR-054: PCs and phones both send clips; one list for all of them.
+                item(key = "clipboard") {
+                    HomeRow(
+                        label = "Clipboard",
+                        icon = VeyroIcons.Clipboard,
+                        supporting = if (state.selectedIsPhone) {
+                            "What ${pc?.name ?: "the other phone"} sends with \"Send with Veyro\", ready to paste here."
+                        } else {
+                            "What your PC copies, ready to paste here. Share text or a link with \"Send with Veyro\" to send it."
+                        },
+                        onClick = onOpenClipboard,
+                    )
                 }
 
                 state.mediaHintFor?.let { phone ->

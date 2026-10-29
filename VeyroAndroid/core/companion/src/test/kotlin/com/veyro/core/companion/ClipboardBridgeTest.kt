@@ -125,6 +125,22 @@ class ClipboardBridgeTest {
     }
 
     @Test
+    fun `text another phone shared arrives as a sent clip with a notification`() = runTest {
+        // ADR-054: "Send with Veyro" on a phone reaches another phone like a PC copy does.
+        val phone = FakeLink(clipCaps, "PHONE-B")
+        val rig = rig(phone)
+        phone.inbound.emit(PeerMessage.Clip("s1", PeerMessage.Clip.KIND_TEXT, text = "https://example.com", apply = true))
+        phone.inbound.emit(PeerMessage.Clip("c1", PeerMessage.Clip.KIND_TEXT, text = "copied"))
+        runCurrent()
+
+        val history = rig.bridge.history.value
+        assertEquals(listOf("c1", "s1"), history.map { it.id })
+        assertTrue("shared on purpose", history[1].sent)
+        assertFalse("a copy", history[0].sent)
+        assertEquals(2, rig.shown.size)
+    }
+
+    @Test
     fun `invalid or oversized items from the PC are dropped`() = runTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)

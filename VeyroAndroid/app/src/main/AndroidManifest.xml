@@ -134,14 +134,15 @@
             android:name=".di.TransferActionReceiver"
             android:exported="false" />
 
-        <!-- ADR-043: "Send to PC" in the share sheet (text, links, files) and in the text-selection
-             menu. No UI of its own: text goes straight to the PCs, files are handed to MainActivity.
+        <!-- ADR-043, ADR-054: "Send with Veyro" in the share sheet (text, links, files) and in the
+             text-selection menu. No UI of its own beyond a "Send to" chooser when several devices
+             are connected: text goes straight to the device, files to ShareSendService.
              Exported because other apps start it; everything it receives is untrusted input. -->
         <activity
             android:name=".ShareToPcActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="@string/send_to_pc"
+            android:label="@string/send_with_veyro"
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar">

@@ -44,7 +44,7 @@ public class ShareSendService : Service() {
         private const val ID_PROGRESS = 4400
         private const val ID_RESULT = 4401
         private const val PROGRESS_POST_INTERVAL_MS = 1_000L
-        private const val EXTRA_TARGET = "com.veyro.extra.TARGET"
+        private const val EXTRA_TARGETS = "com.veyro.extra.TARGETS"
         private const val ACTION_CANCEL = "com.veyro.action.SHARE_CANCEL"
         private const val OWNED_KEPT = 16
 
@@ -67,15 +67,16 @@ public class ShareSendService : Service() {
         }
 
         /**
-         * Hands [uris] (with their read grant) to the service. [target]: a PC id, or null for the
-         * default PC. False if Android refused to start the service; the caller then sends another way.
+         * Hands [uris] (with their read grant) to the service. [targets]: device ids, one after
+         * the other (ADR-054: "All connected" from the chooser), or empty for the default device.
+         * False if Android refused to start the service; the caller then sends another way.
          */
-        public fun start(context: Context, uris: List<Uri>, target: String?): Boolean {
+        public fun start(context: Context, uris: List<Uri>, targets: List<String>): Boolean {
             if (uris.isEmpty()) return true
             val clip = ClipData.newRawUri("files", uris.first())
             uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
             val intent = Intent(context, ShareSendService::class.java)
-                .putExtra(EXTRA_TARGET, target)
+                .putStringArrayListExtra(EXTRA_TARGETS, ArrayList(targets))
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.clipData = clip
             return runCatching { context.startForegroundService(intent) }
@@ -109,16 +110,16 @@ public class ShareSendService : Service() {
             finishStart(startId)
             return START_NOT_STICKY
         }
-        val target = intent?.getStringExtra(EXTRA_TARGET)
+        val targets = intent?.getStringArrayListExtra(EXTRA_TARGETS).orEmpty()
         activeStarts++
         lastStartId = startId
-        scope.launch { send(uris, target, startId) }
+        scope.launch { send(uris, targets, startId) }
         // Redeliver keeps this start (and the URI grant that came with it) until stopSelf(startId),
         // and resends it if the process dies mid-transfer.
         return START_REDELIVER_INTENT
     }
 
-    private suspend fun send(uris: List<Uri>, target: String?, startId: Int) {
+    private suspend fun send(uris: List<Uri>, targets: List<String>, startId: Int) {
         val container = (application as VeyroApplication).container
         val progressJob = scope.launch {
             // Progress arrives every 200 ms; each post rebuilds the card's RemoteViews, and
@@ -138,12 +139,12 @@ public class ShareSendService : Service() {
                 result("Nothing to send", "The app did not share a readable file.", success = false)
                 return
             }
-            val summary = container.sendFilesAndWait(listOfNotNull(target), files)
+            val summary = container.sendFilesAndWait(targets, files)
             val what = if (files.size == 1) files.first().effectiveName else "${files.size} files"
             when {
-                summary.targets.isEmpty() -> result("No PC paired", "Pair a PC in Veyro first.", success = false)
+                summary.targets.isEmpty() -> result("No device paired", "Pair a PC or phone in Veyro first.", success = false)
                 summary.succeeded == summary.targets.size -> result("Sent $what", "To ${summary.targets.joinToString()}", success = true)
-                summary.succeeded > 0 -> result("Sent $what to some PCs", "Open Veyro for details.", success = false)
+                summary.succeeded > 0 -> result("Sent $what to some devices", "Open Veyro for details.", success = false)
                 else -> result("Could not send $what", "Is ${summary.targets.joinToString()} on and on the same Wi-Fi?", success = false)
             }
         } catch (t: Throwable) {

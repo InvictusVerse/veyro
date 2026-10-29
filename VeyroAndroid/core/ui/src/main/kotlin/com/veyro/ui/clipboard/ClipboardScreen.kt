@@ -74,13 +74,13 @@ import com.veyro.core.designsystem.icons.VeyroIcons
 /**
  * The phone's virtual clipboard (ADR-043).
  *
- * Top: one card to send this phone's clipboard, with the "Auto-fetch PC clipboard" switch under a
- * divider. Then filter chips and every clip from the PCs in **one** rounded container, rows split
+ * Top: one card to send this phone's clipboard, with the "Auto-fetch clipboard" switch under a
+ * divider. Then filter chips and every clip from the PCs and phones (ADR-054) in **one** rounded container, rows split
  * by dividers. Each row has an icon for what it is, a quick action that fits it (Open, Call,
  * Email, Copy code) and Copy. Tap a row to copy it; long-press for Remove.
  *
  * Android lets no app read the clipboard in the background, so the card's button is the only way
- * the phone's own clipboard reaches the PC; text and links go with "Send to PC" from any app.
+ * the phone's own clipboard reaches the other devices; text and links go with "Send with Veyro".
  */
 @Composable
 public fun ClipboardScreen(viewModel: ClipboardViewModel, modifier: Modifier = Modifier) {
@@ -132,7 +132,7 @@ public fun ClipboardScreen(viewModel: ClipboardViewModel, modifier: Modifier = M
                     modifier = Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 4.dp),
                 ) {
                     Text(
-                        "From your PC",
+                        "From your devices",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f),
@@ -188,8 +188,8 @@ public fun ClipboardScreen(viewModel: ClipboardViewModel, modifier: Modifier = M
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "To send text or a link to your PC, select it or tap Share in any app and choose " +
-                            "\"Send to PC\". It lands on the PC's clipboard.",
+                        "To send text or a link, select it or tap Share in any app and choose \"Send with Veyro\". " +
+                            "A PC puts it on its clipboard; another phone shows it as a notification with Copy.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -226,7 +226,7 @@ private fun HeroCard(sending: Boolean, autoFetch: Boolean, onSend: () -> Unit, o
                     Column(Modifier.weight(1f)) {
                         Text("Send this phone's clipboard", style = MaterialTheme.typography.titleMedium, color = colors.onPrimaryContainer)
                         Text(
-                            "Goes to your PC's Veyro list. It does not replace what the PC has copied.",
+                            "Goes to the Veyro clipboard list on your connected devices. It does not replace what they copied.",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onPrimaryContainer.copy(alpha = 0.8f),
                         )
@@ -237,7 +237,7 @@ private fun HeroCard(sending: Boolean, autoFetch: Boolean, onSend: () -> Unit, o
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = colors.onPrimary)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Send clipboard to PC")
+                    Text("Send clipboard")
                 }
             }
             Row(
@@ -250,9 +250,9 @@ private fun HeroCard(sending: Boolean, autoFetch: Boolean, onSend: () -> Unit, o
                     .padding(horizontal = 20.dp, vertical = 10.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Auto-fetch PC clipboard", style = MaterialTheme.typography.bodyLarge)
+                    Text("Auto-fetch clipboard", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Keep what your PC copies here, with a notification to copy or open it.",
+                        "Keep what your PC copies and what other phones send here, with a notification to copy or open it.",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                     )
@@ -282,7 +282,7 @@ private fun EmptyState(autoFetch: Boolean, filtered: Boolean) {
             Text(
                 when {
                     filtered -> "Nothing of this kind yet"
-                    autoFetch -> "Copy something on your PC"
+                    autoFetch -> "Copy something on your PC, or send text from another phone"
                     else -> "Auto-fetch is off"
                 },
                 style = MaterialTheme.typography.titleSmall,
@@ -291,7 +291,7 @@ private fun EmptyState(autoFetch: Boolean, filtered: Boolean) {
                 when {
                     filtered -> "Pick All to see every clip."
                     autoFetch -> "It shows up here, ready to paste."
-                    else -> "Turn it on to keep what your PC copies here."
+                    else -> "Turn it on to keep what your devices send here."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

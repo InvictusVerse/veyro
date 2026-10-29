@@ -112,10 +112,10 @@ public class ClipboardViewModel(
         viewModelScope.launch {
             val outcome = runCatching { sendClipboard() }.getOrDefault(SendClipOutcome.NO_PC)
             val message = when (outcome) {
-                SendClipOutcome.SENT -> "Sent to your PC's clipboard list"
+                SendClipOutcome.SENT -> "Sent to your devices' clipboard lists"
                 SendClipOutcome.EMPTY -> "Nothing copied on this phone"
                 SendClipOutcome.TOO_LARGE -> "Too large to send"
-                SendClipOutcome.NO_PC -> "No PC connected"
+                SendClipOutcome.NO_PC -> "No device connected"
             }
             transient.update { it.copy(sending = false, message = message) }
         }

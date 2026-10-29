@@ -12,14 +12,15 @@ class CapabilitiesTest {
     fun `with a phone only files, media and battery are used`() {
         val used = Capabilities.usedWith(Platform.ANDROID, Capabilities.ANDROID_CURRENT)
         assertEquals(Capabilities.PHONE_TO_PHONE, used)
-        listOf(Capability.FILE_TRANSFER, Capability.MEDIA_CONTROL, Capability.DEVICE_STATUS).forEach { assertTrue(it in used) }
+        // ADR-054: shared text and links reach another phone as a clipboard notification.
+        listOf(Capability.FILE_TRANSFER, Capability.MEDIA_CONTROL, Capability.DEVICE_STATUS, Capability.CLIPBOARD)
+            .forEach { assertTrue(it in used) }
         listOf(
             Capability.NOTIFICATION_MIRROR,
             Capability.MESSAGING,
             Capability.CALLS,
             Capability.PHOTOS,
             Capability.WALLPAPER,
-            Capability.CLIPBOARD,
         ).forEach { assertFalse("$it must not flow between phones", it in used) }
     }
 

@@ -24,6 +24,11 @@ public data class ClipItem(
     val text: String?,
     val image: ByteArray?,
     val atMillis: Long,
+    /**
+     * True when the other device's user sent it on purpose ("Send with Veyro" on another phone,
+     * ADR-054); false for something that device copied. Only the notification's wording differs.
+     */
+    val sent: Boolean = false,
 ) {
     val isImage: Boolean get() = image != null
 
@@ -161,14 +166,16 @@ public class ClipboardBridge(
         if (!receiveEnabled.first()) return
         if (clip.id.isEmpty() || clip.id.length > 64) return
         val item = when (clip.kind) {
+            // `apply` is what a share sets: a PC puts it on its clipboard; a phone cannot do that
+            // in the background, so it keeps it here with the same notification (ADR-054).
             PeerMessage.Clip.KIND_TEXT -> {
                 val text = clip.text?.takeIf { it.isNotEmpty() && it.length <= PeerMessage.Clip.MAX_TEXT_CHARS } ?: return
-                ClipItem(clip.id, peerId, text, null, now())
+                ClipItem(clip.id, peerId, text, null, now(), sent = clip.apply)
             }
             PeerMessage.Clip.KIND_IMAGE -> {
                 val bytes = clip.image?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
                 if (!isAcceptableImage(bytes)) return
-                ClipItem(clip.id, peerId, null, bytes, now())
+                ClipItem(clip.id, peerId, null, bytes, now(), sent = clip.apply)
             }
             else -> return
         }

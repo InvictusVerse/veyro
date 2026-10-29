@@ -22,7 +22,8 @@ import com.veyro.core.companion.ClipClassifier
 import kotlinx.coroutines.launch
 
 /**
- * The single "Copied on <PC>" notification (ADR-043). Every new PC copy replaces it in place and
+ * The single "Copied on <PC>" notification (ADR-043), also "From <phone>" for text another phone
+ * sent with "Send with Veyro" (ADR-054). Every new clip replaces it in place and
  * only the first one since it was last cleared makes a sound or vibration, so a busy copy session
  * never floods the shade. Its actions follow what was copied ([ClipClassifier]): Open for a link,
  * Call for a phone number, Email for an address, Copy code for a one-time code, Copy always.
@@ -38,8 +39,8 @@ internal class AndroidClipNotifier(
     private val manager by lazy {
         context.getSystemService(NotificationManager::class.java)!!.also {
             it.createNotificationChannel(
-                NotificationChannel(SystemClipboard.CHANNEL, "Clipboard from your PC", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "What your PC copies, with Copy and Open buttons"
+                NotificationChannel(SystemClipboard.CHANNEL, "Clipboard from your devices", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "What your PC copies and what other phones send, with Copy and Open buttons"
                     setSound(null, null)
                 },
             )
@@ -60,13 +61,15 @@ internal class AndroidClipNotifier(
         lastPostAt = now
         val count = SystemClipboard.unseen.incrementAndGet()
         val smart = if (item.image != null) null else ClipClassifier.classify(item.text)
+        // "copied on" for what a PC copied; "from" for what another phone sent on purpose (ADR-054).
+        val where = if (item.sent) "from $pcName" else "copied on $pcName"
         val title = when (smart?.kind) {
-            null -> "Image copied on $pcName"
-            ClipClassifier.Kind.LINK -> "Link copied on $pcName"
-            ClipClassifier.Kind.PHONE -> "Phone number copied on $pcName"
-            ClipClassifier.Kind.EMAIL -> "Email address copied on $pcName"
-            ClipClassifier.Kind.CODE -> "Code copied on $pcName"
-            ClipClassifier.Kind.TEXT -> "Copied on $pcName"
+            null -> "Image $where"
+            ClipClassifier.Kind.LINK -> "Link $where"
+            ClipClassifier.Kind.PHONE -> "Phone number $where"
+            ClipClassifier.Kind.EMAIL -> "Email address $where"
+            ClipClassifier.Kind.CODE -> "Code $where"
+            ClipClassifier.Kind.TEXT -> if (item.sent) "From $pcName" else "Copied on $pcName"
         }
         val body = when (smart?.kind) {
             null -> "Tap Copy, then paste it in any app"
@@ -117,7 +120,7 @@ internal class AndroidClipNotifier(
             NotificationCard.Spec(
                 title = shownTitle,
                 text = body,
-                meta = if (count > 1) "$count new from your PC, all in Veyro > Clipboard" else null,
+                meta = if (count > 1) "$count new, all in Veyro > Clipboard" else null,
                 thumbnail = picture,
                 picture = picture,
                 pills = pills,
