@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -81,7 +82,8 @@ internal fun PcHero(
     allPcs: List<PairedDeviceUi>,
     now: Long,
     onSelect: (PairedDeviceUi) -> Unit,
-    onConnect: () -> Unit,
+    /** Disconnects the shown device if it is connected, else connects it. */
+    onToggleConnection: () -> Unit,
     onPcSettings: () -> Unit,
     onAddPc: () -> Unit,
     modifier: Modifier = Modifier,
@@ -134,10 +136,15 @@ internal fun PcHero(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 24.dp),
         )
+        if (pc.isConnected) {
+            // ADR-053: this device only. It stays off, even if it tries to reconnect, until Connect.
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onToggleConnection) { Text("Disconnect") }
+        }
         if (pc.status == ConnectionStatus.NEARBY || pc.status == ConnectionStatus.OFFLINE) {
             Spacer(Modifier.height(10.dp))
-            FilledTonalButton(onClick = onConnect, enabled = pc.status == ConnectionStatus.NEARBY) {
-                Text(if (pc.status == ConnectionStatus.NEARBY) "Connect" else "Not on this network")
+            FilledTonalButton(onClick = onToggleConnection, enabled = pc.canToggleConnection) {
+                Text(if (pc.canToggleConnection) "Connect" else "Not on this network")
             }
             if (pc.connectFailed) {
                 Spacer(Modifier.height(4.dp))
@@ -199,7 +206,11 @@ private fun PcSwitcher(
                             Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 text = (if (item.platform == Platform.ANDROID) "Phone · " else "PC · ") +
-                                    if (item.isConnected) "connected" else "not connected",
+                                    when {
+                                        item.isConnected -> "connected"
+                                        item.disconnectedByUser -> "disconnected by you"
+                                        else -> "not connected"
+                                    },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

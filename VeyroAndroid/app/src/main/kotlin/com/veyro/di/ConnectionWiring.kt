@@ -28,6 +28,8 @@ internal object ConnectionWiring {
         deviceName: suspend () -> String,
         /** ADR-052: one small file holding the listening port of the previous run. */
         listenPortFile: java.io.File? = null,
+        /** ADR-053: devices the user disconnected here, whose dial-ins are refused. */
+        disconnectedByUser: (peerDeviceId: String) -> Boolean = { false },
     ): ConnectionManager = ConnectionManager(
         dispatchers = dispatchers,
         scope = scope,
@@ -50,6 +52,7 @@ internal object ConnectionWiring {
             com.veyro.core.model.DeviceId.parseOrNull(raw)?.let { trustStore.remove(it) }
         },
         listenPortStore = listenPortFile?.let(::FileListenPortStore) ?: ConnectionManager.ListenPortStore.NONE,
+        disconnectedByUser = disconnectedByUser,
     )
 
     /** The port as decimal text. A missing or unreadable file means "no preference". */

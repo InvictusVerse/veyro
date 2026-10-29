@@ -137,11 +137,12 @@ public class VeyroBackgroundService : Service() {
 
     private fun buildNotification(status: BackgroundStatus?) = notifications.background(
         title = status?.title ?: "Veyro is running in the background",
-        text = status?.text ?: "Keeping your PC connection ready.",
+        text = status?.text ?: "Keeping your devices connected.",
         contentIntent = host?.let { activityIntent(it.openAppIntent(this, null), REQUEST_OPEN) },
         sendIntent = host?.takeIf { status != null }
             ?.let { activityIntent(it.openAppIntent(this, status?.peerDeviceId), REQUEST_SEND) },
         connected = status?.connected ?: false,
+        disconnectsAll = (status?.connectedNames?.size ?: 0) > 1,
         disconnectIntent = PendingIntent.getService(
             this,
             REQUEST_DISCONNECT,

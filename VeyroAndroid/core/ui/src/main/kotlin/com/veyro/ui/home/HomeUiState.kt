@@ -48,12 +48,20 @@ public data class PairedDeviceUi(
     val connectFailed: Boolean = false,
     val lastConnectedEpochMillis: Long = 0L,
     val pairedAtEpochMillis: Long = 0L,
+    /**
+     * The user disconnected it here (ADR-053): it stays disconnected, even when it tries to
+     * connect by itself, until Connect is pressed or files are sent to it.
+     */
+    val disconnectedByUser: Boolean = false,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.CONNECTED
 
-    /** Connect can only be tried for a device discovery currently sees. */
+    /**
+     * Connect can only be tried for a device discovery currently sees, except one the user
+     * disconnected: its Connect also lifts the block, so it can reconnect when it shows up.
+     */
     val canToggleConnection: Boolean
-        get() = status == ConnectionStatus.CONNECTED || status == ConnectionStatus.NEARBY
+        get() = status == ConnectionStatus.CONNECTED || status == ConnectionStatus.NEARBY || disconnectedByUser
 }
 
 /** The latest transfer for Home's "Recent" card. File names are user data: shown, never logged. */
@@ -102,6 +110,9 @@ public data class HomeUiState(
 
     /** Device ids of the PCs with a live session (multiple PCs). */
     val connectedPeerIds: Set<DeviceId> = emptySet(),
+
+    /** Devices the user disconnected here (ADR-053). */
+    val userDisconnectedIds: Set<DeviceId> = emptySet(),
 
     /** Each connected PC's media sessions (ADR-026), by device id string. */
     val pcMediaByPeer: Map<String, PeerMessage.MediaState> = emptyMap(),
@@ -178,6 +189,7 @@ public data class HomeUiState(
                     connectFailed = failedId == peer.deviceId && !connected,
                     lastConnectedEpochMillis = peer.lastConnectedEpochMillis,
                     pairedAtEpochMillis = peer.pairedAtEpochMillis,
+                    disconnectedByUser = !connected && peer.deviceId in userDisconnectedIds,
                 )
             }
             .sortedBy { if (it.isConnected) 0 else 1 }
@@ -253,7 +265,9 @@ public data class HomeUiState(
 public fun lastSeenLabel(device: PairedDeviceUi, now: Long): String = when (device.status) {
     ConnectionStatus.CONNECTED -> "Just now"
     ConnectionStatus.CONNECTING -> "Connecting..."
-    ConnectionStatus.NEARBY, ConnectionStatus.OFFLINE -> {
+    ConnectionStatus.NEARBY, ConnectionStatus.OFFLINE -> if (device.disconnectedByUser) {
+        "Disconnected. It stays off until you connect it."
+    } else {
         val prefix = if (device.status == ConnectionStatus.NEARBY) "Nearby, last connected" else "Last connected"
         val at = device.lastConnectedEpochMillis
         if (at <= 0L) {

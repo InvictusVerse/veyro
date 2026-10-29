@@ -19,12 +19,12 @@ public data class BackgroundStatus(
     /** Every kept PC not connected right now, being looked for. */
     val lookingNames: List<String> = if (connected) emptyList() else listOf(peerName),
 ) {
-    /** "Connected to Office PC", "Connected to 2 PCs", "Looking for Office PC". */
+    /** "Connected to Office PC", "Connected to 2 devices", "Looking for Office PC". PCs and phones. */
     val title: String
         get() = when {
-            connectedNames.size > 1 -> "Connected to ${connectedNames.size} PCs"
+            connectedNames.size > 1 -> "Connected to ${connectedNames.size} devices"
             connectedNames.size == 1 -> "Connected to ${connectedNames.single()}"
-            lookingNames.size > 1 -> "Looking for ${lookingNames.size} PCs"
+            lookingNames.size > 1 -> "Looking for ${lookingNames.size} devices"
             else -> "Looking for ${lookingNames.firstOrNull() ?: peerName}"
         }
 
@@ -36,7 +36,7 @@ public data class BackgroundStatus(
             connectedNames.size == 1 && lookingNames.isNotEmpty() -> "Looking for " + lookingNames.joinToString(", ")
             connectedNames.size == 1 -> "Notifications, photos and files stay in sync."
             lookingNames.size > 1 -> lookingNames.joinToString(", ") + ". Reconnects when they are on the same network."
-            else -> "Reconnects when your PC is on the same network."
+            else -> "Reconnects when it is on the same network."
         }
 }
 

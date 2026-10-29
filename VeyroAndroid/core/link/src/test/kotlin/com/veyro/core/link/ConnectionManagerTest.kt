@@ -264,6 +264,43 @@ class ConnectionManagerTest {
     }
 
     @Test
+    fun `a device the user disconnected is refused when it dials in, and admitted once connected again`() = runTest(testDispatcher) {
+        var disconnected = true
+        val manager = ConnectionManager(
+            dispatchers = dispatchers,
+            scope = CoroutineScope(testDispatcher),
+            localDeviceId = { localId },
+            localDeviceName = { "Local Device" },
+            localPublicKey = { localPk },
+            trustedPeer = { officePc },
+            saveTrustedPeer = {},
+            client = ConnectionClient(),
+            disconnectedByUser = { disconnected },
+        )
+        fun ackOf(ws: FakeDefaultWebSocketSession) = PeerMessageJson.codec.decodeFromString(
+            LinkPreambleAck.serializer(),
+            (ws.outgoingChannel.tryReceive().getOrNull() as Frame.Text).readText(),
+        )
+
+        // ADR-053: the PC dialling back after a Disconnect gets "refused", so it stops retrying.
+        val refused = FakeDefaultWebSocketSession()
+        dialIn(manager, refused, officePc.deviceId.value)
+        val ack = ackOf(refused)
+        assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
+        assertEquals("disconnected-by-user", ack.reason)
+        assertTrue("no session was opened", manager.connections.value.isEmpty())
+        assertNull(manager.activeConnection.value)
+
+        disconnected = false
+        val admitted = FakeDefaultWebSocketSession()
+        val job = launch { dialIn(manager, admitted, officePc.deviceId.value) }
+        assertEquals(LinkPreambleAck.MODE_SESSION, ackOf(admitted).mode)
+        assertNotNull(manager.activeConnection.value)
+        admitted.incomingChannel.close()
+        job.join()
+    }
+
+    @Test
     fun `when the first session drops a live second session from the same peer is promoted`() = runTest(testDispatcher) {
         val manager = testManager(ConnectionClient(), trusted = officePc)
         val firstWs = FakeDefaultWebSocketSession()

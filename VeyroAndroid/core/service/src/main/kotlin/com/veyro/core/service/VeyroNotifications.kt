@@ -224,6 +224,8 @@ public class VeyroNotifications(private val context: Context) {
         disconnectIntent: PendingIntent?,
         /** At least one PC is connected; false while only looking. */
         connected: Boolean = true,
+        /** More than one device is connected: the button says "Disconnect all" (ADR-053). */
+        disconnectsAll: Boolean = false,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_BACKGROUND)
             .setCategory(Notification.CATEGORY_SERVICE)
@@ -243,7 +245,12 @@ public class VeyroNotifications(private val context: Context) {
                 pills = listOfNotNull(
                     sendIntent?.takeIf { connected }?.let { NotificationCard.Pill("Send files", it, NotificationCard.Glyph.UPLOAD) },
                     disconnectIntent?.let {
-                        NotificationCard.Pill(if (connected) "Disconnect" else "Stop", it, NotificationCard.Glyph.DISCONNECT)
+                        val label = when {
+                            !connected -> "Stop"
+                            disconnectsAll -> "Disconnect all"
+                            else -> "Disconnect"
+                        }
+                        NotificationCard.Pill(label, it, NotificationCard.Glyph.DISCONNECT)
                     },
                 ),
             ),

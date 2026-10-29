@@ -234,6 +234,8 @@ public class VeyroContainer(context: Context) {
             trustStore = trustStore,
             deviceName = { runCatching { settingsStore.deviceName.first() }.getOrDefault("Veyro device") },
             listenPortFile = File(appContext.noBackupFilesDir, "listen-port"),
+            // ADR-053: asked only when a paired device dials in, so nothing is built at launch.
+            disconnectedByUser = { id -> backgroundController.isDisconnectedByUser(id) },
         ).also { connectionManagerReady.value = it }
     }
 
@@ -332,6 +334,10 @@ public class VeyroContainer(context: Context) {
         var succeeded = 0
         SendTargets.sendToEach(peers, deviceIds, selected) { target ->
             names += target.name
+            // ADR-053: sending to a device the user disconnected is asking for it again.
+            if (backgroundController.isDisconnectedByUser(target.deviceId.value)) {
+                backgroundController.onUserConnect(target.deviceId.value)
+            }
             // SendResult reports failures in the banner; an exception must not skip the rest.
             val result = runCatching { transferCoordinator.sendTo(target.deviceId, target.name, files) }
                 .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }

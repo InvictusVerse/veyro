@@ -395,6 +395,29 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `a device the user disconnected says so, and Connect lifts it even when it is not visible`() {
+        val pixel = trusted(3, "Pixel").copy(platform = Platform.ANDROID)
+        val resumed = mutableListOf<String>()
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            trustedPeers = MutableStateFlow(listOf(pixel)),
+            userDisconnectedIds = MutableStateFlow(setOf(pixel.deviceId.value)),
+            resumePeer = { resumed += it },
+        )
+
+        val card = vm.state.value.selectedPc!!
+        assertTrue(card.disconnectedByUser)
+        assertTrue("Connect stays available for a device you disconnected", card.canToggleConnection)
+        assertEquals("Disconnected. It stays off until you connect it.", lastSeenLabel(card, now = 0L))
+
+        vm.toggleConnection(pixel.deviceId)
+        assertEquals(listOf(pixel.deviceId.value), resumed)
+        assertNull("not a failure: it reconnects when it shows up", vm.state.value.failedId)
+        assertEquals("Pixel will connect when it is nearby", vm.state.value.message)
+    }
+
+    @Test
     fun `with one PC connected Send files goes straight to it even if an offline PC is selected`() {
         val office = trusted(1, "Office PC")
         val laptop = trusted(2, "Laptop")

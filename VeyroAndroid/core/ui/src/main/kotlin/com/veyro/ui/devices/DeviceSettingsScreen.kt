@@ -455,9 +455,18 @@ private fun DeviceHeader(
                     Text(
                         when {
                             device.isConnected -> "Disconnect"
-                            device.status == ConnectionStatus.NEARBY -> "Connect"
+                            device.canToggleConnection -> "Connect"
                             else -> "Not nearby"
                         },
+                    )
+                }
+                if (device.disconnectedByUser) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "You disconnected it. It stays off until you connect it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }

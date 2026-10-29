@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Runs Veyro in the background (ADR-036): decides when [VeyroBackgroundService] should run, feeds
@@ -74,13 +75,57 @@ public class BackgroundController(
         const val DISCOVERY_WINDOW_MS = 8_000L
 
         val KEPT_PLATFORMS = setOf(Platform.WINDOWS, Platform.ANDROID)
+
+        const val PAUSE_FILE = "disconnected-devices"
+        const val ALL = "all"
     }
 
-    /** Set by the notification's Disconnect; cleared when the user connects again or toggles the setting. */
-    private val pausedAll = MutableStateFlow(false)
+    /**
+     * What the user disconnected, kept in a small file so it survives the app restarting
+     * (ADR-053): the first line `all` for the notification's Disconnect, then one device id per
+     * line. Read once, when this controller is first built.
+     */
+    private val pauseFile = File(context.noBackupFilesDir, PAUSE_FILE)
+    private val saved: Pair<Boolean, Set<String>> = runCatching {
+        val lines = pauseFile.takeIf { it.exists() }?.readLines()?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        (lines.firstOrNull() == ALL) to lines.filterNot { it == ALL }.toSet()
+    }.getOrDefault(false to emptySet())
 
-    /** PCs the user disconnected on Home; the others stay kept (multiple PCs). */
-    private val pausedPeers = MutableStateFlow<Set<String>>(emptySet())
+    /** Set by the notification's Disconnect; cleared when the user connects again or toggles the setting. */
+    private val pausedAll = MutableStateFlow(saved.first)
+
+    /** Devices the user disconnected on Home; the others stay kept (multiple PCs). */
+    private val pausedPeers = MutableStateFlow(saved.second)
+
+    /**
+     * True while the user has disconnected [deviceId] here, alone or with everything (ADR-053).
+     * Such a device is not reconnected by this phone, and its own dial-ins are refused.
+     */
+    public fun isDisconnectedByUser(deviceId: String): Boolean =
+        pausedAll.value || canonical(deviceId) in pausedPeers.value
+
+    /** The paired devices the user has disconnected, for Home's "Disconnected" state. */
+    public val userDisconnectedIds: Flow<Set<String>> by lazy {
+        combine(pausedAll, pausedPeers, trustStore.peers) { all, ids, peers ->
+            if (all) peers.map { it.deviceId.value }.toSet() else ids
+        }.distinctUntilChanged()
+    }
+
+    private fun canonical(deviceId: String): String = DeviceId.parseOrNull(deviceId)?.value ?: deviceId
+
+    private fun savePauses() {
+        val all = pausedAll.value
+        val ids = pausedPeers.value
+        scope.launch(dispatchers.io) {
+            runCatching {
+                if (!all && ids.isEmpty()) {
+                    pauseFile.delete()
+                } else {
+                    pauseFile.writeText((listOfNotNull(ALL.takeIf { all }) + ids).joinToString("\n"))
+                }
+            }.onFailure { VeyroLog.w(TAG) { "Disconnects not saved: ${it.javaClass.simpleName}" } }
+        }
+    }
 
     /** Live sessions by peer id, oldest first. */
     private val connections: Flow<Map<String, PeerConnection>> by lazy {
@@ -171,21 +216,36 @@ public class BackgroundController(
         }
     }
 
-    /** Home's Connect: the user wants [deviceId] again, so background keeping resumes for it. */
-    public fun onUserConnect(deviceId: String) {
-        pausedAll.value = false
-        pausedPeers.update { it - deviceId }
+    /**
+     * Home's Connect, or a send to [deviceId]: the user wants that device again, so background
+     * keeping resumes for it and it may dial in. After the notification's Disconnect, only this
+     * device resumes; the others stay disconnected until they are connected one by one (ADR-053).
+     */
+    public suspend fun onUserConnect(deviceId: String) {
+        val id = canonical(deviceId)
+        if (pausedAll.value) {
+            val everyone = runCatching { trustStore.snapshot() }.getOrDefault(emptyList()).map { it.deviceId.value }
+            pausedPeers.value = everyone.toSet() + pausedPeers.value
+            pausedAll.value = false
+        }
+        pausedPeers.update { it - id }
+        savePauses()
     }
 
-    /** Home's Disconnect for one PC: close its session and stop reconnecting to it only. */
+    /**
+     * Home's Disconnect for one device: close its sessions, stop reconnecting to it, and refuse
+     * it when it dials in, until the user connects it again (ADR-053). Other devices stay.
+     */
     public fun onUserDisconnect(deviceId: String) {
-        pausedPeers.update { it + deviceId }
+        pausedPeers.update { it + canonical(deviceId) }
+        savePauses()
         connectionManager().disconnect(deviceId)
     }
 
-    /** The notification's Disconnect: close every session and stop reconnecting. */
+    /** The notification's Disconnect: close every session, stop reconnecting, refuse dial-ins. */
     public fun onUserDisconnectAll() {
         pausedAll.value = true
+        savePauses()
         connectionManager().disconnect()
     }
 
@@ -193,6 +253,7 @@ public class BackgroundController(
     public fun onSettingChanged() {
         pausedAll.value = false
         pausedPeers.value = emptySet()
+        savePauses()
     }
 
     // ── BackgroundHost ──────────────────────────────────────────────────────────────────────

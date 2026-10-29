@@ -149,7 +149,7 @@ public fun HomeScreen(
                         allPcs = state.pairedDevices,
                         now = now,
                         onSelect = { viewModel.selectPc(it.deviceId) },
-                        onConnect = { pc?.let { viewModel.toggleConnection(it.deviceId) } },
+                        onToggleConnection = { pc?.let { viewModel.toggleConnection(it.deviceId) } },
                         onPcSettings = { pc?.let { onPcSettings(it.deviceId) } },
                         onAddPc = onAddDevice,
                         modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),

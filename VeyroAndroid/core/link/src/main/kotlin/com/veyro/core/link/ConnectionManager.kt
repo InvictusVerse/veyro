@@ -103,6 +103,12 @@ public class ConnectionManager(
     private val forgetTrustedPeer: suspend (peerDeviceId: String) -> Unit = {},
     /** Where the listening port is kept between runs (ADR-052). The default keeps none. */
     private val listenPortStore: ListenPortStore = ListenPortStore.NONE,
+    /**
+     * True while the user has disconnected this paired device here (ADR-053). Its sessions are
+     * then refused when it dials in, so a Disconnect is not undone by the PC or the other phone
+     * reconnecting a few seconds later. Pairing and this phone's own dials are not affected.
+     */
+    private val disconnectedByUser: (peerDeviceId: String) -> Boolean = { false },
 ) {
 
     /** The listening port of the previous run, so the next one can try it first (ADR-052). */
@@ -131,6 +137,9 @@ public class ConnectionManager(
 
     private companion object {
         const val TAG = "ConnectionManager"
+
+        /** The reason sent with the refusal (ADR-053); the PC logs it, nothing parses it. */
+        const val REASON_DISCONNECTED_BY_USER = "disconnected-by-user"
         const val PREAMBLE_TIMEOUT_MS = 10_000L
         const val CONSENT_TIMEOUT_MS = 30_000L
         const val ACK_TIMEOUT_MS = 35_000L
@@ -421,6 +430,14 @@ public class ConnectionManager(
         // A trusted peer opens its session even while another device's pairing prompt is up.
         val known = trustedPeer(preamble.id)?.takeUnless { it.revoked }
         if (known != null) {
+            if (disconnectedByUser(preamble.id)) {
+                // ADR-053. "refused" (not "busy"): the PC then stops dialling until this phone
+                // connects or its user presses Reconnect, instead of retrying every few minutes.
+                VeyroLog.i(TAG) { "[$connId] Session from ${preamble.id} refused: the user disconnected it here" }
+                sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_REFUSED, REASON_DISCONNECTED_BY_USER), connId)
+                ws.close(CloseReason(CloseReason.Codes.NORMAL, "refused"))
+                return
+            }
             if (liveSamePeer != null) {
                 VeyroLog.i(TAG) { "[$connId] Second session from already-connected peer (${preamble.id}); keeping the existing one and running this alongside it" }
             }

@@ -45,6 +45,8 @@ public class HomeViewModel(
     pcStatus: Flow<Map<String, PeerMessage.DeviceStatus>> = flowOf(emptyMap()),
     /** Device ids of the PCs with a live session (multiple PCs). */
     connectedPeerIds: Flow<Set<String>> = flowOf(emptySet()),
+    /** Devices the user disconnected here; they stay off until Connect (ADR-053). */
+    userDisconnectedIds: Flow<Set<String>> = flowOf(emptySet()),
     /** Sends a media command to the PC with this device id; true if it was sent. */
     private val sendMediaCommand: suspend (deviceId: String, PeerMessage.MediaCommand) -> Boolean = { _, _ -> false },
     /** Paired devices, for the device cards and the PC switcher. */
@@ -54,6 +56,8 @@ public class HomeViewModel(
         { _, _, _ -> false },
     /** Closes the live session with this PC only; other PCs stay connected. */
     private val disconnectPeer: (deviceId: String) -> Unit = {},
+    /** Lifts a Disconnect (ADR-053), so the device may reconnect by itself when it shows up. */
+    private val resumePeer: suspend (deviceId: String) -> Unit = {},
     /** What each connected PC advertised, by device id. */
     peerCapabilities: Flow<Map<String, Capabilities>> = flowOf(emptyMap()),
     /** The last wallpaper each PC sent, by device id (ADR-038). */
@@ -115,6 +119,13 @@ public class HomeViewModel(
             }
             .launchIn(viewModelScope)
 
+        userDisconnectedIds
+            .catch { emit(emptySet()) }
+            .onEach { ids ->
+                _state.update { it.copy(userDisconnectedIds = ids.mapNotNull(DeviceId::parseOrNull).toSet()) }
+            }
+            .launchIn(viewModelScope)
+
         trustedPeers
             .catch { emit(emptyList()) }
             .onEach { peers -> _state.update { it.copy(pairedPeers = peers.filterNot { p -> p.revoked }) } }
@@ -156,7 +167,14 @@ public class HomeViewModel(
         val peer = current.pairedPeers.firstOrNull { it.deviceId == deviceId } ?: return
         val endpoints = current.devices.firstOrNull { it.deviceId == deviceId }?.endpoints.orEmpty()
         if (endpoints.isEmpty()) {
-            _state.update { it.copy(failedId = deviceId) }
+            if (deviceId in current.userDisconnectedIds) {
+                // Not visible right now (a phone is silent in the background): lift the
+                // Disconnect, and it reconnects on its own when it is around (ADR-053).
+                viewModelScope.launch { resumePeer(deviceId.value) }
+                _state.update { it.copy(message = "${peer.name} will connect when it is nearby") }
+            } else {
+                _state.update { it.copy(failedId = deviceId) }
+            }
             return
         }
         _state.update { it.copy(connectingId = deviceId, failedId = null) }

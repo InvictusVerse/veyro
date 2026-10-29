@@ -34,16 +34,19 @@ public class VeyroViewModelFactory(
             pcMedia = container.mediaMirror.peerMedia,
             pcStatus = container.deviceStatusPublisher.peerStatus,
             connectedPeerIds = container.connectedPeerIds,
+            // ADR-053: which devices the user disconnected, for "Disconnected" and Connect.
+            userDisconnectedIds = container.backgroundController.userDisconnectedIds,
             sendMediaCommand = { id, command -> container.mediaMirror.sendMediaCommand(id, command) },
             trustedPeers = container.trustStore.peers,
-            // Through the background controller (ADR-036), so a Disconnect here is not undone by
-            // the background reconnect a few seconds later, and a Connect resumes it. Both act on
-            // that one PC; the others stay connected (multiple PCs).
+            // Through the background controller (ADR-036, ADR-053), so a Disconnect here is not
+            // undone by this phone's background reconnect or by the device dialling back in, and a
+            // Connect resumes it. Both act on that one device; the others stay connected.
             connectPeer = { id, name, endpoints ->
                 container.backgroundController.onUserConnect(id)
                 container.connectionManager.connect(id, name, endpoints)
             },
             disconnectPeer = { id -> container.backgroundController.onUserDisconnect(id) },
+            resumePeer = { id -> container.backgroundController.onUserConnect(id) },
             // ADR-038: the Phone Link-style Home.
             peerCapabilities = container.connectedPeerCapabilities,
             pcWallpapers = container.wallpaperBridge.peerWallpapers,
