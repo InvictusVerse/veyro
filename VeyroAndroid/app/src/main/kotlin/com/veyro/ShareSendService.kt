@@ -142,6 +142,8 @@ public class ShareSendService : Service() {
             val summary = container.sendFilesAndWait(targets, files)
             val what = if (files.size == 1) files.first().effectiveName else "${files.size} files"
             when {
+                // ADR-055: the user cancelled; like the receive side, nothing to report.
+                summary.cancelled -> Unit
                 summary.targets.isEmpty() -> result("No device paired", "Pair a PC or phone in Veyro first.", success = false)
                 summary.succeeded == summary.targets.size -> result("Sent $what", "To ${summary.targets.joinToString()}", success = true)
                 summary.succeeded > 0 -> result("Sent $what to some devices", "Open Veyro for details.", success = false)

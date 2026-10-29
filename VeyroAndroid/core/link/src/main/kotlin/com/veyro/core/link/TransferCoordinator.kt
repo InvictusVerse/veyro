@@ -15,7 +15,13 @@ import com.veyro.core.transfer.ItemResult
 import com.veyro.core.transfer.TransferStoragePublisher
 import com.veyro.core.protocol.RelativePath
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -129,6 +135,12 @@ public class TransferCoordinator(
         /** Completed with the answer, so the waiting offer wakes at once instead of polling. */
         val answeredSignal = kotlinx.coroutines.CompletableDeferred<Unit>()
     }
+
+    /** Each running [sendTo]'s own job, by transfer id, so [cancel] reaches it at any stage (ADR-055). */
+    private val sendJobs = ConcurrentHashMap<String, Job>()
+
+    /** Sends the user cancelled on this device; [sendTo] answers [SendResult.Cancelled] for them. */
+    private val cancelledHere = ConcurrentHashMap.newKeySet<String>()
 
     /** Wire reason for each offer [authorize] refused, read once by the runner. */
     private val declineReasons = ConcurrentHashMap<String, String>()
@@ -397,12 +409,74 @@ public class TransferCoordinator(
         return SessionResolution.Ready(session)
     }
 
+    /**
+     * Sends [files] to one device. [cancel] on this device stops it at any stage, staging and
+     * connecting included, and the answer is [SendResult.Cancelled] rather than an exception, so a
+     * send to several devices knows to skip the rest (ADR-055).
+     */
     public suspend fun sendTo(
         peerDeviceId: DeviceId,
         peerName: String,
         files: List<OutgoingFile>,
-    ): SendResult = withContext(dispatchers.io) {
+    ): SendResult {
         val transferId = UUID.randomUUID().toString().take(8)
+        return try {
+            coroutineScope {
+                sendJobs[transferId] = coroutineContext.job
+                try {
+                    runSend(transferId, peerDeviceId, peerName, files)
+                } finally {
+                    sendJobs.remove(transferId)
+                }
+            }
+        } catch (e: CancellationException) {
+            // Only this send's job was cancelled; a cancelled caller still gets the exception.
+            if (transferId !in cancelledHere || !currentCoroutineContext().isActive) throw e
+            VeyroLog.i(TAG) { "[$transferId] Send cancelled on this device" }
+            recordCancelledSend(transferId, peerDeviceId, peerName, files)
+            SendResult.Cancelled
+        } finally {
+            cancelledHere.remove(transferId)
+        }
+    }
+
+    /** History for a send cancelled here, unless its outcome is already recorded. */
+    private suspend fun recordCancelledSend(
+        transferId: String,
+        peerDeviceId: DeviceId,
+        peerName: String,
+        files: List<OutgoingFile>,
+    ) {
+        if (!completedTransfers.add(transferId)) return
+        val now = System.currentTimeMillis()
+        val record = Transfer(
+            id = transferId,
+            peerDeviceId = peerDeviceId,
+            peerDisplayName = peerName,
+            direction = TransferDirection.SEND,
+            items = files.mapIndexed { index, file ->
+                TransferItem(
+                    index = index,
+                    relativePath = RelativePath.sanitizeOutgoingSegment(file.effectiveName),
+                    sizeBytes = file.sizeBytes,
+                    lastModifiedEpochMillis = file.lastModifiedEpochMillis,
+                    isDirectory = false,
+                )
+            },
+            totalBytes = files.sumOf { it.sizeBytes },
+            state = TransferState.CANCELLED,
+            startedAtEpochMillis = now,
+            finishedAtEpochMillis = now,
+        )
+        runCatching { onTransferCompleted?.invoke(record) }
+    }
+
+    private suspend fun runSend(
+        transferId: String,
+        peerDeviceId: DeviceId,
+        peerName: String,
+        files: List<OutgoingFile>,
+    ): SendResult = withContext(dispatchers.io) {
         VeyroLog.i(TAG) { "[$transferId] User initiated transfer to $peerName ($peerDeviceId) with ${files.size} file(s)" }
         if (files.isEmpty()) return@withContext SendResult.Failed("Nothing selected")
 
@@ -432,6 +506,15 @@ public class TransferCoordinator(
             VeyroLog.i(TAG) { "[$transferId] Staging ${files.size} file(s) into cache" }
             stage(transferId, files)
         } catch (t: Throwable) {
+            // The half-staged copy can be gigabytes; it goes now, not at the next sweep.
+            runCatching { File(stagingDir, transferId).deleteRecursively() }
+            if (t is CancellationException) {
+                _activeTransfer.value = _activeTransfer.value?.copy(
+                    stage = TransferStage.CANCELLED,
+                    statusText = "Transfer cancelled",
+                )
+                throw t
+            }
             VeyroLog.e(TAG, t) { "[$transferId] Staging failed: ${t.message}" }
             _activeTransfer.value = _activeTransfer.value?.copy(
                 stage = TransferStage.FAILED,
@@ -576,7 +659,7 @@ public class TransferCoordinator(
                         stage = TransferStage.CANCELLED,
                         statusText = "Transfer cancelled",
                     )
-                    SendResult.Cancelled
+                    if (transferId in cancelledHere) SendResult.Cancelled else SendResult.CancelledByPeer
                 }
                 is TransferRunner.SendOutcome.Failed -> {
                     VeyroLog.e(TAG) { "[$transferId] Transfer failed: ${outcome.reason}" }
@@ -674,7 +757,8 @@ public class TransferCoordinator(
             when (outcome) {
                 is TransferRunner.SendOutcome.Done -> SendResult.Success(outcome.results)
                 is TransferRunner.SendOutcome.Declined -> SendResult.Declined(outcome.reason)
-                TransferRunner.SendOutcome.Cancelled -> SendResult.Cancelled
+                // No banner, no Cancel button here: the PC asked for the file and cancelled it.
+                TransferRunner.SendOutcome.Cancelled -> SendResult.CancelledByPeer
                 is TransferRunner.SendOutcome.Failed -> SendResult.Failed(outcome.reason)
             }
         } finally {
@@ -696,6 +780,14 @@ public class TransferCoordinator(
             )
         }
         runner.cancel(targetId)
+        // ADR-055: the send's own job as well. The runner only has a send once it is offered, so
+        // without this a Cancel while staging or connecting was lost and the send went ahead.
+        sendJobs.forEach { (id, job) ->
+            if (targetId == null || id == targetId) {
+                cancelledHere.add(id)
+                job.cancel()
+            }
+        }
     }
 
     // ── Receiving ──────────────────────────────────────────────────────────────────────────
@@ -846,14 +938,24 @@ public class TransferCoordinator(
 
     private class Staged(val items: List<TransferItem>, val files: Map<Int, File>)
 
-    private fun stage(transferId: String, files: List<OutgoingFile>): Staged {
+    private suspend fun stage(transferId: String, files: List<OutgoingFile>): Staged {
+        val context = currentCoroutineContext()
         val dir = File(stagingDir, transferId).apply { mkdirs() }
         val items = ArrayList<TransferItem>(files.size)
         val byIndex = HashMap<Int, File>(files.size)
+        val buffer = ByteArray(256 * 1024)
         files.forEachIndexed { index, outgoing ->
             val local = File(dir, "staged-$index")
             outgoing.openStream().use { input ->
-                local.outputStream().use { output -> input.copyTo(output, 256 * 1024) }
+                local.outputStream().use { output ->
+                    // ADR-055: Cancel is checked between buffers; a 4 GB video takes a while to copy.
+                    while (true) {
+                        context.ensureActive()
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                    }
+                }
             }
             byIndex[index] = local
             items += TransferItem(
@@ -911,6 +1013,11 @@ public data class IncomingOffer(
 public sealed interface SendResult {
     public data class Success(val results: List<ItemResult>) : SendResult
     public data class Declined(val reason: DeclineReason = DeclineReason.DECLINED) : SendResult
+
+    /** The user cancelled it on this device; a send to several devices stops here (ADR-055). */
     public data object Cancelled : SendResult
+
+    /** The receiving device cancelled it; the other devices of the same send still get theirs. */
+    public data object CancelledByPeer : SendResult
     public data class Failed(val reason: String) : SendResult
 }

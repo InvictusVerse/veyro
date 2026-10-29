@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -611,6 +612,7 @@ public class TransferMailbox(public val transferId: String) {
     private val decisionDeferred = CompletableDeferred<PeerMessage.TransferDecision>()
     private val itemResults = ConcurrentHashMap<Int, CompletableDeferred<PeerMessage.ItemResult>>()
     private val payloads = Channel<PeerMessage>(capacity = 64)
+    private val cancelSignal = CompletableDeferred<Unit>()
 
     @Volatile public var isCancelled: Boolean = false
         private set
@@ -633,9 +635,18 @@ public class TransferMailbox(public val transferId: String) {
 
     internal fun deliverCancel(cancel: PeerMessage.Cancel) {
         isCancelled = true
+        cancelSignal.complete(Unit)
         decisionDeferred.complete(PeerMessage.TransferDecision(cancel.transferId, accept = false, reason = cancel.reason))
         payloads.trySend(cancel)
     }
+
+    /**
+     * True once the peer cancelled, waiting up to [timeoutMs] for its Cancel (ADR-055). A peer
+     * that cancels closes its data socket and sends Cancel on the session at the same moment, and
+     * the close often arrives first: a broken data stream asks this before it counts as a failure.
+     */
+    public suspend fun awaitCancel(timeoutMs: Long): Boolean =
+        isCancelled || withTimeoutOrNull(timeoutMs) { cancelSignal.await() } != null
 
     // Suspend on the deferred instead of polling it: a 10 ms poll woke the CPU 100 times a second
     // for as long as the other side took to decide or to verify a file. A deferred cancelled by
@@ -643,8 +654,17 @@ public class TransferMailbox(public val transferId: String) {
     public suspend fun awaitDecision(timeoutMs: Long): PeerMessage.TransferDecision? =
         awaitWithin(decisionDeferred, timeoutMs)
 
-    public suspend fun awaitItemResult(index: Int, timeoutMs: Long): PeerMessage.ItemResult? =
-        awaitWithin(itemResults.computeIfAbsent(index) { CompletableDeferred() }, timeoutMs)
+    /** The receiver's verdict on item [index]; null on timeout or when the peer cancels (ADR-055). */
+    public suspend fun awaitItemResult(index: Int, timeoutMs: Long): PeerMessage.ItemResult? {
+        val result = itemResults.computeIfAbsent(index) { CompletableDeferred() }
+        if (result.isCompleted) return result.await()
+        return withTimeoutOrNull(timeoutMs) {
+            select<PeerMessage.ItemResult?> {
+                result.onAwait { it }
+                cancelSignal.onAwait { null }
+            }
+        }
+    }
 
     private suspend fun <T> awaitWithin(deferred: CompletableDeferred<T>, timeoutMs: Long): T? =
         // An answer that already arrived is returned even with no time left.

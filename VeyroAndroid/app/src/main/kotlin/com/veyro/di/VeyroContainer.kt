@@ -323,8 +323,11 @@ public class VeyroContainer(context: Context) {
         appScope.launch { sendFilesAndWait(deviceIds, files) }
     }
 
-    /** Who a send went to and how many of those PCs took every file. */
-    public data class SendSummary(val targets: List<String>, val succeeded: Int)
+    /**
+     * Who a send went to and how many of those PCs took every file. [cancelled]: the user
+     * cancelled it on this phone, so the devices after that one were skipped (ADR-055).
+     */
+    public data class SendSummary(val targets: List<String>, val succeeded: Int, val cancelled: Boolean = false)
 
     /** [sendFiles], suspending until every PC is done; used by the background share (ADR-043). */
     public suspend fun sendFilesAndWait(deviceIds: List<String>, files: List<OutgoingFile>): SendSummary {
@@ -333,6 +336,7 @@ public class VeyroContainer(context: Context) {
         val selected = connectionManagerReady.value?.activeConnection?.value?.peerDeviceId
         val names = mutableListOf<String>()
         var succeeded = 0
+        var cancelled = false
         SendTargets.sendToEach(peers, deviceIds, selected) { target ->
             names += target.name
             // ADR-053: sending to a device the user disconnected is asking for it again.
@@ -344,9 +348,14 @@ public class VeyroContainer(context: Context) {
                 .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                 .getOrNull()
             if (result is SendResult.Success) succeeded++
+            // ADR-055: Cancel on this phone stops the whole send, "All connected" included. A
+            // device that cancels its own copy (CancelledByPeer) does not stop the others.
+            cancelled = result is SendResult.Cancelled
+            cancelled.not()
         }
         if (names.isEmpty()) VeyroLog.w("Container") { "Send files: no paired device to send to" }
-        return SendSummary(names, succeeded)
+        if (cancelled) VeyroLog.i("Container") { "Send files: cancelled, ${names.size} device(s) reached" }
+        return SendSummary(names, succeeded, cancelled)
     }
 
     /**

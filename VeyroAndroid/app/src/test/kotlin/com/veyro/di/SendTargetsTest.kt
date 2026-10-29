@@ -35,10 +35,27 @@ class SendTargetsTest {
             paired = paired,
             deviceIds = listOf(office.deviceId.value, laptop.deviceId.value),
             selectedConnected = office.deviceId.value,
-        ) { sentTo += it.name }
+        ) { sentTo += it.name; true }
 
         assertEquals(2, count)
         assertEquals(listOf("Office PC", "Laptop"), sentTo)
+    }
+
+    @Test
+    fun `cancel on the first PC skips the PCs after it (ADR-055)`() = runTest {
+        val third = peer(4, "Desk PC")
+        val sentTo = mutableListOf<String>()
+        val count = SendTargets.sendToEach(
+            paired = paired + third,
+            deviceIds = listOf(office.deviceId.value, laptop.deviceId.value, third.deviceId.value),
+            selectedConnected = null,
+        ) { target ->
+            sentTo += target.name
+            target != office // the user cancelled the send to the first PC
+        }
+
+        assertEquals(1, count)
+        assertEquals(listOf("Office PC"), sentTo)
     }
 
     @Test

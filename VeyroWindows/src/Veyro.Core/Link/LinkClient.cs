@@ -49,6 +49,12 @@ public sealed class LinkClient
     public TimeSpan DecisionTimeout { get; init; } = TransferMailbox.DecisionTimeout;
 
     /// <summary>
+    /// How long a broken data stream waits for the phone's cancel before it counts as a failure
+    /// (ADR-055). On a LAN the cancel follows the closed socket within milliseconds.
+    /// </summary>
+    public TimeSpan PeerCancelGrace { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// Loopback tests only. A phone never legitimately names 127.0.0.1, and connecting there would
     /// let a peer aim the PC's file bytes at a local service, so the app leaves this false.
     /// </summary>
@@ -289,16 +295,37 @@ public sealed class LinkClient
         {
             return await RunDataPlaneAsync(plan, decision, progress, linked.Token).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is OperationCanceledException or IOException or System.Net.Sockets.SocketException &&
-                                      channel.PeerAborted.IsCancellationRequested && !ct.IsCancellationRequested)
+        catch (Exception error) when (error is OperationCanceledException or IOException or System.Net.Sockets.SocketException
+                                          or InvalidDataException &&
+                                      !ct.IsCancellationRequested)
         {
-            throw new IOException("The phone stopped the transfer.", error);
+            // ADR-055: a phone that cancels closes the data socket and sends cancel on the session
+            // together, and the closed socket often arrives first. Wait briefly for the cancel so
+            // the user reads "the phone stopped it" instead of a socket error. InvalidDataException:
+            // the socket closed while this side waited for the phone's itemResult.
+            if (await PeerAbortedWithinAsync(channel.PeerAborted, PeerCancelGrace).ConfigureAwait(false))
+                throw new IOException("The phone stopped the transfer.", error);
+            throw;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             await TryCancelAsync(channel, "cancelled").ConfigureAwait(false);
             throw;
         }
+    }
+
+    /// <summary>True once <paramref name="peerAborted"/> is signalled, waiting up to <paramref name="grace"/>.</summary>
+    private static async Task<bool> PeerAbortedWithinAsync(CancellationToken peerAborted, TimeSpan grace)
+    {
+        if (peerAborted.IsCancellationRequested) return true;
+        try
+        {
+            await Task.Delay(grace, peerAborted).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        return peerAborted.IsCancellationRequested;
     }
 
     private static async Task TryCancelAsync(IOutboundTransferChannel channel, string reason)

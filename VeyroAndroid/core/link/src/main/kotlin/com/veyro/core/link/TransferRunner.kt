@@ -60,6 +60,13 @@ public class TransferRunner(
         const val DECISION_TIMEOUT_MS = 120_000L
         const val STEP_TIMEOUT_MS = 60_000L
         const val PROGRESS_INTERVAL_MS = 200L
+
+        /**
+         * How long a broken data stream waits for the peer's Cancel before it counts as a failure
+         * (ADR-055). The peer closes its socket and sends Cancel at once; on a LAN the Cancel
+         * follows within milliseconds, so this only delays reporting a real failure.
+         */
+        const val PEER_CANCEL_GRACE_MS = 2_000L
     }
 
     private val _progress = MutableSharedFlow<TransferProgress>(
@@ -508,6 +515,19 @@ public class TransferRunner(
                 }
             }
 
+            // ADR-055: a receiver that cancels closes the data socket and sends Cancel together,
+            // and the close often lands first. A write that fails, or a verdict that never comes,
+            // asks this before it counts as a failure; true means "the receiver cancelled".
+            suspend fun receiverCancelled(item: TransferItem): Boolean {
+                val stopped = remoteCancelled || mailbox.isCancelled ||
+                    (session.isConnected && mailbox.awaitCancel(PEER_CANCEL_GRACE_MS))
+                if (stopped) {
+                    VeyroLog.w(TAG) { "[$transferId] The receiver cancelled the transfer" }
+                    onProgress?.invoke(sent, totalBytes, item, TransferStage.CANCELLED, 0L, null)
+                }
+                return stopped
+            }
+
             try {
                 for (item in files) {
                     if (cancelled || remoteCancelled) {
@@ -585,6 +605,7 @@ public class TransferRunner(
                             }
 
                             if (!session.isConnected || !tcpSender.isConnected) {
+                                if (receiverCancelled(item)) return@withContext SendOutcome.Cancelled
                                 val reason = if (!session.isConnected) "WebSocket session lost" else "TCP data socket lost"
                                 VeyroLog.e(TAG) { "[$transferId] $reason while streaming chunk #$chunkIndex (sent $sent of $totalBytes bytes)" }
                                 onProgress?.invoke(sent, totalBytes, item, TransferStage.FAILED, 0L, null)
@@ -613,6 +634,7 @@ public class TransferRunner(
                                 )
                             } catch (t: Throwable) {
                                 if (t is kotlinx.coroutines.CancellationException) throw t
+                                if (receiverCancelled(item)) return@withContext SendOutcome.Cancelled
                                 VeyroLog.e(TAG, t) { "[$transferId] Failed to send TCP chunk #$chunkIndex: ${t.message}" }
                                 onProgress?.invoke(sent, totalBytes, item, TransferStage.FAILED, 0L, null)
                                 return@withContext SendOutcome.Failed("TCP socket error: ${t.message}")
@@ -644,12 +666,14 @@ public class TransferRunner(
                         session.send(PeerMessage.ItemEnd(transferId, item.index, hash))
                     } catch (t: Throwable) {
                         if (t is kotlinx.coroutines.CancellationException) throw t
+                        if (receiverCancelled(item)) return@withContext SendOutcome.Cancelled
                         onProgress?.invoke(sent, totalBytes, item, TransferStage.FAILED, 0L, null)
                         return@withContext SendOutcome.Failed("Connection lost sending ItemEnd")
                     }
 
                     val itemResult = mailbox.awaitItemResult(item.index, STEP_TIMEOUT_MS)
                     if (itemResult == null) {
+                        if (receiverCancelled(item)) return@withContext SendOutcome.Cancelled
                         val reason = if (!session.isConnected) "Connection lost waiting for verification" else "Receiver timed out verifying item"
                         VeyroLog.e(TAG) { "[$transferId] Item #${item.index} failed: $reason" }
                         onProgress?.invoke(sent, totalBytes, item, TransferStage.FAILED, 0L, null)
@@ -1001,7 +1025,12 @@ public class TransferRunner(
                 }
 
                 is TcpReceiveOutcome.Failed -> {
-                    if (cancelled || mailbox.isCancelled) {
+                    // ADR-055: a sender that cancels closes the data socket and sends Cancel on the
+                    // session together; the close often lands first. Wait briefly for the Cancel
+                    // so the user sees "cancelled", not "interrupted".
+                    if (cancelled || mailbox.isCancelled ||
+                        (session.isConnected && mailbox.awaitCancel(PEER_CANCEL_GRACE_MS))
+                    ) {
                         VeyroLog.i(TAG) { "[$transferId] TCP receiver interruption was due to cancellation" }
                         onProgress?.invoke(0L, totalBytes, null, TransferStage.CANCELLED, 0L, null)
                         ReceiveResult.EMPTY

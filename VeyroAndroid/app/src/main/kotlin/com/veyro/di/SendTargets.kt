@@ -25,16 +25,20 @@ internal object SendTargets {
 
     /**
      * Resolves the targets and sends to each one after the other, so the transfer banner (one
-     * transfer at a time) shows every PC in turn. A failure for one PC does not stop the others.
+     * transfer at a time) shows every PC in turn. A failure for one PC does not stop the others;
+     * [send] answering false (the user cancelled, ADR-055) does. Returns how many were sent to.
      */
     suspend fun sendToEach(
         paired: List<TrustedPeer>,
         deviceIds: List<String>,
         selectedConnected: String?,
-        send: suspend (TrustedPeer) -> Unit,
+        send: suspend (TrustedPeer) -> Boolean,
     ): Int {
-        val targets = resolve(paired, deviceIds, selectedConnected)
-        for (target in targets) send(target)
-        return targets.size
+        var attempted = 0
+        for (target in resolve(paired, deviceIds, selectedConnected)) {
+            attempted++
+            if (!send(target)) break
+        }
+        return attempted
     }
 }

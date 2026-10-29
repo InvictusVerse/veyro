@@ -81,8 +81,9 @@ public class TcpDataReceiver(
     public val bindAddress: InetAddress?
         get() = serverSocket?.inetAddress
 
-    private var externalCompleted: Boolean? = null
-    private var externalCancelReason: String? = null
+    // Set from the session's control collector while the receive loop reads them on another thread.
+    @Volatile private var externalCompleted: Boolean? = null
+    @Volatile private var externalCancelReason: String? = null
 
     public fun notifyTransferEnd(completed: Boolean) {
         externalCompleted = completed

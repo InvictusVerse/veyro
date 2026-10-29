@@ -190,6 +190,38 @@ public sealed class SessionTransferTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PcToPhone_PhoneCancelArrivingAfterItsSocketCloses_SaysThePhoneStoppedIt()
+    {
+        // ADR-055: a phone that cancels closes the data socket and sends cancel together, and on a
+        // busy phone the closed socket lands first. The PC still reports the phone's cancel.
+        await using FakePhone phone = await ConnectPhoneAsync();
+        string source = WriteSource("big.bin", 32 * 1024 * 1024, out _);
+        Task<BulkTransferResult> send = NewClient().SendFilesAsync(_registry, null, TrustedPhone, [source], ct: Ct);
+        var offer = await phone.ReceiveAsync<PeerMessage.TransferOffer>(Ct);
+
+        var tcp = new TcpListener(System.Net.IPAddress.Loopback, 0);
+        tcp.Start();
+        await phone.Session.SendAsync(new PeerMessage.TransferDecision(offer.TransferId, true, Route: "LAN_TCP",
+            TcpHost: "127.0.0.1", TcpPort: ((System.Net.IPEndPoint)tcp.LocalEndpoint).Port, FallbackHost: "127.0.0.1",
+            AuthToken: "token"), Ct);
+        using (TcpClient data = await tcp.AcceptTcpClientAsync(Ct))
+        {
+            NetworkStream stream = data.GetStream();
+            Assert.IsType<Veyro.Core.Protocol.TcpFrame.Auth>(await Veyro.Core.Protocol.TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct));
+            await Veyro.Core.Protocol.TcpFrameCodec.WriteFrameAsync(
+                stream, new Veyro.Core.Protocol.TcpFrame.AuthAck(1, offer.TransferId, true), ct: Ct);
+            await Veyro.Core.Protocol.TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct); // ItemBegin
+            await Veyro.Core.Protocol.TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct); // the first chunk; then the user cancels
+        }
+        tcp.Stop();
+        await Task.Delay(300, Ct);
+        await phone.Session.SendAsync(new PeerMessage.Cancel(offer.TransferId, "User cancelled"), Ct);
+
+        var error = await Assert.ThrowsAsync<IOException>(() => send);
+        Assert.Equal("The phone stopped the transfer.", error.Message);
+    }
+
+    [Fact]
     public async Task PcToPhone_NoDecisionInTime_TimesOutAndCancels()
     {
         await using FakePhone phone = await ConnectPhoneAsync();
