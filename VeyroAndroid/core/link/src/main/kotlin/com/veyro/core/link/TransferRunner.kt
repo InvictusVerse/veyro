@@ -2,6 +2,7 @@ package com.veyro.core.link
 
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.common.hex
 import com.veyro.core.model.TransferItem
 import com.veyro.core.model.TransferProgress
 import com.veyro.core.model.TransferRoute
@@ -561,6 +562,15 @@ public class TransferRunner(
                             .sumOf { ChunkMath.lengthOf(it, item.sizeBytes, CHUNK_SIZE).toLong() }
                     }
 
+                    // ADR-049: a full send hashes the bytes as they are read, so ItemEnd goes out
+                    // the moment the last chunk does (re-reading took ~13 s for 4 GB). A resumed
+                    // send skips chunks, so it still hashes the whole file afterwards.
+                    val streamDigest = if (needed.size == chunkCount && needed.withIndex().all { it.index == it.value }) {
+                        java.security.MessageDigest.getInstance("SHA-256")
+                    } else {
+                        null
+                    }
+
                     // Open file handle once per item for high performance chunk streaming
                     RandomAccessFile(source, "r").use { sourceRaf ->
                         for (chunkIndex in needed) {
@@ -588,6 +598,7 @@ public class TransferRunner(
                                 sourceRaf.seek(offset)
                                 sourceRaf.readFully(data)
                             }
+                            streamDigest?.update(data)
 
                             try {
                                 val isLastChunk = chunkIndex == needed.last()
@@ -622,7 +633,9 @@ public class TransferRunner(
                     }
 
                     // Verify file digest and send ItemEnd
-                    val hash = metrics.recordSha256 { ChunkMath.hashFile(source) }
+                    val hash = metrics.recordSha256 {
+                        streamDigest?.digest()?.hex() ?: ChunkMath.hashFile(source)
+                    }
                     VeyroLog.i(TAG) { "[$transferId] Item #${item.index} stream complete, sent ItemEnd (sha256=$hash), awaiting ItemResult..." }
                     onProgress?.invoke(sent, totalBytes, item, TransferStage.VERIFYING, 0L, null)
 

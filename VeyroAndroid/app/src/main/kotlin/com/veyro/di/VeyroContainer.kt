@@ -386,6 +386,16 @@ public class VeyroContainer(context: Context) {
         }
     }
 
+    /**
+     * ADR-049: files are received in place as hidden MediaStore entries. One killed mid-way (app
+     * swiped, phone off) would hold its space for 7 days; this removes those from earlier runs.
+     * The time is taken now, so a receive that starts during the sweep is never touched.
+     */
+    public fun deleteUnfinishedReceives() {
+        val startedAtSeconds = System.currentTimeMillis() / 1000
+        appScope.launch { mediaStorePublisher.deleteAbandonedPending(startedAtSeconds) }
+    }
+
     public val wifiDirectManager: WifiDirectManager by lazy {
         AndroidWifiDirectManager(appContext, dispatchers)
     }

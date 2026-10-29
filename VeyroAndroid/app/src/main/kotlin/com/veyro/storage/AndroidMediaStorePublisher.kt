@@ -1,27 +1,36 @@
 package com.veyro.storage
 
+import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import com.veyro.ui.format.ReceivedFolders
 import android.webkit.MimeTypeMap
-import com.veyro.core.common.hex
 import com.veyro.core.common.VeyroLog
-import com.veyro.core.transfer.ChunkMath
+import com.veyro.core.transfer.DirectReceiveTarget
 import com.veyro.core.transfer.StoragePublishResult
 import com.veyro.core.transfer.TransferStoragePublisher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.IOException
-import java.security.MessageDigest
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android MediaStore publisher for verified incoming transfers (REQ-T12).
  *
- * Distinct from receiving and hashing: only after whole-file SHA-256 verification passes
- * are bytes copied into shared MediaStore collections.
+ * Distinct from receiving and hashing: an item only becomes visible in shared storage after its
+ * whole-file SHA-256 verification passes. On the LAN route it is received straight into a pending
+ * entry ([openDirect], ADR-049); other routes stage a file and [publish] copies it in.
  *
  * - Every file goes to [MediaStore.Downloads] under one folder, sorted by type:
  *   `Download/Veyro/Photos`, `Videos`, `Music`, `Documents`, `Archives`, `Apps`, `Other`
@@ -100,6 +109,142 @@ public class AndroidMediaStorePublisher(
         moved
     }
 
+    /**
+     * ADR-049: a pending MediaStore entry in its final folder, written in place while the file
+     * arrives. Pending means hidden from other apps and Gallery until [MediaStoreTarget.commit],
+     * which only runs after the whole-file hash matched; so nothing is copied after the last byte.
+     * Null (receive into a staging file instead) when the user picked their own folder, or if
+     * MediaStore refuses.
+     */
+    override suspend fun openDirect(relativePath: String, mimeType: String?, sizeBytes: Long): DirectReceiveTarget? =
+        withContext(Dispatchers.IO) {
+            val customDir = customDestinationDir?.invoke()
+            if (customDir != null && customDir.exists()) return@withContext null // staged there, then renamed
+            val fileName = relativePath.substringAfterLast('/')
+            val resolvedMimeType = mimeType ?: detectMimeType(fileName)
+            val relativeDir = ReceivedFolders.pathFor(fileName, resolvedMimeType)
+            val resolver = context.contentResolver
+            val uri = runCatching { resolver.insert(downloads(), pendingValues(fileName, resolvedMimeType, relativeDir)) }
+                .onFailure { VeyroLog.w(TAG) { "Direct insert failed (${it.javaClass.simpleName})" } }
+                .getOrNull() ?: return@withContext null
+            val pfd = runCatching { resolver.openFileDescriptor(uri, "rw") }
+                .onFailure { VeyroLog.w(TAG) { "Direct open failed (${it.javaClass.simpleName})" } }
+                .getOrNull()
+            if (pfd == null) {
+                runCatching { resolver.delete(uri, null, null) }
+                return@withContext null
+            }
+            MediaStoreTarget(uri, pfd, fileName, resolvedMimeType, relativeDir, sizeBytes)
+        }
+
+    /**
+     * Removes pending entries Veyro left in its folders when a receive was killed mid-way
+     * (ADR-049). Only entries older than [startedAtSeconds], so a receive that began after this
+     * process started is never touched. MediaStore would remove them after 7 days anyway, but a
+     * half-received 4 GB video should not hold space that long. Android 11+; returns how many.
+     */
+    public suspend fun deleteAbandonedPending(startedAtSeconds: Long): Int = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return@withContext 0
+        val resolver = context.contentResolver
+        val args = Bundle().apply {
+            putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_ONLY)
+            putString(
+                ContentResolver.QUERY_ARG_SQL_SELECTION,
+                "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ? AND " +
+                    "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
+                    "${MediaStore.MediaColumns.DATE_ADDED} < ?",
+            )
+            putStringArray(
+                ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                arrayOf(context.packageName, "${ReceivedFolders.ROOT}/%", startedAtSeconds.toString()),
+            )
+        }
+        var removed = 0
+        runCatching {
+            resolver.query(downloads(), arrayOf(MediaStore.MediaColumns._ID), args, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val uri = ContentUris.withAppendedId(downloads(), c.getLong(0))
+                    if (runCatching { resolver.delete(uri, null, null) > 0 }.getOrDefault(false)) removed++
+                }
+            }
+        }.onFailure { VeyroLog.w(TAG) { "Pending sweep failed: ${it.javaClass.simpleName}" } }
+        if (removed > 0) VeyroLog.i(TAG) { "Removed $removed unfinished receive(s)" }
+        removed
+    }
+
+    private fun downloads(): Uri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+
+    private fun pendingValues(fileName: String, mimeType: String, relativeDir: String): ContentValues =
+        ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000)
+            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+        }
+
+    /** One pending entry written in place by positional reads and writes on its descriptor. */
+    private inner class MediaStoreTarget(
+        private val uri: Uri,
+        private val pfd: ParcelFileDescriptor,
+        private val fileName: String,
+        private val mimeType: String,
+        private val relativeDir: String,
+        private val sizeBytes: Long,
+    ) : DirectReceiveTarget {
+        // Positional I/O (pwrite/pread) on one descriptor; neither stream owns it, pfd does.
+        private val writer: FileChannel = FileOutputStream(pfd.fileDescriptor).channel
+        private val reader: FileChannel = FileInputStream(pfd.fileDescriptor).channel
+        private val closed = AtomicBoolean(false)
+        private val finished = AtomicBoolean(false)
+
+        override fun write(position: Long, data: ByteArray) {
+            val buffer = ByteBuffer.wrap(data)
+            var at = position
+            while (buffer.hasRemaining()) at += writer.write(buffer, at)
+        }
+
+        override fun read(position: Long, buffer: ByteArray, length: Int): Int =
+            reader.read(ByteBuffer.wrap(buffer, 0, length), position)
+
+        override suspend fun commit(): StoragePublishResult = withContext(Dispatchers.IO) {
+            val size = runCatching { pfd.statSize }.getOrDefault(-1L)
+            close()
+            if (size != sizeBytes) {
+                abort()
+                return@withContext StoragePublishResult.Failed("Stored $size bytes, expected $sizeBytes")
+            }
+            try {
+                val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                if (context.contentResolver.update(uri, values, null, null) <= 0) throw IOException("update matched no row")
+                finished.set(true)
+                VeyroLog.i(TAG) {
+                    "[diagnostics:mediastore] item committed in place: size=$sizeBytes bytes, uri=$uri, dir=$relativeDir, mime=$mimeType"
+                }
+                StoragePublishResult.Success(
+                    destinationUri = uri.toString(),
+                    displayName = fileName,
+                    mimeType = mimeType,
+                    bytesWritten = sizeBytes,
+                )
+            } catch (t: Throwable) {
+                VeyroLog.e(TAG) { "Finishing the entry failed (${t.javaClass.simpleName})" }
+                abort()
+                StoragePublishResult.Failed("Could not finish the MediaStore entry: ${t.javaClass.simpleName}", t)
+            }
+        }
+
+        override fun abort() {
+            close()
+            if (finished.compareAndSet(false, true)) runCatching { context.contentResolver.delete(uri, null, null) }
+        }
+
+        override fun close() {
+            if (closed.compareAndSet(false, true)) runCatching { pfd.close() }
+        }
+    }
+
     private fun detectMimeType(fileName: String): String {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         return when (ext) {
@@ -141,17 +286,9 @@ public class AndroidMediaStorePublisher(
         // One Veyro folder for everything (Download/Veyro/Photos, /Videos, ...). The Downloads
         // collection is the only one that accepts every type; MediaStore still indexes images,
         // videos and audio there by MIME type, so they show in Gallery and music apps as before.
-        val collectionUri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val collectionUri = downloads()
         val relativeDir = ReceivedFolders.pathFor(fileName, mimeType)
-
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000)
-            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-        }
+        val values = pendingValues(fileName, mimeType, relativeDir)
 
         val insertedUri: Uri
         try {
@@ -167,6 +304,9 @@ public class AndroidMediaStorePublisher(
             val outputStream = contentResolver.openOutputStream(insertedUri, "w")
                 ?: throw IOException("ContentResolver failed to open output stream for $insertedUri")
 
+            // One pass (ADR-049). The source was hash-verified moments ago; a failed write
+            // throws, and the byte count is checked below. The read-back and second source hash
+            // this used to do tripled the time (53 s for a 4 GB video) and caught nothing more.
             var totalCopied = 0L
             sourceFile.inputStream().use { input ->
                 outputStream.use { output ->
@@ -184,32 +324,9 @@ public class AndroidMediaStorePublisher(
                 throw IOException("Size mismatch on commit: wrote $totalCopied bytes, expected $sizeBytes")
             }
 
-            // Post-publication stream read-back verification: Guarantee byte-for-byte fidelity
-            val reopenedDigest = MessageDigest.getInstance("SHA-256")
-            val readBackBytes = contentResolver.openInputStream(insertedUri)?.use { readBack ->
-                val checkBuf = ByteArray(256 * 1024)
-                var readCount = 0L
-                var r: Int
-                while (readBack.read(checkBuf).also { r = it } != -1) {
-                    reopenedDigest.update(checkBuf, 0, r)
-                    readCount += r
-                }
-                readCount
-            } ?: throw IOException("Could not reopen $insertedUri for post-publication verification")
-
-            if (readBackBytes != totalCopied) {
-                throw IOException("Post-publication read-back length mismatch: read $readBackBytes, expected $totalCopied")
-            }
-
-            val readBackHash = reopenedDigest.digest().hex()
-            val expectedSourceHash = ChunkMath.hashFile(sourceFile)
-            if (!readBackHash.equals(expectedSourceHash, ignoreCase = true)) {
-                throw IOException("Post-publication hash verification failed: MediaStore hash $readBackHash != source hash $expectedSourceHash")
-            }
-
             contentResolver.update(insertedUri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
 
-            pendingUri = null // Completed successfully and verified byte-perfect
+            pendingUri = null // Completed
             // Clean up staging file
             sourceFile.delete()
 

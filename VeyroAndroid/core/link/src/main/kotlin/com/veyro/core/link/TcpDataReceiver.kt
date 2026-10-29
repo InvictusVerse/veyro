@@ -7,8 +7,10 @@ import com.veyro.core.model.TransferRoute
 import com.veyro.core.model.VerificationResult
 import com.veyro.core.protocol.tcp.TcpFrame
 import com.veyro.core.protocol.tcp.TcpFrameCodec
+import com.veyro.core.transfer.DirectPart
 import com.veyro.core.transfer.ItemResult
 import com.veyro.core.transfer.PartFile
+import com.veyro.core.transfer.ReceivingItem
 import com.veyro.core.transfer.StoragePublishResult
 import com.veyro.core.transfer.TransferStoragePublisher
 import kotlinx.coroutines.withContext
@@ -35,7 +37,8 @@ public sealed interface TcpReceiveOutcome {
  *
  * Binds an ephemeral ServerSocket on all interfaces (0.0.0.0), authenticates incoming
  * sender sockets against session credentials, streams raw binary chunks directly into
- * [PartFile] instances, verifies SHA-256 digests, and publishes to storage.
+ * [DirectPart] (the final, still hidden destination, ADR-049) or [PartFile] instances, verifies
+ * SHA-256 digests, and publishes to storage.
  */
 public class TcpDataReceiver(
     private val dispatchers: AppDispatchers,
@@ -197,23 +200,52 @@ public class TcpDataReceiver(
             ),
         )
 
-        // 3. Prepare PartFiles
-        val parts = HashMap<Int, PartFile>()
+        // 3. Items are opened when their data starts (ItemBegin, or the first chunk), not all up
+        // front: a direct target is a MediaStore entry, and a 500-photo batch should not create
+        // 500 of them before the first byte. ADR-049: a direct target first, so a verified item
+        // needs no copy; a staging PartFile when the publisher has none.
+        val parts = HashMap<Int, ReceivingItem>()
+        val unopenable = HashSet<Int>()
         destinationDir.mkdirs()
-        for (item in offerItems) {
-            val part = try {
-                PartFile.open(
-                    destinationDir = destinationDir,
-                    relativePath = item.relativePath,
-                    sizeBytes = item.sizeBytes,
-                    chunkSize = chunkSize,
-                )
+
+        suspend fun partFor(index: Int, size: Int): ReceivingItem? {
+            parts[index]?.let { return it }
+            if (index in unopenable) return null
+            val item = offerItems.firstOrNull { it.index == index } ?: return null
+            val opened = try {
+                publisher?.let { DirectPart.open(it, item.relativePath, item.mimeType, item.sizeBytes, size) }
+                    ?: PartFile.open(
+                        destinationDir = destinationDir,
+                        relativePath = item.relativePath,
+                        sizeBytes = item.sizeBytes,
+                        chunkSize = size,
+                    )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // Index only: file names are user data and are never logged.
-                VeyroLog.w(TAG) { "[$transferId] Failed to open PartFile for item #${item.index} (${e.javaClass.simpleName})" }
-                continue
+                VeyroLog.w(TAG) { "[$transferId] Failed to open item #$index for writing (${e.javaClass.simpleName})" }
+                unopenable += index
+                return null
             }
-            parts[item.index] = part
+            parts[index] = opened
+            return opened
+        }
+
+        suspend fun publishVerified(part: ReceivingItem, item: TransferItem): StoragePublishResult? {
+            val publish: (suspend () -> StoragePublishResult)? = when {
+                part is DirectPart -> ({ part.publish() })
+                part is PartFile && publisher != null && part.committedFile != null -> ({
+                    publisher.publish(
+                        sourceFile = part.committedFile!!,
+                        relativePath = item.relativePath,
+                        mimeType = item.mimeType,
+                        sizeBytes = item.sizeBytes,
+                    )
+                })
+                else -> null
+            }
+            if (publish == null) return null
+            return if (metrics != null) metrics.recordPublish { publish() } else publish()
         }
 
         val results = mutableListOf<ItemResult>()
@@ -263,24 +295,19 @@ public class TcpDataReceiver(
                         VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-begin-received] Item #${frame.itemIndex} (seq=${frame.seq}, size=${frame.sizeBytes}, chunkSize=${frame.chunkSize})" }
                         // The sender owns the chunk plan and states it here: Windows streams
                         // 4 MiB chunks, Android 512 KiB. A part opened with a different size would
-                        // reject every full-size chunk, so it is reopened with the sender's.
+                        // reject every full-size chunk, so it is opened (or reopened) with the sender's.
+                        val size = frame.chunkSize.takeIf { it in MIN_CHUNK_SIZE..MAX_CHUNK_SIZE } ?: chunkSize
                         val existing = parts[frame.itemIndex]
-                        val item = offerItems.firstOrNull { it.index == frame.itemIndex }
-                        if (existing != null && item != null && existing.chunkSize != frame.chunkSize &&
-                            frame.chunkSize in MIN_CHUNK_SIZE..MAX_CHUNK_SIZE
-                        ) {
+                        if (existing != null && existing.chunkSize != size) {
                             runCatching { existing.close() }
-                            parts[frame.itemIndex] = PartFile.open(
-                                destinationDir = destinationDir,
-                                relativePath = item.relativePath,
-                                sizeBytes = item.sizeBytes,
-                                chunkSize = frame.chunkSize,
-                            )
+                            runCatching { existing.discard() }
+                            parts.remove(frame.itemIndex)
                         }
+                        partFor(frame.itemIndex, size)
                     }
 
                     is TcpFrame.Chunk -> {
-                        val part = parts[frame.itemIndex]
+                        val part = partFor(frame.itemIndex, chunkSize)
                         if (part != null) {
                             if (metrics != null) {
                                 metrics.recordTcpReadDuration(readDurationNanos, frame.data.size.toLong())
@@ -296,7 +323,7 @@ public class TcpDataReceiver(
                     }
 
                     is TcpFrame.ItemEnd -> {
-                        val part = parts[frame.itemIndex]
+                        val part = partFor(frame.itemIndex, chunkSize)
                         val item = offerItems.firstOrNull { it.index == frame.itemIndex }
                         VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-end-received] Item #${frame.itemIndex} sha256=${frame.sha256Hex}" }
                         if (part != null && item != null) {
@@ -312,38 +339,18 @@ public class TcpDataReceiver(
                             var destUri: String? = null
                             var errMsg: String? = if (ok) null else verification.name
 
-                            if (ok && part.committedFile != null) {
-                                if (publisher != null) {
-                                    val pubRes = if (metrics != null) {
-                                        metrics.recordPublish {
-                                            publisher.publish(
-                                                sourceFile = part.committedFile!!,
-                                                relativePath = item.relativePath,
-                                                mimeType = item.mimeType,
-                                                sizeBytes = item.sizeBytes,
-                                            )
-                                        }
-                                    } else {
-                                        publisher.publish(
-                                            sourceFile = part.committedFile!!,
-                                            relativePath = item.relativePath,
-                                            mimeType = item.mimeType,
-                                            sizeBytes = item.sizeBytes,
-                                        )
+                            if (ok) {
+                                when (val pubRes = publishVerified(part, item)) {
+                                    is StoragePublishResult.Success -> {
+                                        destUri = pubRes.destinationUri
+                                        VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-published] Item #${frame.itemIndex} published to MediaStore: $destUri" }
                                     }
-                                    when (pubRes) {
-                                        is StoragePublishResult.Success -> {
-                                            destUri = pubRes.destinationUri
-                                            VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-published] Item #${frame.itemIndex} published to MediaStore: $destUri" }
-                                        }
-                                        is StoragePublishResult.Failed -> {
-                                            finalVerification = VerificationResult.WRITE_FAILED
-                                            errMsg = "PUBLICATION_FAILED: ${pubRes.reason}"
-                                            VeyroLog.e(TAG) { "[$transferId] [tcp-receiver:item-publish-failed] Item #${frame.itemIndex} publication failed: ${pubRes.reason}" }
-                                        }
+                                    is StoragePublishResult.Failed -> {
+                                        finalVerification = VerificationResult.WRITE_FAILED
+                                        errMsg = "PUBLICATION_FAILED: ${pubRes.reason}"
+                                        VeyroLog.e(TAG) { "[$transferId] [tcp-receiver:item-publish-failed] Item #${frame.itemIndex} publication failed: ${pubRes.reason}" }
                                     }
-                                } else {
-                                    destUri = part.committedFile?.toURI()?.toString()
+                                    null -> destUri = (part as? PartFile)?.committedFile?.toURI()?.toString()
                                 }
                             }
 
@@ -389,7 +396,7 @@ public class TcpDataReceiver(
 
         if (cancelledReason != null || externalCancelReason != null) {
             val finalReason = cancelledReason ?: externalCancelReason ?: "cancelled"
-            parts.values.filter { it.committedFile == null }.forEach { it.discard() }
+            parts.values.filterNot { it.isCommitted }.forEach { it.discard() }
             return@withContext TcpReceiveOutcome.Cancelled(finalReason)
         }
 
@@ -397,7 +404,7 @@ public class TcpDataReceiver(
         val effectiveTerminated = transferEndReceived || (externalCompleted != null) || allItemsVerified
 
         if (!effectiveTerminated) {
-            parts.values.filter { it.committedFile == null }.forEach { it.discard() }
+            parts.values.filterNot { it.isCommitted }.forEach { it.discard() }
             return@withContext TcpReceiveOutcome.Failed("TCP stream interrupted before TransferEnd (verified ${results.count { it.isVerified }} of ${offerItems.size} items)")
         }
 
@@ -415,7 +422,7 @@ public class TcpDataReceiver(
         }
 
         // Clean up any remaining uncommitted part artifacts
-        parts.values.filter { it.committedFile == null }.forEach { it.discard() }
+        parts.values.filterNot { it.isCommitted }.forEach { it.discard() }
         metrics?.markTransferComplete()
         metrics?.logBreakdown()
         TcpReceiveOutcome.Completed(route, results)

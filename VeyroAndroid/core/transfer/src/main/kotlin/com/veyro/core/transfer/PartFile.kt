@@ -31,11 +31,16 @@ public class PartFile private constructor(
     public val partFile: File,
     public val metaFile: File,
     public val sizeBytes: Long,
-    public val chunkSize: Int,
-) : java.io.Closeable {
+    override val chunkSize: Int,
+) : ReceivingItem {
 
     public var committedFile: File? = null
         private set
+
+    override val isCommitted: Boolean get() = committedFile != null
+
+    /** ADR-049: the whole-file hash, built as chunks are written, so commit need not re-read. */
+    private val runningHash = RunningHash(sizeBytes, chunkSize)
 
     public val chunkCount: Int = ChunkMath.chunkCount(sizeBytes, chunkSize)
 
@@ -121,7 +126,7 @@ public class PartFile private constructor(
     }
 
     /** Writes one chunk at its offset and records its hash. */
-    public fun writeChunk(chunkIndex: Int, data: ByteArray) {
+    override fun writeChunk(chunkIndex: Int, data: ByteArray) {
         require(chunkIndex in 0 until chunkCount) { "chunk index $chunkIndex out of range" }
         val expectedLength = ChunkMath.lengthOf(chunkIndex, sizeBytes, chunkSize)
         require(data.size == expectedLength) {
@@ -136,6 +141,7 @@ public class PartFile private constructor(
 
         chunkHashes[chunkIndex] = ChunkMath.hashChunk(data)
         received[chunkIndex] = true
+        runningHash.onWritten(chunkIndex, data)
     }
 
     /**
@@ -179,7 +185,7 @@ public class PartFile private constructor(
      * first and verifying after would briefly expose an unverified file under its real name, and a
      * crash in that window would leave it there permanently.
      */
-    public fun verifyAndCommit(expectedSha256: String): VerificationResult {
+    override fun verifyAndCommit(expectedSha256: String): VerificationResult {
         closeRaf()
         if (!received.isComplete()) {
             VeyroLog.w(TAG) { "Commit refused: ${received.missing().size} chunk(s) missing" }
@@ -190,7 +196,15 @@ public class PartFile private constructor(
             return VerificationResult.HASH_MISMATCH
         }
 
-        val actual = runCatching { ChunkMath.hashFile(partFile) }.getOrNull()
+        // Reads back only chunks that were not hashed in order (none, for a normal transfer).
+        val actual = runCatching {
+            RandomAccessFile(partFile, "r").use { raf ->
+                runningHash.finish { position, buffer, length ->
+                    raf.seek(position)
+                    raf.read(buffer, 0, length)
+                }
+            }
+        }.getOrNull()
         if (actual == null) {
             return VerificationResult.WRITE_FAILED
         }
@@ -226,7 +240,7 @@ public class PartFile private constructor(
     }
 
     /** Removes the partial data and its sidecar. Used on cancel (REQ-T10). */
-    public fun discard() {
+    override fun discard() {
         closeRaf()
         partFile.delete()
         metaFile.delete()

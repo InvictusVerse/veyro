@@ -19,6 +19,13 @@ public interface TransferStoragePublisher {
         mimeType: String?,
         sizeBytes: Long,
     ): StoragePublishResult
+
+    /**
+     * A hidden destination to receive one item into, so the verified item needs no copy
+     * (ADR-049). Null (the default) to receive into a staging file and [publish] it.
+     * [relativePath] is already validated (REQ-T11).
+     */
+    public suspend fun openDirect(relativePath: String, mimeType: String?, sizeBytes: Long): DirectReceiveTarget? = null
 }
 
 public sealed interface StoragePublishResult {

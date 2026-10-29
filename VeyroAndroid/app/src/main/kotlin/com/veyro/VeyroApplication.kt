@@ -54,6 +54,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.notificationAutoClearMs
         // ADR-044: received files live in one Download/Veyro folder; bring older ones in once.
         container.moveOlderReceivedFilesOnce()
+        // ADR-049: hidden entries of receives an earlier run did not finish.
+        container.deleteUnfinishedReceives()
         registerActivityLifecycleCallbacks(VisibilityTracker())
     }
 
