@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Collapsed Veyro notification card (ADR-044): a gradient badge (or a thumbnail), title and line,
-     an optional slim progress bar, and up to two pill buttons that work without expanding.
-     Fits the 48 dp a decorated custom view gets when collapsed on Android 12+. -->
+<!-- Collapsed Veyro notification card (ADR-044, minimal per ADR-050): title and line, an optional
+     slim progress bar, and up to two round buttons that work without expanding. No badge; only a
+     picture that arrived gets a thumbnail. Fits the 48 dp a decorated custom view gets when
+     collapsed on Android 12+. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -9,32 +10,14 @@
     android:minHeight="48dp"
     android:orientation="horizontal">
 
-    <FrameLayout
+    <ImageView
+        android:id="@+id/card_thumb"
         android:layout_width="40dp"
         android:layout_height="40dp"
-        android:layout_marginEnd="12dp">
-
-        <ImageView
-            android:id="@+id/card_badge"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:contentDescription="@null" />
-
-        <ImageView
-            android:id="@+id/card_glyph"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_gravity="center"
-            android:contentDescription="@null" />
-
-        <ImageView
-            android:id="@+id/card_thumb"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:contentDescription="@null"
-            android:scaleType="centerCrop"
-            android:visibility="gone" />
-    </FrameLayout>
+        android:layout_marginEnd="12dp"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
 
     <LinearLayout
         android:layout_width="0dp"

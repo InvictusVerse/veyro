@@ -65,6 +65,7 @@ import com.veyro.core.model.ActiveTransfer
 import com.veyro.core.model.TransferDirection
 import com.veyro.core.model.TransferStage
 import com.veyro.ui.format.formatBytes
+import com.veyro.ui.format.formatEta
 import com.veyro.ui.format.formatSpeed
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -155,13 +156,7 @@ private fun BannerCard(transfer: ActiveTransfer, onDismiss: () -> Unit, onClick:
         }
     }
     val progress by animateFloatAsState(targetValue = target, animationSpec = tween(320), label = "bannerProgress")
-    val indeterminate by remember {
-        derivedStateOf {
-            current.stage == TransferStage.PREPARING ||
-                current.stage == TransferStage.CONNECTING ||
-                current.stage == TransferStage.AWAITING_CONSENT
-        }
-    }
+    val indeterminate by remember { derivedStateOf { bannerIndeterminate(current) } }
 
     val failed = transfer.stage == TransferStage.FAILED
     val done = transfer.stage == TransferStage.COMPLETED
@@ -221,7 +216,7 @@ private fun BannerCard(transfer: ActiveTransfer, onDismiss: () -> Unit, onClick:
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = transfer.currentFileName.ifEmpty { if (transfer.totalFiles > 1) "${transfer.totalFiles} files" else "Files" },
+                    text = bannerFileLine(transfer),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -262,8 +257,11 @@ private fun BannerCard(transfer: ActiveTransfer, onDismiss: () -> Unit, onClick:
     }
 }
 
-/** "Sending to Office PC", "Received from Office PC", "Could not send to Office PC". */
-internal fun bannerTitle(transfer: ActiveTransfer): String {
+/**
+ * "Sending to Office PC", "Received from Office PC", "Could not send to Office PC". Also the
+ * notification's header line (ADR-051), so the banner and the notification say the same thing.
+ */
+public fun bannerTitle(transfer: ActiveTransfer): String {
     val peer = transfer.peerDisplayName ?: "your device"
     val send = transfer.direction == TransferDirection.SEND
     return when (transfer.stage) {
@@ -275,14 +273,35 @@ internal fun bannerTitle(transfer: ActiveTransfer): String {
     }
 }
 
-/** The line under the bar: bytes and speed while running, the outcome when done. */
-internal fun bannerDetail(transfer: ActiveTransfer): String = when (transfer.stage) {
+/** The file line: the current file's name, or how many files. Banner and notification. */
+public fun bannerFileLine(transfer: ActiveTransfer): String =
+    transfer.currentFileName.ifEmpty { if (transfer.totalFiles > 1) "${transfer.totalFiles} files" else "Files" }
+
+/**
+ * The line under the bar: bytes, speed, time left and which file while running; the outcome when
+ * done. Banner and notification (ADR-051).
+ */
+public fun bannerDetail(transfer: ActiveTransfer): String = when (transfer.stage) {
     TransferStage.FAILED -> transfer.errorMessage?.takeIf { it.isNotBlank() } ?: transfer.effectiveStatusText
     TransferStage.CANCELLED, TransferStage.COMPLETED -> transfer.effectiveStatusText
     TransferStage.PREPARING, TransferStage.CONNECTING, TransferStage.AWAITING_CONSENT -> transfer.effectiveStatusText
+    // All bytes are in; the hash check and saving follow (seconds since ADR-049).
+    TransferStage.VERIFYING, TransferStage.PUBLISHING, TransferStage.RECORDING_HISTORY ->
+        "${formatBytes(transfer.totalBytes)}, checking and saving"
     else -> buildString {
         append(formatBytes(transfer.bytesTransferred)).append(" of ").append(formatBytes(transfer.totalBytes))
         if (transfer.bytesPerSecond > 0) append(", ").append(formatSpeed(transfer.bytesPerSecond))
+        formatEta(transfer.etaSeconds)?.let { append(", ").append(it) }
         if (transfer.totalFiles > 1) append(", file ").append(transfer.currentFileIndex + 1).append(" of ").append(transfer.totalFiles)
     }
 }
+
+/** True when the bar should move without a percentage: nothing measurable is happening yet. */
+public fun bannerIndeterminate(transfer: ActiveTransfer): Boolean = transfer.stage in setOf(
+    TransferStage.PREPARING,
+    TransferStage.CONNECTING,
+    TransferStage.AWAITING_CONSENT,
+    TransferStage.VERIFYING,
+    TransferStage.PUBLISHING,
+    TransferStage.RECORDING_HISTORY,
+)

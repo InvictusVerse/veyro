@@ -99,8 +99,8 @@ internal class AndroidClipNotifier(
         // Gone that long after the last copy (each new copy restarts the clock), when turned on.
         clearAfter?.let { builder.setTimeoutAfter(it) }
 
-        // The Veyro card (ADR-044): violet badge with what was copied, the buttons inline when
-        // collapsed, and the standard actions (plus "All clips") when expanded or on the lock screen.
+        // The Veyro card (ADR-044/050): the clip, the buttons inline when collapsed, and the
+        // standard actions (plus "All clips") when expanded or on the lock screen.
         val primaryIcon = when (smart?.kind) {
             ClipClassifier.Kind.PHONE -> NotificationCard.Glyph.CALL
             ClipClassifier.Kind.EMAIL -> NotificationCard.Glyph.MAIL
@@ -117,15 +117,6 @@ internal class AndroidClipNotifier(
             NotificationCard.Spec(
                 title = shownTitle,
                 text = body,
-                tone = NotificationCard.Tone.CLIP,
-                glyph = when (smart?.kind) {
-                    null -> NotificationCard.Glyph.IMAGE
-                    ClipClassifier.Kind.LINK -> NotificationCard.Glyph.LINK
-                    ClipClassifier.Kind.PHONE -> NotificationCard.Glyph.CALL
-                    ClipClassifier.Kind.EMAIL -> NotificationCard.Glyph.MAIL
-                    ClipClassifier.Kind.CODE -> NotificationCard.Glyph.KEY
-                    ClipClassifier.Kind.TEXT -> NotificationCard.Glyph.CLIPBOARD
-                },
                 meta = if (count > 1) "$count new from your PC, all in Veyro > Clipboard" else null,
                 thumbnail = picture,
                 picture = picture,

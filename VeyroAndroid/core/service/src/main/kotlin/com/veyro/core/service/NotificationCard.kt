@@ -8,41 +8,26 @@ import android.view.View
 import android.widget.RemoteViews
 
 /**
- * One look for every Veyro notification (ADR-044): a gradient badge with a glyph (or a thumbnail),
- * a title and line, a slim progress bar when something is moving, and up to two pill buttons that
- * work on the collapsed notification. Expanded, it shows the full text, a detail line, the progress
- * with a large percentage, and a picture; the system draws every action underneath, which is also
- * what the lock screen and watches show.
+ * One look for every Veyro notification (ADR-044, made minimal in ADR-050): the title and line, a
+ * slim progress bar when something is moving, and up to two round buttons that work on the
+ * collapsed notification. No badge: the system header already shows the Veyro icon and name, so a
+ * second icon on the left only took width from the text. A picture's thumbnail is the one
+ * exception, because it shows what arrived. Expanded, it shows the full text, a detail line, the
+ * progress with a large percentage, and the picture; the system draws every action underneath,
+ * which is also what the lock screen and watches show.
  *
  * Built on [Notification.DecoratedCustomViewStyle], so the system header (app name, time, expand
  * arrow) and the shade's own background stay in charge of light and dark.
  */
 public object NotificationCard {
 
-    /** The badge colour, by what the notification is about. */
-    public enum class Tone(internal val badge: Int) {
-        BRAND(R.drawable.notif_badge_brand),
-        INCOMING(R.drawable.notif_badge_incoming),
-        OUTGOING(R.drawable.notif_badge_outgoing),
-        SUCCESS(R.drawable.notif_badge_success),
-        ERROR(R.drawable.notif_badge_error),
-        CLIP(R.drawable.notif_badge_clip),
-    }
-
-    /** The glyph on the badge. */
+    /** A button's icon. */
     public enum class Glyph(internal val res: Int) {
-        DESKTOP(R.drawable.notif_glyph_desktop),
-        DOWNLOAD(R.drawable.notif_glyph_download),
         UPLOAD(R.drawable.notif_glyph_upload),
         CHECK(R.drawable.notif_glyph_check),
-        ERROR(R.drawable.notif_glyph_error),
-        CLIPBOARD(R.drawable.notif_glyph_clipboard),
-        LINK(R.drawable.notif_glyph_link),
         MAIL(R.drawable.notif_glyph_mail),
         KEY(R.drawable.notif_glyph_key),
         CALL(R.drawable.notif_glyph_call),
-        IMAGE(R.drawable.notif_glyph_image),
-        SEARCH(R.drawable.notif_glyph_search),
         COPY(R.drawable.notif_glyph_copy),
         OPEN(R.drawable.notif_glyph_open),
         CLOSE(R.drawable.notif_glyph_close),
@@ -59,8 +44,6 @@ public object NotificationCard {
     public data class Spec(
         val title: String,
         val text: String,
-        val tone: Tone = Tone.BRAND,
-        val glyph: Glyph = Glyph.DESKTOP,
         /** A second line when expanded: speed and time left, a folder, a countdown hint. */
         val meta: String? = null,
         /** Longer text for the expanded card; [text] when null. */
@@ -69,10 +52,12 @@ public object NotificationCard {
         val progress: Int? = null,
         /** A moving bar with no percentage (connecting, verifying). */
         val indeterminate: Boolean = false,
-        /** Replaces the badge on the collapsed card (an image's thumbnail). */
+        /** A small picture left of the title on the collapsed card (what arrived, if an image). */
         val thumbnail: Bitmap? = null,
         /** Shown full width on the expanded card. */
         val picture: Bitmap? = null,
+        /** In the system header next to "Veyro": the banner's top line, "Receiving from Office PC". */
+        val subText: String? = null,
         /** On the collapsed card, at most two. */
         val pills: List<Pill> = emptyList(),
         /** Standard actions for the expanded card, lock screen and watches; [pills] when null. */
@@ -93,8 +78,6 @@ public object NotificationCard {
             spec.thumbnail?.let {
                 setImageViewBitmap(R.id.card_thumb, it)
                 setViewVisibility(R.id.card_thumb, View.VISIBLE)
-                setViewVisibility(R.id.card_badge, View.GONE)
-                setViewVisibility(R.id.card_glyph, View.GONE)
             }
         }
         val big = RemoteViews(context.packageName, R.layout.notification_card_big).apply {
@@ -110,6 +93,7 @@ public object NotificationCard {
             // Plain title and text too: the lock screen, watches and accessibility read these.
             .setContentTitle(spec.title)
             .setContentText(spec.text)
+            .setSubText(spec.subText)
             .setStyle(Notification.DecoratedCustomViewStyle())
             .setCustomContentView(small)
             .setCustomBigContentView(big)
@@ -122,8 +106,6 @@ public object NotificationCard {
     }
 
     private fun RemoteViews.fill(spec: Spec, big: Boolean) {
-        setImageViewResource(R.id.card_badge, spec.tone.badge)
-        setImageViewResource(R.id.card_glyph, spec.glyph.res)
         setTextViewText(R.id.card_title, spec.title)
         setTextViewText(R.id.card_text, if (big) spec.bigText ?: spec.text else spec.text)
         if (big && !spec.meta.isNullOrBlank()) {

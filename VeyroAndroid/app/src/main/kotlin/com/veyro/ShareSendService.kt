@@ -11,10 +11,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.model.TransferDirection
 import com.veyro.core.service.NotificationCard
 import com.veyro.core.service.VeyroNotifications
-import com.veyro.ui.format.formatEta
-import com.veyro.ui.format.formatSpeed
+import com.veyro.di.transferBanner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +46,25 @@ public class ShareSendService : Service() {
         private const val PROGRESS_POST_INTERVAL_MS = 1_000L
         private const val EXTRA_TARGET = "com.veyro.extra.TARGET"
         private const val ACTION_CANCEL = "com.veyro.action.SHARE_CANCEL"
+        private const val OWNED_KEPT = 16
+
+        /** Starts still running; the service stops once the last one is done. */
+        @Volatile
+        private var activeStarts = 0
+
+        /** Transfers whose card this service drew, newest last. */
+        private val owned = LinkedHashSet<String>()
+
+        /**
+         * True when this service draws [transferId]'s card itself (ADR-051), so
+         * [com.veyro.di.TransferNotifier] does not post a second one.
+         */
+        internal fun shows(transferId: String): Boolean =
+            activeStarts > 0 || synchronized(owned) { transferId in owned }
+
+        private fun own(transferId: String) = synchronized(owned) {
+            if (owned.add(transferId) && owned.size > OWNED_KEPT) owned.remove(owned.first())
+        }
 
         /**
          * Hands [uris] (with their read grant) to the service. [target]: a PC id, or null for the
@@ -70,8 +89,6 @@ public class ShareSendService : Service() {
     /** Channels are created here, before startForeground posts to one (a missing channel crashes). */
     private val cards by lazy { VeyroNotifications(this).also { it.ensureChannels() } }
 
-    /** Starts still running; the service stops once the last one is done. */
-    private var running = 0
     private var lastStartId = 0
 
     override fun onCreate() {
@@ -93,7 +110,7 @@ public class ShareSendService : Service() {
             return START_NOT_STICKY
         }
         val target = intent?.getStringExtra(EXTRA_TARGET)
-        running++
+        activeStarts++
         lastStartId = startId
         scope.launch { send(uris, target, startId) }
         // Redeliver keeps this start (and the URI grant that came with it) until stopSelf(startId),
@@ -108,15 +125,10 @@ public class ShareSendService : Service() {
             // Android sheds updates sent faster than a few a second. A StateFlow is conflated,
             // so the delay below makes this the latest value, at most once a second.
             container.activeTransfer.collect { t ->
-                if (t == null || t.isTerminal) return@collect
-                val name = t.peerDisplayName ?: "your PC"
-                val percent = if (t.totalBytes > 0) (t.bytesTransferred * 100 / t.totalBytes).toInt() else null
-                val text = if (t.totalFiles > 1) "${t.currentFileIndex + 1} of ${t.totalFiles} · ${t.currentFileName}" else t.currentFileName
-                val meta = listOfNotNull(
-                    t.bytesPerSecond.takeIf { it > 0 }?.let(::formatSpeed),
-                    formatEta(t.etaSeconds),
-                ).joinToString("  ·  ").ifBlank { null }
-                cards.show(ID_PROGRESS, progress("Sending to $name", text, percent, meta))
+                if (t == null || t.isTerminal || t.direction != TransferDirection.SEND) return@collect
+                own(t.transferId)
+                // ADR-051: the in-app banner's lines, the same card the receive side uses.
+                cards.show(ID_PROGRESS, cards.transferBanner(t, cancelIntent(), contentIntent = null))
                 delay(PROGRESS_POST_INTERVAL_MS)
             }
         }
@@ -140,13 +152,13 @@ public class ShareSendService : Service() {
             result("Could not send", "Something went wrong. Try again from Veyro.", success = false)
         } finally {
             progressJob.cancel()
-            running--
+            activeStarts--
             finishStart(startId)
         }
     }
 
     private fun finishStart(startId: Int) {
-        if (running > 0) return
+        if (activeStarts > 0) return
         stopForeground(STOP_FOREGROUND_REMOVE)
         // Releases the URI grants of every start up to the newest one.
         stopSelf(maxOf(startId, lastStartId))
@@ -166,7 +178,6 @@ public class ShareSendService : Service() {
             text = text,
             progressPercent = percent,
             cancelIntent = cancelIntent(),
-            incoming = false,
             meta = meta,
         )
 

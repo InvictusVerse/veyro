@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Expanded Veyro notification card (ADR-044): badge and title, the full text, a detail line, the
-     progress bar and a picture when there is one. The system draws the action buttons below. -->
+<!-- Expanded Veyro notification card (ADR-044, minimal per ADR-050): title, the full text, a detail
+     line, the progress bar and a picture when there is one. No badge. The system draws the action
+     buttons below. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -11,25 +12,6 @@
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal">
-
-        <FrameLayout
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginEnd="12dp">
-
-            <ImageView
-                android:id="@+id/card_badge"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:contentDescription="@null" />
-
-            <ImageView
-                android:id="@+id/card_glyph"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_gravity="center"
-                android:contentDescription="@null" />
-        </FrameLayout>
 
         <LinearLayout
             android:layout_width="0dp"

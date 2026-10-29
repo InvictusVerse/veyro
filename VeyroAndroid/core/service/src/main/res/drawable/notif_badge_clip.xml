@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Notification card badge (clip). Generated with the card kit (NotificationCard). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <gradient
-        android:angle="315"
-        android:endColor="#FF4F8FFF"
-        android:startColor="#FF8B5CF6" />
-</shape>

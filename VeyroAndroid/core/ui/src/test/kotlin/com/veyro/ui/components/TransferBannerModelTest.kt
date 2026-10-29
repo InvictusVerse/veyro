@@ -150,5 +150,10 @@ class TransferBannerModelTest {
         assertEquals("500 B of 1000 B, 2.0 MB/s", bannerDetail(running))
         val failed = transfer("t", TransferStage.FAILED).copy(errorMessage = "Office PC declined")
         assertEquals("Office PC declined", bannerDetail(failed))
+        // ADR-051: time left, and the finishing step instead of a bar stuck at 100%.
+        assertEquals("500 B of 1000 B, 2.0 MB/s, 30s left", bannerDetail(running.copy(etaSeconds = 30)))
+        val checking = transfer("t", TransferStage.VERIFYING, sent = 1000)
+        assertEquals("1000 B, checking and saving", bannerDetail(checking))
+        assertTrue(bannerIndeterminate(checking))
     }
 }

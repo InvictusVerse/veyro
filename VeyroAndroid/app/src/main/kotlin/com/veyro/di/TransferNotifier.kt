@@ -9,6 +9,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Size
 import com.veyro.MainActivity
+import com.veyro.ShareSendService
 import com.veyro.VeyroApplication
 import com.veyro.core.model.ActiveTransfer
 import com.veyro.core.model.TransferDirection
@@ -16,9 +17,6 @@ import com.veyro.core.model.TransferStage
 import com.veyro.core.service.NotificationCard
 import com.veyro.core.service.VeyroNotifications
 import com.veyro.ui.format.ReceivedFolders
-import com.veyro.ui.format.formatBytes
-import com.veyro.ui.format.formatEta
-import com.veyro.ui.format.formatSpeed
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,12 +26,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Files coming from a PC, as Veyro cards (ADR-044), while the app is not on screen (the in-app
- * banner covers that case): progress with speed, time left and Cancel, then "Received ..." with a
- * thumbnail for a picture, Open and Show in folder; or what went wrong.
+ * The in-app transfer banner as a notification while the app is not on screen (ADR-044, ADR-051),
+ * for receiving and sending: the same lines in the same words ([transferBanner]), then
+ * "Received ..." with a thumbnail for a picture, Open and Show in folder, "Sent ...", or what went
+ * wrong. On screen the banner itself shows it, so the notification goes away.
  *
- * Sends have their own notification from [com.veyro.ShareSendService]; picker sends run while the
- * app is open, under the banner.
+ * A share-sheet send draws the same card from [com.veyro.ShareSendService], which must hold its
+ * own foreground notification; this class leaves those sends alone. An offer still waiting for an
+ * answer has its own card ([OfferNotifier]).
  */
 public class TransferNotifier(
     private val context: Context,
@@ -67,7 +67,8 @@ public class TransferNotifier(
     }
 
     private suspend fun onUpdate(t: ActiveTransfer?, visible: Boolean) {
-        if (t == null || t.direction != TransferDirection.RECEIVE) {
+        val shareSheetSend = t != null && t.direction == TransferDirection.SEND && ShareSendService.shows(t.transferId)
+        if (t == null || shareSheetSend) {
             cards.cancel(VeyroNotifications.ID_PROGRESS)
             return
         }
@@ -79,7 +80,8 @@ public class TransferNotifier(
             if (!visible) showResult(t)
             return
         }
-        if (visible) {
+        // On screen the banner shows it; an incoming offer waiting for an answer has its own card.
+        if (visible || (t.direction == TransferDirection.RECEIVE && t.stage == TransferStage.AWAITING_CONSENT)) {
             cards.cancel(VeyroNotifications.ID_PROGRESS)
             return
         }
@@ -91,26 +93,11 @@ public class TransferNotifier(
         lastPostAt = now
         lastPercent = percent ?: -1
 
-        val name = t.peerDisplayName ?: "your PC"
-        val text = when {
-            t.stage == TransferStage.VERIFYING || t.stage == TransferStage.PUBLISHING -> "Checking and saving ${t.currentFileName}"
-            t.totalFiles > 1 -> "${t.currentFileIndex + 1} of ${t.totalFiles} · ${t.currentFileName}"
-            else -> t.currentFileName
-        }
-        val meta = listOfNotNull(
-            "${formatBytes(t.bytesTransferred)} of ${formatBytes(t.totalBytes)}",
-            t.bytesPerSecond.takeIf { it > 0 }?.let(::formatSpeed),
-            formatEta(t.etaSeconds),
-        ).joinToString("  ·  ")
         cards.show(
             VeyroNotifications.ID_PROGRESS,
-            cards.progress(
-                title = "Receiving from $name",
-                text = text,
-                progressPercent = percent.takeIf { t.stage == TransferStage.TRANSFERRING },
+            cards.transferBanner(
+                transfer = t,
                 cancelIntent = broadcast(TransferActionReceiver.ACTION_CANCEL, REQ_CANCEL),
-                incoming = true,
-                meta = meta,
                 contentIntent = openApp(),
             ),
         )
@@ -119,6 +106,10 @@ public class TransferNotifier(
     private suspend fun showResult(t: ActiveTransfer) {
         val name = t.peerDisplayName ?: "your PC"
         val what = if (t.totalFiles == 1) t.currentFileName else "${t.totalFiles} files"
+        if (t.direction == TransferDirection.SEND) {
+            showSendResult(t, name, what)
+            return
+        }
         when (t.stage) {
             TransferStage.COMPLETED -> {
                 val folder = if (t.totalFiles == 1) ReceivedFolders.pathFor(t.currentFileName) else ReceivedFolders.ROOT
@@ -146,6 +137,34 @@ public class TransferNotifier(
                 VeyroNotifications.ID_RESULT,
                 cards.result(
                     title = "Could not receive $what",
+                    text = t.errorMessage ?: "The connection to $name was lost.",
+                    success = false,
+                    pills = listOf(NotificationCard.Pill("Open Veyro", openApp())),
+                    contentIntent = openApp(),
+                    autoClearMs = autoClearMs(),
+                ),
+            )
+            else -> Unit // Cancelled: the user did it, nothing to report.
+        }
+    }
+
+    /** A send started in the app that finished after the user left it. */
+    private fun showSendResult(t: ActiveTransfer, name: String, what: String) {
+        when (t.stage) {
+            TransferStage.COMPLETED -> cards.show(
+                VeyroNotifications.ID_RESULT,
+                cards.result(
+                    title = "Sent $what",
+                    text = "To $name",
+                    success = true,
+                    contentIntent = openApp(),
+                    autoClearMs = autoClearMs(),
+                ),
+            )
+            TransferStage.FAILED -> cards.show(
+                VeyroNotifications.ID_RESULT,
+                cards.result(
+                    title = "Could not send $what",
                     text = t.errorMessage ?: "The connection to $name was lost.",
                     success = false,
                     pills = listOf(NotificationCard.Pill("Open Veyro", openApp())),

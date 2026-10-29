@@ -90,11 +90,13 @@ public class VeyroNotifications(private val context: Context) {
         text: String,
         progressPercent: Int?,
         cancelIntent: PendingIntent?,
-        /** True while receiving: teal badge with a download arrow; false: sending. */
-        incoming: Boolean = false,
         /** "3.2 MB/s, 12 s left" on the expanded card. */
         meta: String? = null,
         contentIntent: PendingIntent? = null,
+        /** The system header line next to "Veyro" (ADR-051). */
+        subText: String? = null,
+        /** A moving bar without a percentage even when [progressPercent] is null. */
+        indeterminate: Boolean = progressPercent == null,
     ): Notification {
         val builder = Notification.Builder(context, CHANNEL_PROGRESS)
             .setOngoing(true)
@@ -108,12 +110,11 @@ public class VeyroNotifications(private val context: Context) {
             NotificationCard.Spec(
                 title = title,
                 text = text,
-                tone = if (incoming) NotificationCard.Tone.INCOMING else NotificationCard.Tone.OUTGOING,
-                glyph = if (incoming) NotificationCard.Glyph.DOWNLOAD else NotificationCard.Glyph.UPLOAD,
                 meta = meta,
                 progress = progressPercent?.coerceIn(0, 100),
                 // Indeterminate while connecting or hashing: a 0% bar that sits still reads as stuck.
-                indeterminate = progressPercent == null,
+                indeterminate = indeterminate,
+                subText = subText,
                 // Secondary look (grey), not the gradient: Cancel is not the thing to invite.
                 pills = listOfNotNull(cancelIntent?.let { NotificationCard.Pill("Cancel", it, NotificationCard.Glyph.CLOSE) }),
                 secondaryOnly = true,
@@ -122,7 +123,7 @@ public class VeyroNotifications(private val context: Context) {
         return builder.build()
     }
 
-    /** A finished transfer or share: green check, or a red badge when it failed. */
+    /** A finished transfer or share; [success] sets the category (status or error). */
     public fun result(
         title: String,
         text: String,
@@ -145,8 +146,6 @@ public class VeyroNotifications(private val context: Context) {
             NotificationCard.Spec(
                 title = title,
                 text = text,
-                tone = if (success) NotificationCard.Tone.SUCCESS else NotificationCard.Tone.ERROR,
-                glyph = if (success) NotificationCard.Glyph.CHECK else NotificationCard.Glyph.ERROR,
                 meta = meta,
                 thumbnail = thumbnail,
                 picture = thumbnail,
@@ -195,8 +194,6 @@ public class VeyroNotifications(private val context: Context) {
                 title = "$peerName wants to send you $summary",
                 text = totalBytesLabel.substringBefore(". ").ifBlank { totalBytesLabel },
                 bigText = totalBytesLabel,
-                tone = NotificationCard.Tone.INCOMING,
-                glyph = NotificationCard.Glyph.DOWNLOAD,
                 // Collapsed: the short "Accept" when there is a "Just this once" choice to explain.
                 pills = listOf(NotificationCard.Pill("Accept", acceptIntent, NotificationCard.Glyph.CHECK), decline),
                 actions = listOfNotNull(
@@ -243,9 +240,6 @@ public class VeyroNotifications(private val context: Context) {
             NotificationCard.Spec(
                 title = title,
                 text = text,
-                // Connected: the brand badge with the PC. Looking: the same badge, a search glyph.
-                tone = NotificationCard.Tone.BRAND,
-                glyph = if (connected) NotificationCard.Glyph.DESKTOP else NotificationCard.Glyph.SEARCH,
                 pills = listOfNotNull(
                     sendIntent?.takeIf { connected }?.let { NotificationCard.Pill("Send files", it, NotificationCard.Glyph.UPLOAD) },
                     disconnectIntent?.let {
