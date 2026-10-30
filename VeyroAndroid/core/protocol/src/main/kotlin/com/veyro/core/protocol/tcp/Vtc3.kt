@@ -228,7 +228,12 @@ public class Vtc3Writer(
         } else {
             if (plain.size < size) plain = ByteArray(size)
             val len = TcpFrameCodec.encodePayloadInto(frame, plain, 0)
-            framer.seal(record, headerLen, plain, 0, len, record, headerLen)
+            try {
+                framer.seal(record, headerLen, plain, 0, len, record, headerLen)
+            } finally {
+                // Zeroed here, under the lock, so [wipe] never has to touch it (review issue 13).
+                plain.fill(0, 0, len)
+            }
         }
         output.write(record, 0, headerLen + sealed)
         if (flush) output.flush()
@@ -243,11 +248,17 @@ public class Vtc3Writer(
     /** Records written so far. */
     public val nextSeq: Long @Synchronized get() = framer.nextCounter
 
-    /** Not synchronized: a reader or writer blocked on the socket must not hold up the close. */
+    /**
+     * Not synchronized: a reader or writer blocked on the socket must not hold up the close. Wipes
+     * only the framer: [write] zeroes its own plaintext buffer, and zeroing it here could race a
+     * write that is still encoding into it (review issue 13).
+     */
     internal fun wipe() {
         framer.wipe()
-        plain.fill(0)
     }
+
+    /** Tests only: the reused plaintext buffer. */
+    internal fun plainBufferForTest(): ByteArray = plain
 }
 
 /** The only reader of one data-socket direction. */

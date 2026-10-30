@@ -280,6 +280,8 @@ public static class BulkTransfer
                             throw new InvalidDataException("Chunk exceeds the declared item size.");
                         // On the pool: Windows completes a write that extends a file synchronously,
                         // even on an overlapped handle, so awaiting it here would block the reader.
+                        // Safe only because chunk.Data is a copy (TcpFrameCodec.DecodePayload), not
+                        // a view of the reader's reused buffer.
                         byte[] data = chunk.Data;
                         pendingWrite = Task.Run(async () =>
                         {

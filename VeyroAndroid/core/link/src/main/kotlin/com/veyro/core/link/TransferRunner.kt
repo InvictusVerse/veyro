@@ -26,6 +26,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -479,7 +480,10 @@ public class TransferRunner(
             // The receiver may answer on the data socket (Windows always does, Android does both):
             // an ItemResult or Cancel there lands in the same mailbox the WebSocket fills, and
             // whichever arrives first wins.
-            tcpSender.startInboundReader(this) { frame ->
+            // Review issue 5: a receiver record that fails to open closes the data socket; the
+            // wait for an item verdict below ends with it instead of running into its timeout.
+            val dataSocketFault = CompletableDeferred<Throwable>()
+            tcpSender.startInboundReader(this, onFault = { dataSocketFault.complete(it) }) { frame ->
                 when (frame) {
                     is TcpFrame.ItemResult -> mailbox.deliverItemResult(
                         PeerMessage.ItemResult(transferId, frame.itemIndex, frame.ok, frame.errorMessage),
@@ -620,6 +624,8 @@ public class TransferRunner(
 
                             val offset = ChunkMath.offsetOf(chunkIndex, CHUNK_SIZE)
                             val length = ChunkMath.lengthOf(chunkIndex, src.length, CHUNK_SIZE)
+                            // A fresh array per chunk is required: sendChunk seals it in the
+                            // background while the next chunk is read (write-behind, review issue 16).
                             val data = ByteArray(length)
                             metrics.recordSourceRead(length.toLong()) {
                                 src.read(offset, data)
@@ -676,10 +682,19 @@ public class TransferRunner(
                         return@withContext SendOutcome.Failed("Connection lost sending ItemEnd")
                     }
 
-                    val itemResult = mailbox.awaitItemResult(item.index, STEP_TIMEOUT_MS)
+                    val verdict = async { mailbox.awaitItemResult(item.index, STEP_TIMEOUT_MS) }
+                    val itemResult = select<PeerMessage.ItemResult?> {
+                        verdict.onAwait { it }
+                        dataSocketFault.onAwait { null }
+                    }
+                    verdict.cancel()
                     if (itemResult == null) {
                         if (receiverCancelled(item)) return@withContext SendOutcome.Cancelled
-                        val reason = if (!session.isConnected) "Connection lost waiting for verification" else "Receiver timed out verifying item"
+                        val reason = when {
+                            !session.isConnected -> "Connection lost waiting for verification"
+                            dataSocketFault.isCompleted -> "Data socket record from the receiver was rejected"
+                            else -> "Receiver timed out verifying item"
+                        }
                         VeyroLog.e(TAG) { "[$transferId] Item #${item.index} failed: $reason" }
                         onProgress?.invoke(sent, totalBytes, item, TransferStage.FAILED, 0L, null)
                         return@withContext SendOutcome.Failed(reason)

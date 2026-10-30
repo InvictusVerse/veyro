@@ -42,6 +42,22 @@ public class TcpFrameCodecTest {
         return read
     }
 
+    /**
+     * Review issue 13 (ADR-058): `Vtc3Writer.wipe` is unsynchronised and touches only the framer,
+     * so it cannot zero a buffer a concurrent write is encoding into. That is safe only because a
+     * write leaves no control-record plaintext behind: the token is gone from the writer once the
+     * record is out, and the record still reads back intact.
+     */
+    @Test
+    public fun aWriteLeavesNoControlPlaintextBehindSoWipeNeedNotTouchIt() {
+        val out = ByteArrayOutputStream()
+        val writer = Vtc3Writer(out, key, 1, tid)
+        writer.write(TcpFrame.Auth(0L, tid, "secret-token-xyz", "0123456789ABCDEF", TransferRoute.LAN_TCP))
+        assertTrue("no plaintext left in the writer", writer.plainBufferForTest().all { it == 0.toByte() })
+        val read = Vtc3Reader(out.toByteArray().inputStream(), key, 1, tid).readOrNull() as TcpFrame.Auth
+        assertEquals("secret-token-xyz", read.authToken)
+    }
+
     @Test
     public fun everyFrameTypeRoundTripsAndSeqIsTheCounter() {
         val chunk = Random(7).nextBytes(300_000)

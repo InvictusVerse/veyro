@@ -188,6 +188,8 @@ public object TcpFrameCodec {
             if (dataLen < 0 || size < 12 + dataLen) {
                 throw IOException("Corrupted chunk data length: $dataLen vs payload size ${size}")
             }
+            // Must stay a copy: the VTC3 reader reuses its buffer for the next record while the
+            // receiver's read-ahead still holds this chunk (review issue 16).
             val data = ByteArray(dataLen)
             if (dataLen > 0) {
                 System.arraycopy(payload, 12, data, 0, dataLen)

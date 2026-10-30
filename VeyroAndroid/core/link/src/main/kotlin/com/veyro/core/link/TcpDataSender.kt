@@ -84,7 +84,15 @@ public class TcpDataSender(
      * on every item (the photo-fetch "spins forever" report). Reading here is what lets
      * [TransferRunner] accept the result from either channel.
      */
-    public fun startInboundReader(scope: CoroutineScope, onFrame: suspend (TcpFrame) -> Unit): Job {
+    public fun startInboundReader(
+        scope: CoroutineScope,
+        /**
+         * Called once when a record from the receiver fails (tag, order, format, truncation): the
+         * data socket is already closed then, and the transfer must fail (review issue 5).
+         */
+        onFault: (Throwable) -> Unit = {},
+        onFrame: suspend (TcpFrame) -> Unit,
+    ): Job {
         val reader = channel?.reader ?: throw IOException("Socket not connected")
         return scope.launch(dispatchers.io) {
             while (isActive && !isClosed) {
@@ -94,6 +102,14 @@ public class TcpDataSender(
                     // Idle while chunks stream the other way (a timeout before a record starts).
                     continue
                 } catch (t: Throwable) {
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                    // Fail closed (04-PROTOCOL.md 7.3): a record that does not open ends the data
+                    // socket at once, so no further chunk is sealed for a stream that is broken.
+                    if (!isClosed) {
+                        VeyroLog.w(TAG) { "[tcp-sender:feedback-fault] Receiver record rejected (${t.javaClass.simpleName}); closing the data socket" }
+                        closeSocketImmediately()
+                        onFault(t)
+                    }
                     break
                 }
                 if (frame == null) break
@@ -232,7 +248,8 @@ public class TcpDataSender(
         )
         // Write-behind (NFR-3): chunk N is sealed and written while the caller reads and hashes
         // chunk N+1. At most one chunk is in flight and the next call waits for it, so records
-        // keep their order; a failure surfaces on the next send. The caller gives up [data].
+        // keep their order; a failure surfaces on the next send. The caller gives up [data]: it
+        // must not reuse or change the array, or the sealed bytes would not match its hash.
         awaitPendingChunk()
         pendingChunk.set(
             pipelineScope.async {
@@ -398,7 +415,9 @@ public class TcpDataSender(
     }
 
     public fun close(reason: String = "Normal closure") {
-        if (isClosed) return
+        // closeSocketImmediately only closes the socket; the channel (both framers) and the
+        // streams are still released here (review issue 7). Everything below is idempotent.
+        if (isClosed && socket == null && channel == null) return
         isClosed = true
         VeyroLog.i(TAG) { "[tcp-sender:socket-close] Initiating socket close ($reason)" }
         // A chunk write still in flight may be blocked on a full socket while holding the stream:

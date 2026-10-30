@@ -178,6 +178,8 @@ public static class TcpFrameCodec
                 int dataLen = BinaryPrimitives.ReadInt32BigEndian(p.Slice(8, 4));
                 if (dataLen < 0 || p.Length < 12 + dataLen)
                     throw new InvalidDataException($"Corrupted chunk data length: {dataLen} vs payload size {p.Length}");
+                // Must stay a copy: the VTC3 reader reuses its record buffer for the next record
+                // while BulkTransfer still writes this chunk on the pool (write-behind, review issue 16).
                 byte[] data = p.Slice(12, dataLen).ToArray();
                 return new TcpFrame.Chunk(seq, transferId, itemIndex, chunkIndex, data);
             }
