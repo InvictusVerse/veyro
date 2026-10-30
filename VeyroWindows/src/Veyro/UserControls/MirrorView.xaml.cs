@@ -30,18 +30,117 @@ public sealed partial class MirrorView : UserControl
     /// <summary>The user pressed Close in the status panel.</summary>
     public event Action? CloseRequested;
 
+    /// <summary>Asks the window to enter or leave full screen.</summary>
+    public event Action<bool>? FullScreenRequested;
+
+    private bool _cleanView;
+    private bool _fullScreen;
+    private DispatcherQueueTimer? _overlayTimer;
+
     /// <summary>"Clean view": only the picture, for OBS Window Capture.</summary>
     public bool CleanView
     {
-        get => CleanViewToggle.IsChecked == true;
+        get => _cleanView;
         set
         {
-            CleanViewToggle.IsChecked = value;
+            _cleanView = value;
             CleanViewMenuItem.IsChecked = value;
-            Toolbar.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
-            UpdateAudioBar();
+            ApplyChrome();
         }
     }
+
+    /// <summary>Set by the window once its presenter changed.</summary>
+    public bool FullScreen
+    {
+        get => _fullScreen;
+        set
+        {
+            _fullScreen = value;
+            FullScreenMenuItem.IsChecked = value;
+            ApplyChrome();
+            if (value) ShowOverlayBriefly();
+        }
+    }
+
+    /// <summary>Controls hidden in full screen and Clean view; the exit button shows while the mouse moves.</summary>
+    private void ApplyChrome()
+    {
+        bool hidden = _cleanView || _fullScreen;
+        Toolbar.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        ExitOverlayText.Text = _fullScreen ? "Leave full screen (Esc)" : "Show controls (Esc)";
+        if (!hidden) ExitOverlay.Visibility = Visibility.Collapsed;
+        UpdateAudioBar();
+    }
+
+    private void ShowOverlayBriefly()
+    {
+        if (!_cleanView && !_fullScreen) return;
+        ExitOverlay.Visibility = Visibility.Visible;
+        _overlayTimer ??= CreateOverlayTimer();
+        _overlayTimer.Stop();
+        _overlayTimer.Start();
+    }
+
+    private DispatcherQueueTimer CreateOverlayTimer()
+    {
+        DispatcherQueueTimer timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(2.5);
+        timer.IsRepeating = false;
+        // Kept while the pointer is on the button itself, so it can be clicked.
+        timer.Tick += (_, _) => { if (!ExitOverlay.IsPointerOver) ExitOverlay.Visibility = Visibility.Collapsed; else timer.Start(); };
+        return timer;
+    }
+
+    /// <summary>Back to the normal window with controls.</summary>
+    private void LeaveImmersive()
+    {
+        if (_fullScreen) FullScreenRequested?.Invoke(false);
+        if (_cleanView) CleanView = false;
+    }
+
+    private void Root_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => ShowOverlayBriefly();
+
+    private void Root_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement { } source && IsInside(source, Toolbar)) return;
+        FullScreenRequested?.Invoke(!_fullScreen);
+        e.Handled = true;
+    }
+
+    private static bool IsInside(DependencyObject element, DependencyObject container)
+    {
+        for (DependencyObject? d = element; d is not null; d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d))
+            if (ReferenceEquals(d, container)) return true;
+        return false;
+    }
+
+    private void Escape_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (!_fullScreen && !_cleanView) return;
+        LeaveImmersive();
+        args.Handled = true;
+    }
+
+    private void F11_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        FullScreenRequested?.Invoke(!_fullScreen);
+        args.Handled = true;
+    }
+
+    private void ExitOverlay_Click(object sender, RoutedEventArgs e) => LeaveImmersive();
+
+    private void FullScreen_Click(object sender, RoutedEventArgs e) => FullScreenRequested?.Invoke(true);
+
+    private void FullScreenMenuItem_Click(object sender, RoutedEventArgs e) => FullScreenRequested?.Invoke(FullScreenMenuItem.IsChecked);
+
+    private async void QuietToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool on = QuietToggle.IsChecked == true;
+        await _settings.UpdateAsync(s => s with { NotificationPopupsPaused = on });
+    }
+
+    /// <summary>Follows Do not disturb when it is changed elsewhere (tray, Notifications page).</summary>
+    public void RefreshQuiet() => QuietToggle.IsChecked = _settings.Current.NotificationPopupsPaused;
 
     public void Attach(MirrorController controller)
     {
@@ -76,6 +175,7 @@ public sealed partial class MirrorView : UserControl
             HardwareSwitch.IsOn = current.MirrorHardwareEncode;
             SoundToggle.IsChecked = current.MirrorAudio;
             SoundIcon.Glyph = current.MirrorAudio ? "\uE767" : "\uE74F";
+            QuietToggle.IsChecked = current.NotificationPopupsPaused;
         }
         finally
         {
@@ -177,7 +277,6 @@ public sealed partial class MirrorView : UserControl
         if (_controller is { } controller) await controller.OnAudioChangedAsync();
     }
 
-    private void CleanViewToggle_Click(object sender, RoutedEventArgs e) => CleanView = CleanViewToggle.IsChecked == true;
 
     private void CleanViewMenuItem_Click(object sender, RoutedEventArgs e) => CleanView = CleanViewMenuItem.IsChecked;
 

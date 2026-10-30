@@ -18,7 +18,27 @@ public sealed class MirrorWindow : Window
     private const int HeightDip = 860;
 
     private readonly MirrorView _view;
+    private readonly ISettingsStore _settings;
+    private readonly OverlappedPresenter _windowed;
     private bool _minimised;
+
+    /// <summary>Full screen on the window's display; Esc, double-click or the top button leave it.</summary>
+    private void SetFullScreen(bool on)
+    {
+        try
+        {
+            if (on) AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+            else AppWindow.SetPresenter(_windowed);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Full screen not changed: {error.GetType().Name}");
+        }
+        _view.FullScreen = AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen;
+    }
+
+    private void OnSettingsChanged(AppSettings settings) =>
+        DispatcherQueue.TryEnqueue(_view.RefreshQuiet);
 
     public MirrorWindow(string peerId, string phoneName, string pcId, IPeerSessionRegistry sessions, ISettingsStore settings,
         Func<PeerMessage.StreamCaps?> caps, IAppThemeModeService theme)
@@ -32,12 +52,16 @@ public sealed class MirrorWindow : Window
         Controller = new MirrorController(peerId, phoneName, pcId, sessions, settings, caps, _view.PlayerElement);
         _view.Attach(Controller);
         _view.CloseRequested += Close;
+        _view.FullScreenRequested += SetFullScreen;
+        _settings = settings;
+        settings.SettingsChanged += OnSettingsChanged;
 
         OverlappedPresenter presenter = AppWindow.Presenter as OverlappedPresenter ?? OverlappedPresenter.Create();
         presenter.IsResizable = true;
         presenter.IsMaximizable = true;
         presenter.IsMinimizable = true;
         AppWindow.SetPresenter(presenter);
+        _windowed = presenter;
         AppWindow.Resize(InitialSize());
         AppWindow.Changed += OnAppWindowChanged;
         theme.ApplyTheme(this, theme.CurrentTheme);
@@ -85,6 +109,8 @@ public sealed class MirrorWindow : Window
         Closed -= OnClosed;
         AppWindow.Changed -= OnAppWindowChanged;
         _view.CloseRequested -= Close;
+        _view.FullScreenRequested -= SetFullScreen;
+        _settings.SettingsChanged -= OnSettingsChanged;
         _view.Detach();
         Controller.Dispose();
         VeyroTrace.Info("Mirror window closed");

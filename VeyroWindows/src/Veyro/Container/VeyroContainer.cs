@@ -167,7 +167,9 @@ public sealed class VeyroContainer
             quit: App.ExitApplication,
             isStartupEnabled: () => App.StartupEnabledForMenu,
             toggleStartup: App.ToggleStartupFromTray,
-            stopBackground: App.StopBackgroundFromTray);
+            stopBackground: App.StopBackgroundFromTray,
+            isQuiet: () => SettingsStore.Current.NotificationPopupsPaused,
+            toggleQuiet: () => _ = SettingsStore.UpdateAsync(s => s with { NotificationPopupsPaused = !s.NotificationPopupsPaused }));
         LoginStartup = new LoginStartupService();
         ThemeModeService = new AppThemeModeService();
         // Paired phones from the trust store, connected state from the live sessions.
@@ -215,7 +217,9 @@ public sealed class VeyroContainer
             showPhone: peerId => DeviceManager.Select(peerId),
             // ADR-063: Copy code goes through the clipboard service, so it is not echoed to the phones.
             copyText: Clipboard.CopyTextToPcAsync,
-            rules: NotificationRules);
+            rules: NotificationRules,
+            // Do not disturb: by hand, or automatically while a phone is mirrored.
+            quiet: () => NotificationQuiet.IsQuiet(SettingsStore.Current, Mirror.IsMirroring));
         // ADR-036: incoming files are asked about one at a time, by dialog or actionable toast,
         // with a 60 s deadline that reaches the phone as "timeout", not "declined".
         // ADR-038: "Always accept from this phone" (pre-ticked) is saved in the trust store.

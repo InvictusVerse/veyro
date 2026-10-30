@@ -49,8 +49,21 @@ public sealed record AppSettings(
     // ADR-066: ask for the phone's internal sound (never its microphone).
     bool MirrorAudio = true,
     // ADR-066: ask the phone for a hardware encoder (on by default; software only as a fallback).
-    bool MirrorHardwareEncode = true
+    bool MirrorHardwareEncode = true,
+    // Do not disturb: phone notifications and messages still arrive in Veyro but pop up no toast.
+    // Calls and file requests still show. Off by default; the tray, the Notifications page and the
+    // mirror window turn it on.
+    bool NotificationPopupsPaused = false,
+    // The same, automatically while a phone's screen is mirrored (a film in full screen). On.
+    bool QuietWhileMirroring = true
 );
+
+/// <summary>Whether a phone notification or message may pop up a toast now (Do not disturb).</summary>
+public static class NotificationQuiet
+{
+    public static bool IsQuiet(AppSettings settings, bool mirroring) =>
+        settings.NotificationPopupsPaused || (settings.QuietWhileMirroring && mirroring);
+}
 
 public interface ISettingsStore
 {

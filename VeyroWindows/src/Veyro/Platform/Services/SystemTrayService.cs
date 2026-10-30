@@ -36,6 +36,7 @@ public sealed class SystemTrayService : ISystemTrayService
     private const uint CommandToggleSync = 4;
     private const uint CommandToggleStartup = 5;
     private const uint CommandStopBackground = 6;
+    private const uint CommandToggleQuiet = 7;
     private const uint MfChecked = 0x8;
     private const uint MfGrayed = 0x1;
     private const string WindowClass = "VeyroTrayWindow";
@@ -48,6 +49,8 @@ public sealed class SystemTrayService : ISystemTrayService
     private readonly Func<bool?> _isStartupEnabled;
     private readonly Action _toggleStartup;
     private readonly Action _stopBackground;
+    private readonly Func<bool> _isQuiet;
+    private readonly Action _toggleQuiet;
     private readonly uint _taskbarCreated;
     private WndProc? _wndProc; // kept alive: the native window calls into it
     private DispatcherQueue? _dispatcher;
@@ -64,8 +67,12 @@ public sealed class SystemTrayService : ISystemTrayService
         Action quit,
         Func<bool?> isStartupEnabled,
         Action toggleStartup,
-        Action stopBackground)
+        Action stopBackground,
+        Func<bool>? isQuiet = null,
+        Action? toggleQuiet = null)
     {
+        _isQuiet = isQuiet ?? (() => false);
+        _toggleQuiet = toggleQuiet ?? (() => { });
         _open = open;
         _sendFiles = sendFiles;
         _toggleSync = toggleSync;
@@ -187,6 +194,7 @@ public sealed class SystemTrayService : ISystemTrayService
             AppendMenuW(menu, MfString, CommandOpen, "Open Veyro");
             AppendMenuW(menu, MfString, CommandSendFiles, "Send files...");
             AppendMenuW(menu, MfString, CommandToggleSync, _isSyncPaused() ? "Resume sync" : "Pause sync");
+            AppendMenuW(menu, MfString | (_isQuiet() ? MfChecked : 0), CommandToggleQuiet, "Do not disturb");
             AppendMenuW(menu, MfSeparator, 0, null);
             // ADR-047: both background choices right here, ticked when on.
             bool? startup = _isStartupEnabled();
@@ -206,6 +214,7 @@ public sealed class SystemTrayService : ISystemTrayService
                 CommandToggleSync => _toggleSync,
                 CommandToggleStartup => _toggleStartup,
                 CommandStopBackground => _stopBackground,
+                CommandToggleQuiet => _toggleQuiet,
                 CommandQuit => _quit,
                 _ => null
             };

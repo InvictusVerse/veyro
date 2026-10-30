@@ -33,6 +33,13 @@ public sealed class MirrorService : IDisposable
         _sessions.SessionClosed += OnSessionClosed;
     }
 
+    private volatile bool _mirroring;
+
+    /// <summary>A phone's screen is being shown now (for Do not disturb while mirroring). Any thread.</summary>
+    public bool IsMirroring => _mirroring;
+
+    private void UpdateMirroring() => _mirroring = _windows.Values.Any(w => w.Controller.Status.IsLive);
+
     /// <summary>The phone's latest usable caps, or null when it has sent none on this connection.</summary>
     public PeerMessage.StreamCaps? CapsOf(string peerId)
     {
@@ -52,7 +59,12 @@ public sealed class MirrorService : IDisposable
         try
         {
             var window = new MirrorWindow(peerId, peer.ShownName, _pcId, _sessions, _settings, () => CapsOf(peerId), _theme);
-            window.Closed += (_, _) => _windows.Remove(peerId);
+            window.Closed += (_, _) =>
+            {
+                _windows.Remove(peerId);
+                UpdateMirroring();
+            };
+            window.Controller.StatusChanged += _ => UpdateMirroring();
             _windows[peerId] = window;
             window.Activate();
             _ = window.Controller.StartAsync();

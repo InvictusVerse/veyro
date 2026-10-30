@@ -11,9 +11,46 @@ public sealed partial class NotificationsControl : UserControl
 {
     public NotificationsViewModel ViewModel => VeyroContainer.Instance.NotificationsViewModel;
 
+    private static ISettingsStore Settings => VeyroContainer.Instance.SettingsStore;
+    private bool _loadingQuiet;
+
     public NotificationsControl()
     {
         InitializeComponent();
+        UpdateQuietIcon(Settings.Current);
+        Settings.SettingsChanged += OnSettingsChanged;
+        Unloaded += (_, _) => Settings.SettingsChanged -= OnSettingsChanged;
+    }
+
+    private void OnSettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(() => UpdateQuietIcon(settings));
+
+    /// <summary>Quiet-hours moon while Do not disturb is on, a bell otherwise.</summary>
+    private void UpdateQuietIcon(AppSettings settings)
+    {
+        QuietIcon.Glyph = settings.NotificationPopupsPaused ? "\uE708" : "\uEA8F";
+        ToolTipService.SetToolTip(QuietButton, settings.NotificationPopupsPaused ? "Do not disturb is on" : "Do not disturb");
+    }
+
+    private void QuietFlyout_Opening(object sender, object e)
+    {
+        _loadingQuiet = true;
+        QuietSwitch.IsOn = Settings.Current.NotificationPopupsPaused;
+        QuietMirrorSwitch.IsOn = Settings.Current.QuietWhileMirroring;
+        _loadingQuiet = false;
+    }
+
+    private async void QuietSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingQuiet) return;
+        bool on = QuietSwitch.IsOn;
+        await Settings.UpdateAsync(s => s with { NotificationPopupsPaused = on });
+    }
+
+    private async void QuietMirrorSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingQuiet) return;
+        bool on = QuietMirrorSwitch.IsOn;
+        await Settings.UpdateAsync(s => s with { QuietWhileMirroring = on });
     }
 
     private static NotificationItemViewModel? ItemOf(object sender)

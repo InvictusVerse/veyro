@@ -44,6 +44,7 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly Action<string> _showPhone;
     private readonly Func<string, Task<bool>>? _copyText;
     private readonly INotificationAppRules? _rules;
+    private readonly Func<bool> _quiet;
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
     private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
@@ -62,8 +63,11 @@ public sealed class NotificationToastService : INotificationToastService
         Func<string, string?>? phoneName = null,
         Action<string>? showPhone = null,
         Func<string, Task<bool>>? copyText = null,
-        INotificationAppRules? rules = null)
+        INotificationAppRules? rules = null,
+        Func<bool>? quiet = null)
     {
+        // Do not disturb: phone notifications and SMS stay in Veyro but pop up nothing.
+        _quiet = quiet ?? (() => false);
         _mirror = mirror;
         _messaging = messaging;
         _calls = calls;
@@ -137,6 +141,7 @@ public sealed class NotificationToastService : INotificationToastService
 
     private void Show(MirroredNotification notification)
     {
+        if (IsQuiet()) return;
         try
         {
             string peer = notification.PeerId;
@@ -275,8 +280,15 @@ public sealed class NotificationToastService : INotificationToastService
         }
     }
 
+    private bool IsQuiet()
+    {
+        try { return _quiet(); }
+        catch (Exception) { return false; }
+    }
+
     private void ShowSms(string peerId, long threadId, SmsMessage message)
     {
+        if (IsQuiet()) return;
         try
         {
             SmsThread? thread = _messaging.GetThread(peerId, threadId);
