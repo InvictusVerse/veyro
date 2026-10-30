@@ -305,6 +305,14 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             }
 
             TrustedPeer? trusted = _trustStore.GetPeer(preamble.Id);
+            // ADR-057: removed here while it was away. A phone dials with pair = confirm (or none),
+            // and may still trust this PC; a scanned QR code is a deliberate new pairing.
+            if (trusted is null && (preamble.Pair is null or LinkPreamble.PairConfirm) &&
+                _trustStore.GetPendingUnpairSecret(preamble.Id) is { } owed)
+            {
+                await TellRemovedPeerAsync(socket, preamble.Id, owed, ct).ConfigureAwait(false);
+                return;
+            }
             if (trusted is null && preamble.Pair == LinkPreamble.PairConfirm)
             {
                 // ADR-031: compare a code on both screens, accept here. Nothing is typed.
@@ -737,6 +745,69 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             PairingWindow.RecordFailure(attempt);
             throw new TimeoutException("PairHello did not arrive in time.", error);
         }
+    }
+
+    /// <summary>ADR-057: a removed phone that dials in must authenticate (its Hello) within this.</summary>
+    public TimeSpan UnpairHelloTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>ADR-057: after <c>unpair</c> the phone forgets this PC and closes; the close confirms it.</summary>
+    public TimeSpan UnpairCloseTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// ADR-057: <paramref name="peerId"/> was removed here while it was away and may still trust
+    /// this PC. Answers in session mode under the kept <paramref name="secret"/>; only a holder of
+    /// the old pairing can send a message that authenticates under it. Then an authenticated
+    /// <c>unpair</c> tells it to forget this PC, and its close confirms it. Nothing it sends is acted
+    /// on: no session registration, no companion features, no transfers.
+    /// A dialler that closes without authenticating no longer holds that pairing (it removed this
+    /// PC too and is pairing again), so the notice is dropped and its next dial pairs normally.
+    /// </summary>
+    private async Task TellRemovedPeerAsync(WebSocket socket, string peerId, byte[] secret, CancellationToken ct)
+    {
+        VeyroTrace.Info($"{peerId} was removed here; telling it to forget this PC");
+        await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeSession)), ct).ConfigureAwait(false);
+        await using var secure = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, peerId);
+        CryptographicOperations.ZeroMemory(secret);
+        // 1. Any authenticated message proves the old pairing; the phone's Hello comes first.
+        try
+        {
+            using var hello = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            hello.CancelAfter(UnpairHelloTimeout);
+            if (await secure.ReceiveAsync(hello.Token).ConfigureAwait(false) is null) return;
+        }
+        catch (Exception error) when (error is WebSocketException or IOException && !ct.IsCancellationRequested)
+        {
+            // Closed before authenticating: the "no secret" answer of a phone that removed us too.
+            VeyroTrace.Info($"{peerId} no longer holds the old pairing; notice dropped");
+            await _trustStore.ClearPendingUnpairAsync(peerId).ConfigureAwait(false);
+            return;
+        }
+        catch (Exception error) when (error is OperationCanceledException or UnauthorizedAccessException or InvalidDataException && !ct.IsCancellationRequested)
+        {
+            // A wrong key, a forged frame, or silence: nothing is learnt, the notice stays.
+            VeyroTrace.Warn($"{peerId} did not authenticate ({error.GetType().Name}); it is told next time");
+            return;
+        }
+
+        // 2. Tell it; its close is the confirmation. Whatever it sends meanwhile is dropped.
+        await secure.SendAsync(new PeerMessage.Unpair(), ct).ConfigureAwait(false);
+        using var close = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        close.CancelAfter(UnpairCloseTimeout);
+        try
+        {
+            while (await secure.ReceiveAsync(close.Token).ConfigureAwait(false) is not null) { }
+        }
+        catch (Exception error) when (error is WebSocketException or IOException && !close.IsCancellationRequested)
+        {
+            VeyroTrace.Info($"{peerId} was told and forgot this PC");
+            await _trustStore.ClearPendingUnpairAsync(peerId).ConfigureAwait(false);
+            return;
+        }
+        catch (Exception error) when (!ct.IsCancellationRequested && error is OperationCanceledException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // No close in time, or a frame that did not authenticate: told next time.
+        }
+        VeyroTrace.Warn($"{peerId} did not close after unpair; it is told next time");
     }
 
     private static async Task SendTextAsync(WebSocket socket, string text, CancellationToken ct)

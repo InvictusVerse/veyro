@@ -53,6 +53,16 @@ internal object ConnectionWiring {
         },
         listenPortStore = listenPortFile?.let(::FileListenPortStore) ?: ConnectionManager.ListenPortStore.NONE,
         disconnectedByUser = disconnectedByUser,
+        // ADR-057: a device removed while it was away is told when it next dials in.
+        removeTrustedPeer = { raw ->
+            com.veyro.core.model.DeviceId.parseOrNull(raw)?.let { trustStore.removeAndNotify(it) }
+        },
+        pendingUnpairSecret = { raw ->
+            com.veyro.core.model.DeviceId.parseOrNull(raw)?.let { trustStore.pendingUnpairSecret(it) }
+        },
+        unpairDelivered = { raw ->
+            com.veyro.core.model.DeviceId.parseOrNull(raw)?.let { trustStore.clearPendingUnpair(it) }
+        },
     )
 
     /** The port as decimal text. A missing or unreadable file means "no preference". */

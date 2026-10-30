@@ -332,7 +332,7 @@ class ConfirmPairingTest {
 
 /** One end of an in-memory WebSocket: what one side sends, the other receives. */
 @OptIn(io.ktor.utils.io.InternalAPI::class)
-private class PipeSession(
+internal class PipeSession(
     val incomingChannel: Channel<Frame>,
     val outgoingChannel: Channel<Frame>,
     override val coroutineContext: kotlin.coroutines.CoroutineContext = kotlinx.coroutines.Job(),

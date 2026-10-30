@@ -329,17 +329,12 @@ public sealed class DevicesViewModel : BaseViewModel
     public bool HasNoPairedDevices => PairedDevices.Count == 0;
 
     /// <summary>
-    /// Forgets the phone and, when it is connected, tells it to forget this PC too (ADR-042), so
-    /// removing a device on one side removes it on both. The phone closes the session on receipt.
+    /// Forgets the phone and tells it to forget this PC too (ADR-042): now when it is connected,
+    /// otherwise, verified, the next time it dials in (ADR-057).
     /// </summary>
     public async Task RevokeDeviceAsync(string deviceId)
     {
-        if (sessions?.IsConnected(deviceId) == true)
-        {
-            try { await sessions.SendAsync(deviceId, new Veyro.Core.Link.PeerMessage.Unpair()); }
-            catch (Exception error) { Veyro.Core.Diagnostics.VeyroTrace.Warn($"Unpair notice not sent: {error.GetType().Name}"); }
-        }
-        await trustStore.RemoveAsync(deviceId);
+        await Veyro.Core.Link.PeerRemoval.RemoveAsync(trustStore, sessions, deviceId);
         deviceManager.ReloadPairedDevices();
     }
 

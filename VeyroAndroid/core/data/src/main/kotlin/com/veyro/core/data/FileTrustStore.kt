@@ -52,10 +52,32 @@ public class FileTrustStore(
     private val clock: () -> Long = System::currentTimeMillis,
 ) : TrustStore {
 
-    private companion object {
-        const val TAG = "TrustStore"
-        const val FILE_NAME = "trust.cbor"
+    public companion object {
+        private const val TAG = "TrustStore"
+        private const val FILE_NAME = "trust.cbor"
+
+        /** Devices removed here whose `unpair` is still owed (ADR-057). A file of its own. */
+        private const val REMOVED_FILE_NAME = "removed.cbor"
+
+        /** How long a removed device's secret is kept to tell it (ADR-057). */
+        public const val PENDING_UNPAIR_KEEP_MS: Long = 90L * 24 * 60 * 60 * 1000
+
+        /** At most this many owed notices; the oldest go first. */
+        internal const val MAX_PENDING_UNPAIRS = 32
     }
+
+    @Serializable
+    private data class StoredRemoved(
+        val deviceId: String,
+        val pairingSecret: ByteArray,
+        val removedAt: Long,
+    )
+
+    @Serializable
+    private data class StoredRemovedList(
+        val version: Int = 1,
+        val removed: List<StoredRemoved> = emptyList(),
+    )
 
     @Serializable
     private data class StoredPeer(
@@ -77,6 +99,10 @@ public class FileTrustStore(
     )
 
     private val file = AuthenticatedFile(File(directory, FILE_NAME), macKey)
+
+    // Same key and the same tamper check as the trust file: these secrets are pairing secrets.
+    private val removedFile = AuthenticatedFile(File(directory, REMOVED_FILE_NAME), macKey)
+    private var removed: MutableList<StoredRemoved>? = null
     private val cbor = Cbor { ignoreUnknownKeys = true }
     private val mutex = Mutex()
 
@@ -103,6 +129,27 @@ public class FileTrustStore(
         }
         val current = loadIfNeeded()
         persist(current.filterNot { it.deviceId == peer.deviceId } + peer)
+        // Paired again: the old removal no longer stands, and its secret is no longer the key.
+        dropRemoved(peer.deviceId)
+    }
+
+    override suspend fun removeAndNotify(deviceId: DeviceId): Unit = mutex.withLock {
+        val current = loadIfNeeded()
+        val peer = current.firstOrNull { it.deviceId == deviceId } ?: return@withLock
+        val list = loadRemoved()
+        list.removeAll { it.deviceId == deviceId.value }
+        list += StoredRemoved(deviceId.value, peer.pairingSecret.copyOf(), clock())
+        while (list.size > MAX_PENDING_UNPAIRS) list.removeAt(0)
+        persistRemoved(list)
+        persist(current.filterNot { it.deviceId == deviceId })
+    }
+
+    override suspend fun pendingUnpairSecret(deviceId: DeviceId): ByteArray? = mutex.withLock {
+        loadRemoved().firstOrNull { it.deviceId == deviceId.value }?.pairingSecret?.copyOf()
+    }
+
+    override suspend fun clearPendingUnpair(deviceId: DeviceId): Unit = mutex.withLock {
+        dropRemoved(deviceId)
     }
 
     override suspend fun remove(deviceId: DeviceId) = mutex.withLock {
@@ -133,6 +180,8 @@ public class FileTrustStore(
     /** Forces a reload. Used after an identity reset, which invalidates every record. */
     public suspend fun clear(): Unit = mutex.withLock {
         file.delete()
+        removedFile.delete()
+        removed = mutableListOf()
         state.value = emptyList()
         loaded = true
         _lastLoadError.value = null
@@ -174,6 +223,38 @@ public class FileTrustStore(
         file.write(cbor.encodeToByteArray(stored))
         state.value = peers
         _lastLoadError.value = null
+    }
+
+    /**
+     * Owed notices, expired ones dropped. A file that fails its check or does not parse counts as
+     * empty: the cost is only that a removed device is not told (ADR-057), never a wrong trust.
+     */
+    private fun loadRemoved(): MutableList<StoredRemoved> {
+        removed?.let { return it }
+        val read = try {
+            removedFile.read()?.let { cbor.decodeFromByteArray<StoredRemovedList>(it).removed }.orEmpty()
+        } catch (t: Throwable) {
+            VeyroLog.w(TAG) { "Removed-device list unreadable; treating it as empty (${t.javaClass.simpleName})" }
+            emptyList()
+        }
+        val now = clock()
+        val live = read.filter {
+            it.pairingSecret.size == 32 && DeviceId.parseOrNull(it.deviceId) != null &&
+                now - it.removedAt in 0..PENDING_UNPAIR_KEEP_MS
+        }.toMutableList()
+        removed = live
+        if (live.size != read.size) persistRemoved(live)
+        return live
+    }
+
+    private fun persistRemoved(list: MutableList<StoredRemoved>) {
+        if (list.isEmpty()) removedFile.delete() else removedFile.write(cbor.encodeToByteArray(StoredRemovedList(removed = list)))
+        removed = list
+    }
+
+    private fun dropRemoved(deviceId: DeviceId) {
+        val list = loadRemoved()
+        if (list.removeAll { it.deviceId == deviceId.value }) persistRemoved(list)
     }
 
     private fun TrustedPeer.toStored() = StoredPeer(

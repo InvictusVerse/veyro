@@ -187,6 +187,15 @@ public class PeerConnection(
      */
     public val peerCapabilities: StateFlow<Capabilities> = _peerCapabilities.asStateFlow()
 
+    private val _unpaired = CompletableDeferred<Unit>()
+
+    /**
+     * Completes when the peer sends an authenticated `unpair` (ADR-042). Kept, not broadcast: a
+     * device told right after it connects (ADR-057) must not miss it because the watcher
+     * subscribed a moment later.
+     */
+    public val unpaired: kotlinx.coroutines.Deferred<Unit> get() = _unpaired
+
     private val mailboxes = ConcurrentHashMap<String, TransferMailbox>()
     private val completedTransfers = Collections.synchronizedSet(
         object : LinkedHashSet<String>() {
@@ -524,6 +533,10 @@ public class PeerConnection(
 
             is PeerMessage.Pong -> {
                 // Heartbeat response handled
+            }
+
+            is PeerMessage.Unpair -> {
+                if (peerDeviceId == null || envelope.from == peerDeviceId) _unpaired.complete(Unit)
             }
 
             else -> Unit

@@ -20,4 +20,19 @@ public interface TrustStore {
     public suspend fun remove(deviceId: DeviceId)
     public suspend fun setAutoAccept(deviceId: DeviceId, autoAccept: Boolean)
     public suspend fun markConnected(deviceId: DeviceId, atMillis: Long = System.currentTimeMillis())
+
+    /**
+     * The user removed [deviceId] here (ADR-057). Removes it like [remove], but keeps its pairing
+     * secret for a while, so the device can be told with an authenticated `unpair` when it next
+     * dials in. The secret is used for nothing else. The default keeps nothing.
+     */
+    public suspend fun removeAndNotify(deviceId: DeviceId) {
+        remove(deviceId)
+    }
+
+    /** The kept pairing secret of a device removed here and not yet told, or null (ADR-057). */
+    public suspend fun pendingUnpairSecret(deviceId: DeviceId): ByteArray? = null
+
+    /** [deviceId] has been told it was removed, or was paired again: drop its kept secret. */
+    public suspend fun clearPendingUnpair(deviceId: DeviceId) {}
 }

@@ -54,6 +54,19 @@ public interface ITrustStore
     TrustedPeer? GetPeer(string deviceId);
     Task UpsertAsync(TrustedPeer peer);
     Task RemoveAsync(string deviceId);
+
+    /// <summary>
+    /// The user removed the phone here and it could not be told (ADR-057). Removes it like
+    /// <see cref="RemoveAsync"/>, but keeps its pairing secret for a while so the phone can be
+    /// told with an authenticated <c>unpair</c> when it next dials in. Used for nothing else.
+    /// </summary>
+    Task RemoveAndNotifyAsync(string deviceId) => RemoveAsync(deviceId);
+
+    /// <summary>The kept pairing secret of a phone removed here and not yet told, or null (ADR-057).</summary>
+    byte[]? GetPendingUnpairSecret(string deviceId) => null;
+
+    /// <summary>The phone was told, or no longer holds the old pairing: drop its kept secret.</summary>
+    Task ClearPendingUnpairAsync(string deviceId) => Task.CompletedTask;
 }
 
 public interface ITransferHistoryStore

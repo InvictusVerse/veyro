@@ -23,13 +23,14 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
@@ -109,6 +110,16 @@ public class ConnectionManager(
      * reconnecting a few seconds later. Pairing and this phone's own dials are not affected.
      */
     private val disconnectedByUser: (peerDeviceId: String) -> Boolean = { false },
+    /**
+     * ADR-057: the user removed this device here and it could not be told. Deletes the trust
+     * record but keeps its pairing secret, so it can be told when it next dials in. Defaults to
+     * [forgetTrustedPeer].
+     */
+    private val removeTrustedPeer: suspend (peerDeviceId: String) -> Unit = forgetTrustedPeer,
+    /** ADR-057: the kept secret of a device removed here and not yet told, or null. */
+    private val pendingUnpairSecret: suspend (peerDeviceId: String) -> ByteArray? = { null },
+    /** ADR-057: that device was told, or does not hold the old pairing any more: drop the secret. */
+    private val unpairDelivered: suspend (peerDeviceId: String) -> Unit = {},
 ) {
 
     /** The listening port of the previous run, so the next one can try it first (ADR-052). */
@@ -154,6 +165,22 @@ public class ConnectionManager(
 
         /** `pairHello` follows the nonces immediately; this only bounds a stalled peer. */
         const val CONFIRM_HELLO_TIMEOUT_MS = 30_000L
+
+        /** ADR-057: a removed device that dials in must authenticate (send its hello) within this. */
+        const val UNPAIR_HELLO_TIMEOUT_MS = 10_000L
+
+        /** ADR-057: after `unpair` it forgets this device and closes; the close confirms it. */
+        const val UNPAIR_CLOSE_TIMEOUT_MS = 5_000L
+
+        /** A connected device told on Remove closes at once; longer means it did not hear it. */
+        const val UNPAIR_LIVE_CLOSE_TIMEOUT_MS = 3_000L
+
+        /**
+         * ADR-057: the peer answered "session" but this device holds no secret for it, because the
+         * peer removed it while it was away. Closing made the peer drop its notice; one more dial
+         * after this pause reaches its normal pairing.
+         */
+        const val STALE_NOTICE_REDIAL_MS = 1_000L
     }
 
     /** Overridable by tests; production uses [CONFIRM_TIMEOUT_MS]. */
@@ -257,7 +284,11 @@ public class ConnectionManager(
             override val isSuccess: Boolean = true
         }
 
-        data class Failed(val failure: CodePairingFailure) : DialOutcome {
+        data class Failed(
+            val failure: CodePairingFailure,
+            /** The peer answered "session" and this device holds no secret for it (ADR-057). */
+            val peerExpectedSession: Boolean = false,
+        ) : DialOutcome {
             override val isSuccess: Boolean = false
         }
     }
@@ -444,6 +475,17 @@ public class ConnectionManager(
             sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_SESSION), connId)
             runConnection(ws, known, encrypt = true, inbound = true, connId = connId, remoteHost = remoteHost, localHost = localHost)
             return
+        }
+
+        // ADR-057: removed here while it was away. A dial (no pairing mode, or confirm, which
+        // Android sends on every dial) may come from a device that still trusts this one; a
+        // scanned QR code is a deliberate new pairing and goes on below.
+        if (preamble.pair == null || preamble.pair == LinkPreamble.PAIR_CONFIRM) {
+            val owed = pendingUnpairSecret(preamble.id)
+            if (owed != null) {
+                tellRemovedPeer(ws, preamble.id, owed, connId, remoteHost, localHost)
+                return
+            }
         }
 
         // Check if a pairing request is already awaiting user consent
@@ -774,6 +816,26 @@ public class ConnectionManager(
         presetCode: String?,
         expectedPeerId: String?,
         onProgress: suspend (CodePairingProgress) -> Unit,
+    ): DialOutcome {
+        val first = dialOnce(peerDeviceId, peerName, endpoints, forceReconnect, pairMode, presetCode, expectedPeerId, onProgress)
+        if (first !is DialOutcome.Failed || !first.peerExpectedSession || pairMode == null) return first
+        // ADR-057: the peer removed this device while it was away and answered "session" to tell
+        // it so. This device holds no secret for it (it was removed here too), and closing made the
+        // peer drop that notice: dialling once more reaches its normal pairing.
+        VeyroLog.i(TAG) { "$peerName still had a removal notice for this device; dialling once more to pair" }
+        delay(STALE_NOTICE_REDIAL_MS)
+        return dialOnce(peerDeviceId, peerName, endpoints, forceReconnect, pairMode, presetCode, expectedPeerId, onProgress)
+    }
+
+    private suspend fun dialOnce(
+        peerDeviceId: String,
+        peerName: String,
+        endpoints: List<Endpoint>,
+        forceReconnect: Boolean,
+        pairMode: String?,
+        presetCode: String?,
+        expectedPeerId: String?,
+        onProgress: suspend (CodePairingProgress) -> Unit,
     ): DialOutcome = dialLock(peerDeviceId).withLock {
         val connId = "out-" + UUID.randomUUID().toString().take(8)
         if (endpoints.isEmpty()) {
@@ -840,7 +902,7 @@ public class ConnectionManager(
                     VeyroLog.w(TAG) { "[$connId] Handshake failed: remote peer expects session mode but local pairing secret is missing" }
                     ws.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "no-secret"))
                     _events.value = ConnectionEvent.Failed("Pairing was lost. Pair with $peerName again.")
-                    DialOutcome.Failed(CodePairingFailure.OTHER)
+                    DialOutcome.Failed(CodePairingFailure.OTHER, peerExpectedSession = true)
                 } else {
                     scope.launch { runConnection(ws, known, encrypt = true, inbound = false, connId = connId, remoteHost = remoteHost) }
                     DialOutcome.Session
@@ -1592,37 +1654,100 @@ public class ConnectionManager(
     // ── Unpair both ways (ADR-042) ─────────────────────────────────────────────────────────
 
     /**
-     * Removes [peerDeviceId] here and tells it to remove this phone too. The message goes over the
-     * live session if there is one; otherwise the other side keeps its record until it next fails
-     * to authenticate. Trust is deleted even if sending fails.
+     * Removes [peerDeviceId] here and tells it to remove this phone too. Over the live session if
+     * there is one: the peer forgets this phone and closes, and that close is the confirmation.
+     * Otherwise (it is away, or never closed) its pairing secret is kept so it is told the next
+     * time it dials in (ADR-057). Trust is deleted here either way.
      */
     public suspend fun unpair(peerDeviceId: String) {
         val session = connectionFor(peerDeviceId)
-        if (session != null) {
-            runCatching {
-                session.send(PeerMessage.Unpair)
-                session.flush()
-            }.onFailure { VeyroLog.w(TAG) { "Could not tell the peer about the unpair: ${it.javaClass.simpleName}" } }
-        }
-        forgetTrustedPeer(peerDeviceId)
+        val told = session != null && runCatching {
+            session.send(PeerMessage.Unpair)
+            session.flush()
+            withTimeoutOrNull(UNPAIR_LIVE_CLOSE_TIMEOUT_MS) { session.closed.first() } != null
+        }.onFailure { VeyroLog.w(TAG) { "Could not tell the peer about the unpair: ${it.javaClass.simpleName}" } }
+            .getOrDefault(false)
+        if (told) forgetTrustedPeer(peerDeviceId) else removeTrustedPeer(peerDeviceId)
         disconnect(peerDeviceId)
-        VeyroLog.i(TAG) { "Unpaired $peerDeviceId" }
+        VeyroLog.i(TAG) { "Unpaired $peerDeviceId (${if (told) "told now" else "will be told when it next connects"})" }
     }
 
     /** Waits for an `unpair` from this session's peer, or the session closing, whichever is first. */
     private fun watchForUnpair(session: PeerConnection, peerDeviceId: String) {
         scope.launch {
+            // ADR-057: the kept signal, not the broadcast, so an unpair sent the moment the session
+            // opens (a device told after it was removed while away) is not missed.
             val unpaired = merge(
-                session.incoming
-                    .filter { it.payload is PeerMessage.Unpair && it.from == peerDeviceId }
-                    .map { true },
+                flow {
+                    session.unpaired.await()
+                    emit(true)
+                },
                 session.closed.map { false },
-            ).first()
+            ).first() || session.unpaired.isCompleted
             if (!unpaired) return@launch
             VeyroLog.i(TAG) { "Peer $peerDeviceId removed this device; forgetting it" }
             runCatching { forgetTrustedPeer(peerDeviceId) }
                 .onFailure { VeyroLog.w(TAG) { "Forgetting the peer failed: ${it.javaClass.simpleName}" } }
             disconnect(peerDeviceId)
+        }
+    }
+
+    /**
+     * ADR-057: [peerId] was removed here while it was away and may still trust this device.
+     *
+     * Answers in session mode under the kept [secret]. The peer's `hello` must authenticate under
+     * it, which only a holder of the old pairing can do; then an authenticated `unpair` tells it to
+     * forget this device, and its close confirms it. Nothing else it sends is acted on: no slot,
+     * no companion features, no transfers.
+     *
+     * A dialler that closes without authenticating holds no such pairing (it removed this device
+     * too and is pairing again), so the notice is dropped and its next dial pairs normally.
+     */
+    private suspend fun tellRemovedPeer(
+        ws: DefaultWebSocketSession,
+        peerId: String,
+        secret: ByteArray,
+        connId: String,
+        remoteHost: String?,
+        localHost: String?,
+    ) {
+        VeyroLog.i(TAG) { "[$connId] $peerId was removed here; telling it to forget this device" }
+        sendAck(ws, LinkPreambleAck(LinkPreambleAck.MODE_SESSION), connId)
+        val session = PeerConnection(
+            ws = ws,
+            initialKey = FrameCrypto.sessionKeyFromBytes(secret),
+            initialEncrypt = true,
+            localDeviceId = localDeviceId(),
+            tag = "Connection(unpair-$connId)",
+            dispatcher = dispatchers.io,
+            peerDeviceId = peerId,
+            enableHeartbeat = false,
+            remoteHost = remoteHost,
+            localHost = localHost,
+        )
+        secret.fill(0)
+        val readJob = session.start()
+        try {
+            val hello = session.handshakeOrNull(UNPAIR_HELLO_TIMEOUT_MS)
+            if (hello == null || hello.from != peerId) {
+                if (!session.isConnected) {
+                    VeyroLog.i(TAG) { "[$connId] $peerId does not hold the old pairing any more; notice dropped" }
+                    unpairDelivered(peerId)
+                } else {
+                    VeyroLog.w(TAG) { "[$connId] $peerId did not authenticate; it is told next time" }
+                }
+                return
+            }
+            session.send(PeerMessage.Unpair)
+            session.flush()
+            if (withTimeoutOrNull(UNPAIR_CLOSE_TIMEOUT_MS) { readJob.join() } != null) {
+                VeyroLog.i(TAG) { "[$connId] $peerId was told and forgot this device" }
+                unpairDelivered(peerId)
+            } else {
+                VeyroLog.w(TAG) { "[$connId] $peerId did not close after unpair; it is told next time" }
+            }
+        } finally {
+            session.close("unpaired")
         }
     }
 

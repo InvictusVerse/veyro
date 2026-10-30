@@ -278,4 +278,77 @@ class FileTrustStoreTest {
         s.put(peer(40))
         assertEquals(2, s.peers.first().size)
     }
+
+    // ── Removed while away (ADR-057) ───────────────────────────────────────────────────────
+
+    private var now = 1_800_000_000_000L
+
+    private fun timedStore() = FileTrustStore(dir, macKey, TestAppDispatchers(), clock = { now })
+
+    @Test
+    fun `remove and notify drops the peer but keeps its secret across a reload`() = runBlocking {
+        val p = peer(1)
+        timedStore().put(p)
+        timedStore().removeAndNotify(p.deviceId)
+
+        val reloaded = timedStore()
+        assertNull("the device is no longer trusted", reloaded.find(p.deviceId))
+        assertTrue(p.pairingSecret.contentEquals(reloaded.pendingUnpairSecret(p.deviceId)))
+    }
+
+    @Test
+    fun `told or paired again, the kept secret goes`() = runBlocking {
+        val told = peer(1)
+        val paired = peer(40)
+        val s = timedStore()
+        s.put(told)
+        s.put(paired)
+        s.removeAndNotify(told.deviceId)
+        s.removeAndNotify(paired.deviceId)
+
+        s.clearPendingUnpair(told.deviceId)
+        s.put(paired.copy(pairingSecret = ByteArray(32) { 3 }))
+
+        val reloaded = timedStore()
+        assertNull(reloaded.pendingUnpairSecret(told.deviceId))
+        assertNull("a new pairing replaces the old secret", reloaded.pendingUnpairSecret(paired.deviceId))
+        assertFalse("nothing is owed, so no file is left", File(dir, "removed.cbor").exists())
+    }
+
+    @Test
+    fun `a kept secret expires`() = runBlocking {
+        val p = peer(1)
+        timedStore().put(p)
+        timedStore().removeAndNotify(p.deviceId)
+
+        now += FileTrustStore.PENDING_UNPAIR_KEEP_MS + 1
+        assertNull(timedStore().pendingUnpairSecret(p.deviceId))
+    }
+
+    @Test
+    fun `a tampered removal list is ignored and trust is untouched`() = runBlocking {
+        val kept = peer(40)
+        val s = timedStore()
+        s.put(peer(1))
+        s.put(kept)
+        s.removeAndNotify(peer(1).deviceId)
+
+        val f = File(dir, "removed.cbor")
+        val raw = f.readBytes()
+        raw[raw.size - 3] = (raw[raw.size - 3].toInt() xor 0x40).toByte()
+        f.writeBytes(raw)
+
+        val reloaded = timedStore()
+        assertNull(reloaded.pendingUnpairSecret(peer(1).deviceId))
+        assertEquals(listOf(kept.deviceId), reloaded.snapshot().map { it.deviceId })
+    }
+
+    @Test
+    fun `remove alone keeps nothing`() = runBlocking {
+        val p = peer(1)
+        val s = timedStore()
+        s.put(p)
+        s.remove(p.deviceId)
+        assertNull(s.pendingUnpairSecret(p.deviceId))
+    }
 }
