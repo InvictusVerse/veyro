@@ -34,8 +34,9 @@ private fun Context.granted(permission: String): Boolean =
  *
  * Call state comes from `TelephonyCallback.CallStateListener` on API 31+ and `PhoneStateListener`
  * below, both needing `READ_PHONE_STATE`. The incoming number is only exposed to holders of
- * `READ_CALL_LOG`: through the listener below API 31, and through the `PHONE_STATE` broadcast on
- * every release, which is also listened to while that permission is held.
+ * `READ_CALL_LOG`, checked when the call rings: through `PhoneStateListener` (the number only on
+ * API 31+) and the `PHONE_STATE` broadcast, both always registered so a later grant works at once.
+ * [CallBridge] merges the reports of one ring and looks the number up in the contacts.
  *
  * Numbers and names are user data: nothing here logs them.
  */
@@ -73,24 +74,46 @@ public class AndroidCallSource(
             VeyroLog.w(TAG) { "Call state listener refused: ${e.javaClass.simpleName}" }
         }
 
-        if (appContext.granted(Manifest.permission.READ_CALL_LOG)) {
-            val receiver = object : BroadcastReceiver() {
-                @Suppress("DEPRECATION") // EXTRA_INCOMING_NUMBER: still the only source of the number.
-                override fun onReceive(context: Context?, intent: Intent?) {
-                    if (intent == null) return
-                    if (intent.getStringExtra(TelephonyManager.EXTRA_STATE) != TelephonyManager.EXTRA_STATE_RINGING) return
-                    val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
-                    if (!number.isNullOrBlank()) trySend(CallSignal(TelephonyCallState.RINGING, number))
+        // The caller's number. Android puts it in the PHONE_STATE broadcast, and in the old
+        // PhoneStateListener, only for holders of READ_CALL_LOG, and checks that when the call
+        // rings, not when Veyro starts listening. So both are registered whenever phone state can
+        // be read: a call-log grant given after Veyro connected (onboarding, Settings) brings the
+        // number with the next call, without a reconnect. Before, the receiver was registered only
+        // if the grant already existed when the session started, and the PC showed
+        // "Unknown caller".
+        val receiver = object : BroadcastReceiver() {
+            @Suppress("DEPRECATION") // EXTRA_INCOMING_NUMBER: still the only source of the number.
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent == null) return
+                if (intent.getStringExtra(TelephonyManager.EXTRA_STATE) != TelephonyManager.EXTRA_STATE_RINGING) return
+                val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+                if (!number.isNullOrBlank()) {
+                    trySend(CallSignal(TelephonyCallState.RINGING, number))
+                } else {
+                    // No number (withheld, or no call-log access). Never logs the number itself.
+                    VeyroLog.i(TAG) { "Ringing without a number (call log access: ${appContext.granted(Manifest.permission.READ_CALL_LOG)})" }
                 }
             }
-            val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
-            // A system broadcast only, so the receiver need not be exported.
+        }
+        val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+        // A system broadcast only, so the receiver need not be exported.
+        runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
                 appContext.registerReceiver(receiver, filter)
             }
             unregister += { runCatching { appContext.unregisterReceiver(receiver) } }
+        }.onFailure { VeyroLog.w(TAG) { "Phone state broadcast not registered: ${it.javaClass.simpleName}" } }
+
+        // API 31+: the state comes from TelephonyCallback, which never carries the number. The
+        // deprecated listener still does on these versions; it is used for the number only.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                unregister += listenLegacy(telephony, executor) { signal ->
+                    if (signal.state == TelephonyCallState.RINGING && signal.number != null) trySend(signal)
+                }
+            }.onFailure { VeyroLog.d(TAG) { "Legacy call listener refused: ${it.javaClass.simpleName}" } }
         }
 
         awaitClose { unregister.forEach { runCatching { it() } } }
@@ -147,7 +170,7 @@ public class AndroidCallSource(
         entries
     }
 
-    /** `PhoneStateListener` for API 29-30. Returns the unregister action. */
+    /** `PhoneStateListener`: the call state on API 29-30, the caller's number on 31+. Returns the unregister action. */
     @Suppress("DEPRECATION")
     private fun listenLegacy(
         telephony: TelephonyManager,
