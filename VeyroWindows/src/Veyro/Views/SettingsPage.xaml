@@ -491,7 +491,7 @@
                             <FontIcon VerticalAlignment="Center" Glyph="&#xE8C8;" />
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                 <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Copy code" />
-                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="When a notification holds a one-time code, the pop-up and the feed show Copy code. It puts only the code on this PC's clipboard and does not send it back to your phones." TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="When a notification holds a one-time code, the pop-up and the feed show Copy code. It puts only the code on this PC's clipboard, keeps it out of clipboard history (Windows + V) and does not send it back to your phones." TextWrapping="Wrap" />
                             </StackPanel>
                         </Grid>
                     </Border>

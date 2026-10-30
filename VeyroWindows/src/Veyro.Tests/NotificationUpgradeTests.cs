@@ -533,8 +533,10 @@ public sealed class CopyCodeClipboardTests
     private sealed class FakeSink : IClipboardSink
     {
         public List<string> Texts { get; } = [];
+        public List<string> PrivateTexts { get; } = [];
         public Task SetTextAsync(string text) { Texts.Add(text); return Task.CompletedTask; }
         public Task SetImageAsync(byte[] image) => Task.CompletedTask;
+        public Task SetPrivateTextAsync(string text) { PrivateTexts.Add(text); return Task.CompletedTask; }
     }
 
     [Fact]
@@ -549,7 +551,9 @@ public sealed class CopyCodeClipboardTests
         // Windows raises a clipboard change for what Veyro just set.
         await service.OnLocalTextCopiedAsync("482913");
 
-        Assert.Equal(["482913"], sink.Texts);
+        // Out of clipboard history: the private path, not the normal one.
+        Assert.Equal(["482913"], sink.PrivateTexts);
+        Assert.Empty(sink.Texts);
         Assert.Empty(sessions.SentOf<PeerMessage.Clip>("PHONE"));
         Assert.Empty(service.Items);
     }

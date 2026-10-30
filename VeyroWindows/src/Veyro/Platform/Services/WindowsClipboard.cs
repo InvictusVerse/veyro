@@ -74,6 +74,20 @@ public sealed class WindowsClipboard : IClipboardSink
         global::Windows.ApplicationModel.DataTransfer.Clipboard.Flush();
     });
 
+    /// <summary>
+    /// ADR-063 "Copy code": kept out of Win+V history and the cloud clipboard, as password
+    /// managers do. ClipboardService remembers it first, so the watcher above does not send it.
+    /// </summary>
+    public Task SetPrivateTextAsync(string text) => OnUiAsync(() =>
+    {
+        var package = new DataPackage();
+        package.SetText(text);
+        var options = new ClipboardContentOptions { IsAllowedInHistory = false, IsRoamable = false };
+        if (!global::Windows.ApplicationModel.DataTransfer.Clipboard.SetContentWithOptions(package, options))
+            global::Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        global::Windows.ApplicationModel.DataTransfer.Clipboard.Flush();
+    });
+
     public async Task SetImageAsync(byte[] image)
     {
         var stream = new InMemoryRandomAccessStream();

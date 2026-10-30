@@ -22,6 +22,12 @@ public interface IClipboardSink
 {
     Task SetTextAsync(string text);
     Task SetImageAsync(byte[] image);
+
+    /// <summary>
+    /// Like <see cref="SetTextAsync"/>, but kept out of the system's clipboard history and cloud
+    /// sync where the platform allows it: a one-time code (ADR-063).
+    /// </summary>
+    Task SetPrivateTextAsync(string text) => SetTextAsync(text);
 }
 
 /// <summary>Toasts for clipboard events. Implemented by the app's toast service.</summary>
@@ -108,15 +114,15 @@ public sealed partial class ClipboardService : IDisposable
     }
 
     /// <summary>
-    /// Puts text on the PC clipboard without sending it to the phones and without adding it to
-    /// the virtual clipboard: "Copy code" on a mirrored notification (ADR-063). False when the
-    /// clipboard is not available. The text is user data: never logged.
+    /// Puts text on the PC clipboard without sending it to the phones, without adding it to the
+    /// virtual clipboard, and outside clipboard history: "Copy code" on a mirrored notification
+    /// (ADR-063). False when the clipboard is not available. The text is user data: never logged.
     /// </summary>
     public async Task<bool> CopyTextToPcAsync(string text)
     {
         if (Sink is not { } sink || string.IsNullOrEmpty(text)) return false;
         RememberApplied(text, null);
-        await sink.SetTextAsync(text).ConfigureAwait(false);
+        await sink.SetPrivateTextAsync(text).ConfigureAwait(false);
         return true;
     }
 
