@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Veyro.Core.Models;
+using Veyro.Core.Notifications;
 
 namespace Veyro.Core.Data;
 
@@ -38,7 +39,10 @@ public sealed record AppSettings(
     // it; after that only the user changes it (Settings, the tray menu, or Windows' Startup apps).
     bool AutoStartDefaultApplied = false,
     // ADR-047: the one-time "Veyro is still running in the tray" note was shown.
-    bool TrayHintShown = false
+    bool TrayHintShown = false,
+    // ADR-063: phone apps that sent a notification and what each does on this PC (Show, Feed
+    // only, Hide), for every paired phone. Package names and labels only, never contents.
+    IReadOnlyList<NotificationAppRule>? NotificationApps = null
 );
 
 public interface ISettingsStore

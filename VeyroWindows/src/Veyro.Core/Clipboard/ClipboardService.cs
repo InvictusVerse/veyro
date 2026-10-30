@@ -107,6 +107,19 @@ public sealed partial class ClipboardService : IDisposable
         else if (item.Text is { } text) await sink.SetTextAsync(text).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Puts text on the PC clipboard without sending it to the phones and without adding it to
+    /// the virtual clipboard: "Copy code" on a mirrored notification (ADR-063). False when the
+    /// clipboard is not available. The text is user data: never logged.
+    /// </summary>
+    public async Task<bool> CopyTextToPcAsync(string text)
+    {
+        if (Sink is not { } sink || string.IsNullOrEmpty(text)) return false;
+        RememberApplied(text, null);
+        await sink.SetTextAsync(text).ConfigureAwait(false);
+        return true;
+    }
+
     /// <summary>The PC clipboard changed (text). Sends it to the phones unless it is our own echo.</summary>
     public Task OnLocalTextCopiedAsync(string text)
     {
