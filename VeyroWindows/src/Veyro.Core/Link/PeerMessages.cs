@@ -129,6 +129,12 @@ public static class PeerCapabilities
     public const int Calls = 0x1000;
     public const int Photos = 0x2000;
     public const int Wallpaper = 0x4000;
+    /// <summary>ADR-066: the phone can share its screen (streamCaps, streamStart, VMS1). Phone only.</summary>
+    public const int ScreenSource = 0x8000;
+    /// <summary>ADR-066: this PC can show a phone's screen. Not advertised until the viewer is built.</summary>
+    public const int ScreenView = 0x10000;
+    /// <summary>ADR-066: touch and keys from the PC to the phone while mirroring (reserved).</summary>
+    public const int RemoteInput = 0x20000;
     /// <summary>ADR-060: flashlight, media volume and brightness in devStatus / devControl. PC to phone only.</summary>
     public const int PhoneControls = 0x40000;
     /// <summary>ADR-059: deviceInfo, the sender's own name (and a phone's clipboard-receive switch).</summary>
@@ -293,7 +299,8 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(Clip), "clip")]
 [JsonDerivedType(typeof(Wallpaper), "wallpaper")]
 [JsonDerivedType(typeof(DeviceInfo), "deviceInfo")]
-public abstract record PeerMessage
+// Screen mirroring messages (ADR-066) and their derived-type attributes are in PeerMessages.Stream.cs.
+public abstract partial record PeerMessage
 {
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
     // Only exchanged with a peer whose Hello/HelloAck capabilities include
