@@ -50,6 +50,8 @@ include(":core:data")
 include(":core:service")
 // Phone Link style companion features over a paired session (ADR-025). Notifications first.
 include(":core:companion")
+// Screen capture, video encoder and playback audio (ADR-066). Captures and encodes, no sockets.
+include(":core:media")
 include(":core:designsystem")
 include(":core:ui")
 include(":core:testing")
