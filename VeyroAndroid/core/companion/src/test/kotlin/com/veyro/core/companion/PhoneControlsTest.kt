@@ -280,4 +280,49 @@ class PhoneControlsTest {
         assertTrue(PhoneControlMath.isPercent(0) && PhoneControlMath.isPercent(100))
         assertTrue(!PhoneControlMath.isPercent(101) && !PhoneControlMath.isPercent(-1) && !PhoneControlMath.isPercent(null))
     }
+
+    @Test
+    fun `the slider curve is AOSP's and inverts`() {
+        assertEquals(0.0, PhoneControlMath.linearToSlider(0.0), 1e-9)
+        assertEquals(1.0, PhoneControlMath.linearToSlider(1.0), 1e-6)
+        // The two halves meet at 1/12 linear = half the slider.
+        assertEquals(0.5, PhoneControlMath.linearToSlider(1.0 / 12.0), 1e-6)
+        for (p in 0..100) {
+            val back = PhoneControlMath.linearToSlider(PhoneControlMath.sliderToLinear(p / 100.0))
+            assertEquals("slider $p", p / 100.0, back, 1e-6)
+        }
+    }
+
+    @Test
+    fun `Android 11 and later use 1 to 255 whatever the OEM config says`() {
+        // The Redmi K50i (HyperOS, Android 14): setting 27, config maximum from MIUI's old scale.
+        val range = PhoneControlMath.brightnessRange(sdkInt = 34, configMin = 1, configMax = 2047, observed = 27)
+        assertEquals(1..255, range)
+        val percent = PhoneControlMath.brightnessToPercent(27, range)!!
+        assertTrue("about half on the phone's slider, was 1 %: $percent", percent in 53..57)
+        assertEquals(255, PhoneControlMath.percentToBrightness(100, range))
+        assertEquals("0 % is the dimmest, never 0 (off)", 1, PhoneControlMath.percentToBrightness(0, range))
+    }
+
+    @Test
+    fun `Android 10 uses the config range, and a larger OEM scale widens it`() {
+        assertEquals(10..1023, PhoneControlMath.brightnessRange(sdkInt = 29, configMin = 10, configMax = 1023))
+        assertEquals(1..255, PhoneControlMath.brightnessRange(sdkInt = 29, configMin = null, configMax = null))
+        // An OEM that kept a 0..2047 setting on Android 11+: the reading widens the range.
+        assertEquals(1..2047, PhoneControlMath.brightnessRange(sdkInt = 31, configMin = 1, configMax = 2047, observed = 900))
+        assertEquals(1..3000, PhoneControlMath.brightnessRange(sdkInt = 31, configMin = 1, configMax = null, observed = 3000))
+        assertEquals(100, PhoneControlMath.brightnessToPercent(2047, 1..2047))
+    }
+
+    @Test
+    fun `a percent set from the PC comes back within one setting step`() {
+        val range = 1..255
+        for (p in 0..100) {
+            val value = PhoneControlMath.percentToBrightness(p, range)
+            val back = PhoneControlMath.brightnessToPercent(value, range)!!
+            val next = PhoneControlMath.brightnessToPercent((value + 1).coerceAtMost(255), range)!!
+            val prev = PhoneControlMath.brightnessToPercent((value - 1).coerceAtLeast(1), range)!!
+            assertTrue("percent $p -> $value -> $back", p in minOf(prev, back)..maxOf(next, back))
+        }
+    }
 }

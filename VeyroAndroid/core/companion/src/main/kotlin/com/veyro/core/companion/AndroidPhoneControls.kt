@@ -31,9 +31,10 @@ import kotlinx.coroutines.withContext
  *    Changes are heard through the system's volume-changed broadcast.
  *  - Brightness: `Settings.System.SCREEN_BRIGHTNESS` and `SCREEN_BRIGHTNESS_MODE`. Reading needs
  *    nothing; writing needs the user to grant "Modify system settings"
- *    (`ACTION_MANAGE_WRITE_SETTINGS`, asked for from Device settings). The range's top is the platform's
- *    `config_screenBrightnessSettingMaximum` where the device exposes it, else 255. The value is
- *    the setting, not the slider position: Android's own slider is not linear in it.
+ *    (`ACTION_MANAGE_WRITE_SETTINGS`, asked for from Device settings). The percent is the position
+ *    of the phone's own slider: the setting's real range on this Android version
+ *    ([PhoneControlMath.brightnessRange]; 1..255 on Android 11+, whatever the OEM config says)
+ *    through AOSP's slider curve ([PhoneControlMath.linearToSlider]).
  *
  * Every call degrades to "absent" or a no-op on a device that refuses it.
  */
@@ -47,8 +48,6 @@ public class AndroidPhoneControls(
 
         /** Not in the SDK, but sent by the platform on every stream volume change. */
         private const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
-
-        private const val DEFAULT_BRIGHTNESS_MAX = 255
 
         /** Whether the user let Veyro modify system settings (brightness). */
         public fun canWriteSettings(context: Context): Boolean = Settings.System.canWrite(context)
@@ -74,12 +73,24 @@ public class AndroidPhoneControls(
         }.onFailure { VeyroLog.d(TAG) { "No flashlight: ${it.javaClass.simpleName}" } }.getOrNull()
     }
 
-    private val brightnessMax: Int by lazy {
-        @SuppressLint("DiscouragedApi")
-        val id = Resources.getSystem().getIdentifier("config_screenBrightnessSettingMaximum", "integer", "android")
-        runCatching { if (id != 0) Resources.getSystem().getInteger(id) else 0 }.getOrDefault(0)
-            .takeIf { it > 0 } ?: DEFAULT_BRIGHTNESS_MAX
+    private val configBrightnessMin: Int? by lazy { systemInteger("config_screenBrightnessSettingMinimum") }
+    private val configBrightnessMax: Int? by lazy { systemInteger("config_screenBrightnessSettingMaximum") }
+
+    /**
+     * The last brightness the PC set: the value written and the percent asked for. The setting
+     * is an integer, so a percent does not always survive the round trip; while the setting
+     * still holds what we wrote, the PC is shown its own percent instead of a neighbour.
+     */
+    @Volatile private var lastWrittenBrightness: Pair<Int, Int>? = null
+
+    @SuppressLint("DiscouragedApi")
+    private fun systemInteger(name: String): Int? {
+        val id = Resources.getSystem().getIdentifier(name, "integer", "android")
+        return runCatching { if (id != 0) Resources.getSystem().getInteger(id) else null }.getOrNull()?.takeIf { it > 0 }
     }
+
+    private fun brightnessRange(observed: Int?): IntRange =
+        PhoneControlMath.brightnessRange(Build.VERSION.SDK_INT, configBrightnessMin, configBrightnessMax, observed)
 
     override val changes: Flow<Unit> = callbackFlow {
         val handler = Handler(Looper.getMainLooper())
@@ -145,7 +156,9 @@ public class AndroidPhoneControls(
         }
         val resolver = appContext.contentResolver
         val brightness = runCatching {
-            PhoneControlMath.toPercent(Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS), 0, brightnessMax)
+            val value = Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
+            lastWrittenBrightness?.takeIf { it.first == value }?.second
+                ?: PhoneControlMath.brightnessToPercent(value, brightnessRange(value))
         }.getOrNull()
         val auto = runCatching {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE) ==
@@ -186,7 +199,10 @@ public class AndroidPhoneControls(
             // A value written while automatic brightness is on has no visible effect, so a
             // brightness from the PC means "this brightness", as moving the phone's own slider does.
             Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, PhoneControlMath.fromPercent(percent, 0, brightnessMax))
+            val current = runCatching { Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS) }.getOrNull()
+            val value = PhoneControlMath.percentToBrightness(percent, brightnessRange(current))
+            lastWrittenBrightness = value to percent.coerceIn(0, 100)
+            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, value)
         }
     }
 
