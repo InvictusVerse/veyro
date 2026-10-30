@@ -252,7 +252,7 @@ private fun HeroCard(sending: Boolean, autoFetch: Boolean, onSend: () -> Unit, o
                 Column(Modifier.weight(1f)) {
                     Text("Auto-fetch clipboard", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Keep what your PC copies and what other phones send here, with a notification to copy or open it.",
+                        if (autoFetch) "Keep what your PC copies here, with a notification to copy or open it." else "Off: your PCs stop sending what they copy. Text and links sent to this phone with \"Send with Veyro\" still arrive.",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                     )
@@ -291,7 +291,7 @@ private fun EmptyState(autoFetch: Boolean, filtered: Boolean) {
                 when {
                     filtered -> "Pick All to see every clip."
                     autoFetch -> "It shows up here, ready to paste."
-                    else -> "Turn it on to keep what your devices send here."
+                    else -> "Your PCs do not send their copies now. What a device sends with \"Send with Veyro\" still shows here."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

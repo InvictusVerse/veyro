@@ -27,8 +27,8 @@ internal object ShareShortcuts {
         runCatching {
             val shortcuts = peers.take(minOf(MAX, ShortcutManagerCompat.getMaxShortcutCountPerActivity(context))).mapIndexed { rank, peer ->
                 ShortcutInfoCompat.Builder(context, PREFIX + peer.deviceId.value)
-                    .setShortLabel(peer.name.ifBlank { "Device" }.take(24))
-                    .setLongLabel("Send to ${peer.name.ifBlank { "device" }}".take(40))
+                    .setShortLabel(peer.displayName.ifBlank { "Device" }.take(24))
+                    .setLongLabel("Send to ${peer.displayName.ifBlank { "device" }}".take(40))
                     .setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
                     // Required, and what a launcher long-press opens; sharing goes to the share-target.
                     .setIntent(Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN))

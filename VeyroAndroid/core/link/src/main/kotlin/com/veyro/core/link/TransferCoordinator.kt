@@ -70,6 +70,11 @@ public class TransferCoordinator(
     /** Turns on auto-accept for a device ("Always accept from this PC" on the prompt). */
     private val rememberAutoAccept: (suspend (DeviceId) -> Unit)? = null,
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * What this phone calls a paired sender (its nickname here, else its own name, ADR-059), for
+     * the incoming-file prompt. Null falls back to the offer's `senderName`.
+     */
+    private val peerDisplayName: suspend (DeviceId) -> String? = { null },
 ) {
 
     public companion object {
@@ -840,9 +845,10 @@ public class TransferCoordinator(
         }
 
         val files = offer.items.filterNot { it.isDir }
+        val senderName = peerId?.let { runCatching { peerDisplayName(it) }.getOrNull() } ?: offer.senderName
         val uiOffer = IncomingOffer(
             transferId = transferId,
-            peerName = offer.senderName,
+            peerName = senderName,
             fileCount = files.size,
             totalBytes = offer.totalBytes,
             topLevelNames = files.map { it.relPath.substringBefore('/') }.distinct().take(5),
@@ -858,7 +864,7 @@ public class TransferCoordinator(
             transferId = transferId,
             direction = TransferDirection.RECEIVE,
             peerDeviceId = peerId,
-            peerDisplayName = offer.senderName,
+            peerDisplayName = senderName,
             currentFileName = uiOffer.topLevelNames.firstOrNull() ?: "",
             currentFileIndex = 0,
             totalFiles = uiOffer.fileCount,
@@ -867,7 +873,7 @@ public class TransferCoordinator(
             bytesPerSecond = 0L,
             etaSeconds = null,
             stage = if (autoAccept) TransferStage.TRANSFERRING else TransferStage.AWAITING_CONSENT,
-            statusText = if (autoAccept) "Receiving from ${offer.senderName}..." else "Incoming transfer from ${offer.senderName}",
+            statusText = if (autoAccept) "Receiving from $senderName..." else "Incoming transfer from $senderName",
             startedAtEpochMillis = System.currentTimeMillis(),
             elapsedMillis = 0L,
         )

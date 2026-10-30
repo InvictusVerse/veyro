@@ -32,6 +32,12 @@ public data class SettingsUiState(
     /** Whether Do Not Disturb access is granted. Ringer/DND changes from the PC need it. */
     val policyAccessGranted: Boolean = false,
 
+    /** Let a connected PC use the flashlight, media volume and brightness (ADR-060). */
+    val phoneControlsAllowed: Boolean = false,
+
+    /** Whether "Modify system settings" is granted. Brightness from the PC needs it. */
+    val writeSettingsGranted: Boolean = false,
+
     /** Serve SMS and calls to a connected PC (ADR-027). */
     val messagesAndCallsEnabled: Boolean = false,
 

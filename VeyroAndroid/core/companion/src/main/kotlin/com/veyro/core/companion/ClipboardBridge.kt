@@ -3,6 +3,7 @@ package com.veyro.core.companion
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capability
+import com.veyro.core.model.Platform
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -152,7 +153,7 @@ public class ClipboardBridge(
     private suspend fun serve(link: CompanionLink) {
         try {
             link.incoming.collect { message ->
-                if (message is PeerMessage.Clip) receive(link.peerDeviceId, message)
+                if (message is PeerMessage.Clip) receive(link.peerDeviceId, message, fromPhone = link.peerPlatform == Platform.ANDROID)
             }
         } catch (c: CancellationException) {
             throw c
@@ -161,9 +162,17 @@ public class ClipboardBridge(
         }
     }
 
-    /** A PC's copy. Untrusted: validated and size-capped. */
-    internal suspend fun receive(peerId: String?, clip: PeerMessage.Clip) {
-        if (!receiveEnabled.first()) return
+    /**
+     * A PC's copy, or what another device sent on purpose. Untrusted: validated and size-capped.
+     *
+     * With "Auto-fetch clipboard" off only automatic copies are dropped: a PC's own copies
+     * (`apply = false`). Something sent on purpose is always kept and notified: a share
+     * (`apply = true`) and anything from another phone, which never sends copies by itself
+     * (ADR-059). The PCs are told the switch is off (`deviceInfo.clipReceive`), so they stop
+     * sending; this check covers the moments before they hear it.
+     */
+    internal suspend fun receive(peerId: String?, clip: PeerMessage.Clip, fromPhone: Boolean = false) {
+        if (!clip.apply && !fromPhone && !receiveEnabled.first()) return
         if (clip.id.isEmpty() || clip.id.length > 64) return
         val item = when (clip.kind) {
             // `apply` is what a share sets: a PC puts it on its clipboard; a phone cannot do that

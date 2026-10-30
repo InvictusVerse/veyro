@@ -41,6 +41,8 @@ public class SettingsViewModel(
     private val batteryOptimizationIgnored: () -> Boolean = { false },
     /** Told when a background setting changes, so a stale Disconnect does not keep it off. */
     private val onBackgroundSettingChanged: () -> Unit = {},
+    /** Whether "Modify system settings" is granted (ADR-060). Re-read on every screen resume. */
+    private val writeSettingsGranted: () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -98,6 +100,10 @@ public class SettingsViewModel(
 
         settingsStore.deviceControlAllowed
             .onEach { _state.value = _state.value.copy(deviceControlAllowed = it) }
+            .launchIn(viewModelScope)
+
+        settingsStore.phoneControlsAllowed
+            .onEach { _state.value = _state.value.copy(phoneControlsAllowed = it) }
             .launchIn(viewModelScope)
 
         settingsStore.messagesAndCallsEnabled
@@ -177,6 +183,11 @@ public class SettingsViewModel(
         viewModelScope.launch { settingsStore.setDeviceControlAllowed(enabled) }
     }
 
+    /** ADR-060. "Modify system settings" is asked for from the row, not here. */
+    public fun setPhoneControlsAllowed(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setPhoneControlsAllowed(enabled) }
+    }
+
     /** Access is granted in system settings, outside the app, so it is polled on resume. */
     public fun refreshNotificationAccess() {
         _state.value = _state.value.copy(
@@ -185,6 +196,7 @@ public class SettingsViewModel(
             missingMessagingPermissions = missingMessagingPermissions(),
             photosPermissionGranted = photosPermissionGranted(),
             batteryOptimizationIgnored = batteryOptimizationIgnored(),
+            writeSettingsGranted = writeSettingsGranted(),
         )
     }
 

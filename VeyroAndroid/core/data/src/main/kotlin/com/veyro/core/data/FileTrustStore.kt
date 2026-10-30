@@ -3,6 +3,7 @@ package com.veyro.core.data
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.model.DeviceId
+import com.veyro.core.model.DeviceNames
 import com.veyro.core.model.Platform
 import com.veyro.core.model.TrustedPeer
 import kotlinx.coroutines.flow.Flow
@@ -90,6 +91,8 @@ public class FileTrustStore(
         val lastConnected: Long = 0L,
         val autoAccept: Boolean = false,
         val revoked: Boolean = false,
+        /** ADR-059: the user's local name for the device; [name] is the one it announces. */
+        val nickname: String? = null,
     )
 
     @Serializable
@@ -165,6 +168,21 @@ public class FileTrustStore(
                 if (it.deviceId == deviceId) it.copy(autoAcceptTransfers = autoAccept) else it
             },
         )
+    }
+
+    override suspend fun setAnnouncedName(deviceId: DeviceId, name: String): Boolean = mutex.withLock {
+        val current = loadIfNeeded()
+        val peer = current.firstOrNull { it.deviceId == deviceId }
+        if (peer == null || peer.revoked || peer.name == name) return@withLock false
+        persist(current.map { if (it.deviceId == deviceId) it.copy(name = name) else it })
+        true
+    }
+
+    override suspend fun setNickname(deviceId: DeviceId, nickname: String?): Unit = mutex.withLock {
+        val current = loadIfNeeded()
+        val peer = current.firstOrNull { it.deviceId == deviceId } ?: return@withLock
+        if (peer.nickname == nickname) return@withLock
+        persist(current.map { if (it.deviceId == deviceId) it.copy(nickname = nickname) else it })
     }
 
     override suspend fun markConnected(deviceId: DeviceId, atMillis: Long) = mutex.withLock {
@@ -267,6 +285,7 @@ public class FileTrustStore(
         lastConnected = lastConnectedEpochMillis,
         autoAccept = autoAcceptTransfers,
         revoked = revoked,
+        nickname = nickname,
     )
 
     /**
@@ -299,6 +318,8 @@ public class FileTrustStore(
             lastConnectedEpochMillis = lastConnected,
             autoAcceptTransfers = autoAccept,
             revoked = revoked,
+            // The file is authenticated, but a nickname is still shown text: same rule as the wire.
+            nickname = DeviceNames.clean(nickname),
         )
     }
 

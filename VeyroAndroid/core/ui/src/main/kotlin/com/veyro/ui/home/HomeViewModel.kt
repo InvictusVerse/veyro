@@ -171,7 +171,7 @@ public class HomeViewModel(
                 // Not visible right now (a phone is silent in the background): lift the
                 // Disconnect, and it reconnects on its own when it is around (ADR-053).
                 viewModelScope.launch { resumePeer(deviceId.value) }
-                _state.update { it.copy(message = "${peer.name} will connect when it is nearby") }
+                _state.update { it.copy(message = "${peer.displayName} will connect when it is nearby") }
             } else {
                 _state.update { it.copy(failedId = deviceId) }
             }
@@ -180,7 +180,7 @@ public class HomeViewModel(
         _state.update { it.copy(connectingId = deviceId, failedId = null) }
         viewModelScope.launch {
             val ok = try {
-                connectPeer(deviceId.value, peer.name, endpoints)
+                connectPeer(deviceId.value, peer.displayName, endpoints)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

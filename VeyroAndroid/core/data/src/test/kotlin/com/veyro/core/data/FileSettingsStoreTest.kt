@@ -167,4 +167,14 @@ class FileSettingsStoreTest {
         assertTrue(text.contains("Readable"))
         assertTrue(text.contains("deviceName"))
     }
-}
+
+    @Test
+    fun `phone controls default off, also in an older file, and persist`() = runBlocking {
+        // ADR-060: a settings file written before it has no such key.
+        File(dir, "settings.json").writeText("""{"version":1,"deviceControlAllowed":true}""")
+        assertFalse(store().phoneControlsAllowed.first())
+        assertTrue("ring and sound mode is a separate switch", store().deviceControlAllowed.first())
+
+        store().setPhoneControlsAllowed(true)
+        assertTrue(store().phoneControlsAllowed.first())
+    }}

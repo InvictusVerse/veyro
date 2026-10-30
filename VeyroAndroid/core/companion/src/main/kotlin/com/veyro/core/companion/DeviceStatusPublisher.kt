@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -59,6 +60,9 @@ public interface DeviceController {
  *  - executes `devControl` only while [controlAllowed] is on. Ringer and DND changes additionally
  *    need notification-policy access and are ignored without it. A ring stops by itself after
  *    [RING_TIMEOUT_MS]. The resulting status is always sent back after a `devControl`.
+ *  - ADR-060, only with a link that also advertises [Capability.PHONE_CONTROLS]: `devStatus`
+ *    carries flashlight, media volume, brightness and why each cannot be changed, and
+ *    `devControl` may set them while [phoneControlsAllowed] is on.
  */
 public class DeviceStatusPublisher(
     /** Every live paired session (multiple PCs). */
@@ -69,6 +73,10 @@ public class DeviceStatusPublisher(
     /** Display name for the peer with this device id, for the "Ringing from" notification. */
     private val peerName: suspend (String?) -> String?,
     private val scope: CoroutineScope,
+    /** ADR-060: flashlight, media volume and brightness. Null leaves them out entirely. */
+    private val phoneControls: PhoneControls? = null,
+    /** "Let PCs control flashlight, volume and brightness" (off by default). */
+    private val phoneControlsAllowed: Flow<Boolean> = flowOf(false),
 ) {
 
     public companion object {
@@ -88,8 +96,12 @@ public class DeviceStatusPublisher(
     /** Each connected capable PC's own status, by device id. A PC that left is absent. */
     public val peerStatus: StateFlow<Map<String, PeerMessage.DeviceStatus>> = _peerStatus.asStateFlow()
 
-    /** One PC's session: what it was last sent, so each PC gets every change exactly once. */
-    private class Peer {
+    /**
+     * One PC's session: what it was last sent, so each PC gets every change exactly once.
+     * [withControls]: the link advertises PHONE_CONTROLS (never a phone, ADR-052) and this build
+     * has them, so its `devStatus` carries the ADR-060 fields and its `devControl` may use them.
+     */
+    private class Peer(val withControls: Boolean) {
         val sendLock = Mutex()
         var lastSent: PeerMessage.DeviceStatus? = null
     }
@@ -108,15 +120,15 @@ public class DeviceStatusPublisher(
         // status is kept under its id, and a devControl is answered on the PC that sent it.
         links.forEachLink { link ->
             link.peerCapabilities
-                .map { Capability.DEVICE_STATUS in it }
+                .map { (Capability.DEVICE_STATUS in it) to (Capability.PHONE_CONTROLS in it) }
                 .distinctUntilChanged()
-                .collectLatest { capable -> if (capable) serve(link) }
+                .collectLatest { (capable, controls) -> if (capable) serve(link, controls && phoneControls != null) }
         }
     }
 
-    private suspend fun serve(link: CompanionLink) {
+    private suspend fun serve(link: CompanionLink, withControls: Boolean) {
         val key = link.peerKey
-        val peer = Peer()
+        val peer = Peer(withControls)
         try {
             coroutineScope {
                 launch {
@@ -133,6 +145,17 @@ public class DeviceStatusPublisher(
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     source.changes.collect { signals.trySend(Unit) }
                 }
+                val controls = phoneControls
+                if (withControls && controls != null) {
+                    // Torch, volume and brightness changes, and the switch itself: the PC's
+                    // controls show "off" the moment it is turned off. Same conflate-and-dedupe.
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        controls.changes.collect { signals.trySend(Unit) }
+                    }
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        phoneControlsAllowed.distinctUntilChanged().collect { signals.trySend(Unit) }
+                    }
+                }
                 publish(link, peer, force = true)
                 for (signal in signals) publish(link, peer, force = false)
             }
@@ -147,37 +170,56 @@ public class DeviceStatusPublisher(
 
     private suspend fun publish(link: CompanionLink, peer: Peer, force: Boolean) {
         peer.sendLock.withLock {
-            val status = source.current()
+            val status = statusFor(peer)
             if (!force && status == peer.lastSent) return
             link.send(status)
             peer.lastSent = status
         }
     }
 
+    /** The phone's status, plus flashlight, volume and brightness for a PC that speaks them. */
+    private suspend fun statusFor(peer: Peer): PeerMessage.DeviceStatus {
+        val base = source.current()
+        val controls = phoneControls?.takeIf { peer.withControls } ?: return base
+        val extra = PhoneControlMath.statusFields(controls.current(), phoneControlsAllowed.first())
+        return base.copy(
+            torch = extra.torch,
+            mediaVolume = extra.mediaVolume,
+            brightness = extra.brightness,
+            autoBrightness = extra.autoBrightness,
+            controls = extra.controls,
+        )
+    }
+
     private suspend fun handleControl(link: CompanionLink, peer: Peer, control: PeerMessage.DeviceControl) {
         try {
-            if (!controlAllowed.first()) {
-                VeyroLog.i(TAG) { "Ignored devControl: not allowed in Settings" }
-            } else {
-                when (control.ring) {
-                    true -> startRing(peerName(link.peerDeviceId))
-                    false -> stopRing()
-                    null -> Unit
-                }
-                control.ringer?.let { mode ->
-                    when {
-                        mode !in RINGER_MODES -> VeyroLog.d(TAG) { "Ignored unknown ringer mode" }
-                        !controller.hasPolicyAccess() -> VeyroLog.i(TAG) { "Ignored ringer change: no policy access" }
-                        else -> controller.setRinger(mode)
+            if (control.ring != null || control.ringer != null || control.dnd != null) {
+                if (!controlAllowed.first()) {
+                    VeyroLog.i(TAG) { "Ignored devControl: not allowed in Settings" }
+                } else {
+                    when (control.ring) {
+                        true -> startRing(peerName(link.peerDeviceId))
+                        false -> stopRing()
+                        null -> Unit
+                    }
+                    control.ringer?.let { mode ->
+                        when {
+                            mode !in RINGER_MODES -> VeyroLog.d(TAG) { "Ignored unknown ringer mode" }
+                            !controller.hasPolicyAccess() -> VeyroLog.i(TAG) { "Ignored ringer change: no policy access" }
+                            else -> controller.setRinger(mode)
+                        }
+                    }
+                    control.dnd?.let { on ->
+                        if (controller.hasPolicyAccess()) {
+                            controller.setDnd(on)
+                        } else {
+                            VeyroLog.i(TAG) { "Ignored DND change: no policy access" }
+                        }
                     }
                 }
-                control.dnd?.let { on ->
-                    if (controller.hasPolicyAccess()) {
-                        controller.setDnd(on)
-                    } else {
-                        VeyroLog.i(TAG) { "Ignored DND change: no policy access" }
-                    }
-                }
+            }
+            if (control.torch != null || control.mediaVolume != null || control.brightness != null || control.autoBrightness != null) {
+                applyPhoneControls(peer, control)
             }
         } catch (c: CancellationException) {
             throw c
@@ -187,6 +229,57 @@ public class DeviceStatusPublisher(
         // The PC's toggles follow what actually happened, applied or not. Other PCs hear of a
         // ringer or DND change through the store's change signal, like any other change.
         publish(link, peer, force = true)
+    }
+
+    /**
+     * ADR-060. Only for a link that advertises PHONE_CONTROLS (never another phone) and only while
+     * the phone's switch is on. Percentages outside 0..100 are ignored, not clamped; brightness
+     * needs "Modify system settings". Each field is tried on its own, so a busy flashlight does
+     * not stop a volume change.
+     */
+    private suspend fun applyPhoneControls(peer: Peer, control: PeerMessage.DeviceControl) {
+        val controls = phoneControls
+        if (!peer.withControls || controls == null) {
+            VeyroLog.i(TAG) { "Ignored phone controls: not offered to this peer" }
+            return
+        }
+        if (!phoneControlsAllowed.first()) {
+            VeyroLog.i(TAG) { "Ignored phone controls: not allowed in Settings" }
+            return
+        }
+        val canWrite = runCatching { controls.current().canWriteSettings }.getOrDefault(false)
+        control.torch?.let { on -> attempt("torch") { controls.setTorch(on) } }
+        control.mediaVolume?.let { percent ->
+            if (PhoneControlMath.isPercent(percent)) {
+                attempt("volume") { controls.setMediaVolume(percent) }
+            } else {
+                VeyroLog.d(TAG) { "Ignored media volume out of range" }
+            }
+        }
+        control.brightness?.let { percent ->
+            when {
+                !PhoneControlMath.isPercent(percent) -> VeyroLog.d(TAG) { "Ignored brightness out of range" }
+                !canWrite -> VeyroLog.i(TAG) { "Ignored brightness: no permission to modify system settings" }
+                else -> attempt("brightness") { controls.setBrightness(percent) }
+            }
+        }
+        control.autoBrightness?.let { on ->
+            if (canWrite) {
+                attempt("auto brightness") { controls.setAutoBrightness(on) }
+            } else {
+                VeyroLog.i(TAG) { "Ignored auto brightness: no permission to modify system settings" }
+            }
+        }
+    }
+
+    private suspend fun attempt(what: String, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            VeyroLog.w(TAG) { "Phone control '$what' failed: ${t.javaClass.simpleName}" }
+        }
     }
 
     private suspend fun startRing(fromName: String?) {

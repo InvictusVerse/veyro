@@ -54,6 +54,7 @@ import com.veyro.core.designsystem.components.padding
 import com.veyro.core.designsystem.components.preference.SwitchPreferenceWidget
 import com.veyro.core.designsystem.components.preference.TextPreferenceWidget
 import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.core.model.DeviceNames
 import com.veyro.core.model.Platform
 import com.veyro.core.model.fingerprint
 import com.veyro.ui.components.DeviceAvatar
@@ -138,7 +139,7 @@ public fun DeviceSettingsScreen(
         ) {
             item {
                 DeviceHeader(
-                    name = peer.name,
+                    name = peer.displayName,
                     device = device,
                     platform = peer.platform,
                     pairedAt = peer.pairedAtEpochMillis,
@@ -152,7 +153,7 @@ public fun DeviceSettingsScreen(
             item {
                 TextPreferenceWidget(
                     title = "Send files",
-                    subtitle = "Pick files on this phone and send them to ${peer.name}.",
+                    subtitle = "Pick files on this phone and send them to ${peer.displayName}.",
                     icon = VeyroIcons.Upload,
                     onPreferenceClick = onSendFiles,
                 )
@@ -161,7 +162,8 @@ public fun DeviceSettingsScreen(
             item {
                 TextPreferenceWidget(
                     title = "Name",
-                    subtitle = peer.name,
+                    // ADR-059: say when the name is only this phone's nickname for it.
+                    subtitle = if (peer.nickname != null) "${peer.displayName} (it calls itself ${peer.name})" else peer.displayName,
                     icon = VeyroIcons.Edit,
                     onPreferenceClick = { showRename = true },
                 )
@@ -194,7 +196,7 @@ public fun DeviceSettingsScreen(
                 item {
                     SwitchPreferenceWidget(
                         title = "Share my media",
-                        subtitle = "Let ${peer.name} see what is playing on this phone and play, pause, skip, " +
+                        subtitle = "Let ${peer.displayName} see what is playing on this phone and play, pause, skip, " +
                             "seek and set the volume. Applies to your PCs too." +
                             if (settings.notificationAccessGranted) "" else " Needs notification access.",
                         checkedIcon = VeyroIcons.PlayCircleFill,
@@ -210,8 +212,8 @@ public fun DeviceSettingsScreen(
 
                 item {
                     Text(
-                        text = "To control ${peer.name}'s media from here, turn on Share my media on ${peer.name} " +
-                            "too. Text and links you share with \"Send with Veyro\" arrive on ${peer.name} as a " +
+                        text = "To control ${peer.displayName}'s media from here, turn on Share my media on ${peer.displayName} " +
+                            "too. Text and links you share with \"Send with Veyro\" arrive on ${peer.displayName} as a " +
                             "notification with Copy. Notifications, messages and photos work with PCs only.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -330,6 +332,25 @@ public fun DeviceSettingsScreen(
                         onContentClick = { openPolicyAccess(context) },
                     )
                 }
+                item {
+                    // ADR-060. Its own switch, off by default, so allowing ring and sound mode
+                    // never also allows these. Brightness needs one more grant, asked for here.
+                    SwitchPreferenceWidget(
+                        title = "Let PCs control flashlight, volume and brightness",
+                        subtitle = "A connected PC can turn the flashlight on or off and set the media volume " +
+                            "and the screen brightness." +
+                            if (settings.writeSettingsGranted) "" else " Brightness also needs \"Modify system settings\".",
+                        icon = VeyroIcons.SettingsFill,
+                        checked = settings.phoneControlsAllowed,
+                        onCheckedChanged = settingsViewModel::setPhoneControlsAllowed,
+                    )
+                    if (settings.phoneControlsAllowed && !settings.writeSettingsGranted) {
+                        TextButton(
+                            onClick = { openWriteSettingsAccess(context) },
+                            modifier = Modifier.padding(start = 56.dp),
+                        ) { Text("Allow brightness changes") }
+                    }
+                }
             }
 
             item { Spacer(Modifier.height(16.dp)) }
@@ -338,11 +359,21 @@ public fun DeviceSettingsScreen(
 
     if (showRename && peer != null) {
         RenameDialog(
-            currentName = peer.name,
+            currentName = peer.displayName,
             onDismiss = { showRename = false },
             onRename = {
                 devicesViewModel.rename(peer.deviceId, it)
                 showRename = false
+            },
+            supportingText = "Only this phone uses this name.",
+            ownName = peer.name,
+            onUseOwnName = if (peer.nickname != null) {
+                {
+                    devicesViewModel.useOwnName(peer.deviceId)
+                    showRename = false
+                }
+            } else {
+                null
             },
         )
     }
@@ -350,10 +381,10 @@ public fun DeviceSettingsScreen(
     if (showRemove && peer != null) {
         AlertDialog(
             onDismissRequest = { showRemove = false },
-            title = { Text("Remove ${peer.name}?") },
+            title = { Text("Remove ${peer.displayName}?") },
             text = {
                 Text(
-                    "This phone and ${peer.name} forget each other. If ${peer.name} is not connected " +
+                    "This phone and ${peer.displayName} forget each other. If ${peer.displayName} is not connected " +
                         "now, it is told the next time it connects. To use it again, pair it again.",
                 )
             },
@@ -510,23 +541,43 @@ internal fun RenameDialog(
     onRename: (String) -> Unit,
     title: String = "Rename device",
     supportingText: String? = null,
+    /**
+     * ADR-059, for another device: the name it gives itself. With [onUseOwnName] set (it has a
+     * nickname here), the dialog offers to go back to that name.
+     */
+    ownName: String? = null,
+    onUseOwnName: (() -> Unit)? = null,
 ) {
     var text by rememberSaveable(currentName) { mutableStateOf(currentName) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = text,
-                label = { Text("Device name") },
-                onValueChange = { text = it },
-                singleLine = true,
-                supportingText = supportingText?.let { { Text(it) } },
-            )
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    label = { Text("Device name") },
+                    onValueChange = { text = it.take(DeviceNames.MAX_CHARS) },
+                    singleLine = true,
+                    supportingText = supportingText?.let { { Text(it) } },
+                )
+                if (onUseOwnName != null) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onUseOwnName) { Text("Use the device's own name") }
+                    if (!ownName.isNullOrBlank()) {
+                        Text(
+                            text = "It calls itself $ownName.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(
-                enabled = text.isNotBlank() && text.trim() != currentName,
+                enabled = DeviceNames.clean(text) != null && text.trim() != currentName,
                 onClick = { onRename(text.trim()) },
             ) { Text("Rename") }
         },
@@ -539,6 +590,17 @@ internal fun RenameDialog(
 internal fun openNotificationAccess(context: Context) {
     try {
         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    } catch (_: ActivityNotFoundException) {
+        // Some builds hide the screen; the row's subtitle still says what is missing.
+    }
+}
+
+/** "Modify system settings" for Veyro, which brightness from the PC needs (ADR-060). */
+internal fun openWriteSettingsAccess(context: Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null)),
+        )
     } catch (_: ActivityNotFoundException) {
         // Some builds hide the screen; the row's subtitle still says what is missing.
     }

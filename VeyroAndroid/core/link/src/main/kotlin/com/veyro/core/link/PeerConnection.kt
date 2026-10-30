@@ -2,6 +2,7 @@ package com.veyro.core.link
 
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.model.Capabilities
+import com.veyro.core.model.DeviceNames
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
@@ -186,6 +187,16 @@ public class PeerConnection(
      * `capabilities = 0` - is never sent a message type it cannot decode (ADR-025).
      */
     public val peerCapabilities: StateFlow<Capabilities> = _peerCapabilities.asStateFlow()
+
+    private val _peerAnnouncedName = MutableStateFlow<String?>(null)
+
+    /**
+     * The name the peer gives itself, from its latest authenticated `hello`, `helloAck` or
+     * `deviceInfo` (ADR-059), already through [DeviceNames.clean]; an invalid name is ignored.
+     * Null until one arrives. Kept, not broadcast, so a watcher that subscribes after the
+     * `hello` still sees it. User data: never log it.
+     */
+    public val peerAnnouncedName: StateFlow<String?> = _peerAnnouncedName.asStateFlow()
 
     private val _unpaired = CompletableDeferred<Unit>()
 
@@ -512,12 +523,18 @@ public class PeerConnection(
 
             is PeerMessage.Hello -> {
                 _peerCapabilities.value = Capabilities(payload.capabilities)
+                DeviceNames.clean(payload.deviceName)?.let { _peerAnnouncedName.value = it }
                 handshakeChannel.trySend(envelope)
             }
 
             is PeerMessage.HelloAck -> {
                 _peerCapabilities.value = Capabilities(payload.capabilities)
+                DeviceNames.clean(payload.deviceName)?.let { _peerAnnouncedName.value = it }
                 handshakeChannel.trySend(envelope)
+            }
+
+            is PeerMessage.DeviceInfo -> {
+                DeviceNames.clean(payload.name)?.let { _peerAnnouncedName.value = it }
             }
 
             is PeerMessage.PairOk -> {

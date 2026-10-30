@@ -351,4 +351,59 @@ class FileTrustStoreTest {
         s.remove(p.deviceId)
         assertNull(s.pendingUnpairSecret(p.deviceId))
     }
-}
+
+    // ── ADR-059: the device's own name and a local nickname ──────────────────────────────
+
+    @Test
+    fun `a nickname survives a reload and wins for display`() = runBlocking {
+        val p = peer(1, name = "DESKTOP-7Q2")
+        store().put(p)
+        store().setNickname(p.deviceId, "Study PC")
+
+        val reloaded = store().find(p.deviceId)!!
+        assertEquals("DESKTOP-7Q2", reloaded.name)
+        assertEquals("Study PC", reloaded.nickname)
+        assertEquals("Study PC", reloaded.displayName)
+    }
+
+    @Test
+    fun `an announced name replaces the stored one and keeps the nickname`() = runBlocking {
+        val p = peer(1, name = "Old name")
+        val s = store()
+        s.put(p)
+        s.setNickname(p.deviceId, "Mine")
+
+        assertTrue(s.setAnnouncedName(p.deviceId, "New name"))
+        assertFalse("the same name again changes nothing", s.setAnnouncedName(p.deviceId, "New name"))
+        assertFalse("an unknown device is not created", s.setAnnouncedName(peer(2).deviceId, "Stranger"))
+
+        val reloaded = store().find(p.deviceId)!!
+        assertEquals("New name", reloaded.name)
+        assertEquals("Mine", reloaded.nickname)
+        assertEquals(1, store().snapshot().size)
+    }
+
+    @Test
+    fun `clearing the nickname goes back to the device's own name`() = runBlocking {
+        val p = peer(1, name = "Pixel")
+        val s = store()
+        s.put(p)
+        s.setNickname(p.deviceId, "Work phone")
+        s.setNickname(p.deviceId, null)
+
+        val reloaded = store().find(p.deviceId)!!
+        assertNull(reloaded.nickname)
+        assertEquals("Pixel", reloaded.displayName)
+    }
+
+    @Test
+    fun `a nickname change keeps auto-accept and the key`() = runBlocking {
+        val p = peer(1, autoAccept = true)
+        val s = store()
+        s.put(p)
+        s.setNickname(p.deviceId, "Laptop")
+        s.setAnnouncedName(p.deviceId, "Laptop 2")
+        val reloaded = store().find(p.deviceId)!!
+        assertTrue(reloaded.autoAcceptTransfers)
+        assertTrue(p.pairingSecret.contentEquals(reloaded.pairingSecret))
+    }}

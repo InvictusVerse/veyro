@@ -35,4 +35,21 @@ public interface TrustStore {
 
     /** [deviceId] has been told it was removed, or was paired again: drop its kept secret. */
     public suspend fun clearPendingUnpair(deviceId: DeviceId) {}
+
+    /**
+     * The device announced [name] for itself (its `hello`, `helloAck` or `deviceInfo`, ADR-059;
+     * already validated). Replaces the stored name and keeps a nickname. Returns true when the
+     * record changed; false for an unknown or revoked device or the same name.
+     */
+    public suspend fun setAnnouncedName(deviceId: DeviceId, name: String): Boolean {
+        val peer = find(deviceId)?.takeUnless { it.revoked || it.name == name } ?: return false
+        put(peer.copy(name = name))
+        return true
+    }
+
+    /** The user's own name for [deviceId] here (ADR-059); null goes back to the device's own name. */
+    public suspend fun setNickname(deviceId: DeviceId, nickname: String?) {
+        val peer = find(deviceId) ?: return
+        if (peer.nickname != nickname) put(peer.copy(nickname = nickname))
+    }
 }

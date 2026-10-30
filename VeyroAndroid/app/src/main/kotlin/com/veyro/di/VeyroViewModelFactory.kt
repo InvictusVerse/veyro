@@ -94,6 +94,7 @@ public class VeyroViewModelFactory(
             photosPermissionGranted = container::isPhotosPermissionGranted,
             batteryOptimizationIgnored = container::isIgnoringBatteryOptimizations,
             onBackgroundSettingChanged = { container.backgroundController.onSettingChanged() },
+            writeSettingsGranted = container::canWriteSystemSettings,
         ) as T
 
         modelClass.isAssignableFrom(ClipboardViewModel::class.java) -> ClipboardViewModel(

@@ -169,12 +169,24 @@ public fun DevicesScreen(
 
     val renaming = devices.firstOrNull { it.deviceId.value == renamingId }
     if (renaming != null) {
+        // ADR-059: a rename here is this phone's nickname; the device keeps its own name.
+        val record = trust.devices.firstOrNull { it.deviceId == renaming.deviceId }
         RenameDialog(
             currentName = renaming.name,
             onDismiss = { renamingId = null },
             onRename = {
                 devicesViewModel.rename(renaming.deviceId, it)
                 renamingId = null
+            },
+            supportingText = "Only this phone uses this name.",
+            ownName = record?.name,
+            onUseOwnName = if (record?.nickname != null) {
+                {
+                    devicesViewModel.useOwnName(renaming.deviceId)
+                    renamingId = null
+                }
+            } else {
+                null
             },
         )
     }

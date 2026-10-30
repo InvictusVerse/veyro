@@ -67,7 +67,7 @@ public class ShareToPcActivity : Activity() {
             if (connected.size > 1) {
                 choose(shared, connected)
             } else {
-                deliver(shared, targets = emptyList(), names = connected.map { it.name })
+                deliver(shared, targets = emptyList(), names = connected.map { it.displayName })
                 done()
             }
         }
@@ -75,7 +75,7 @@ public class ShareToPcActivity : Activity() {
 
     /** "Send to": each connected device, then "All connected". Dismissing sends nothing. */
     private fun choose(shared: Shared, connected: List<TrustedPeer>) {
-        val labels = connected.map { it.name } + "All connected (${connected.size})"
+        val labels = connected.map { it.displayName } + "All connected (${connected.size})"
         // A DayNight context, so the dialog follows the system theme over the translucent window.
         val themed = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_DayNight)
         chooser = AlertDialog.Builder(themed)
@@ -83,9 +83,9 @@ public class ShareToPcActivity : Activity() {
             .setItems(labels.toTypedArray()) { _, which ->
                 val chosen = connected.getOrNull(which)
                 if (chosen != null) {
-                    deliver(shared, listOf(chosen.deviceId.value), listOf(chosen.name))
+                    deliver(shared, listOf(chosen.deviceId.value), listOf(chosen.displayName))
                 } else {
-                    deliver(shared, connected.map { it.deviceId.value }, connected.map { it.name }, all = true)
+                    deliver(shared, connected.map { it.deviceId.value }, connected.map { it.displayName }, all = true)
                 }
             }
             .setNegativeButton("Cancel", null)

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.veyro.core.data.TrustStore
 import com.veyro.core.model.DeviceId
+import com.veyro.core.model.DeviceNames
 import com.veyro.core.model.TrustedPeer
 import com.veyro.core.model.fingerprint
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,12 +51,24 @@ public class DevicesViewModel(
             .launchIn(viewModelScope)
     }
 
+    /**
+     * A rename here is this phone's nickname for the device (ADR-059): the device's own name is
+     * still stored and still follows its renames, and the nickname wins on every screen. Typing
+     * the device's own name clears the nickname, so it follows the device again.
+     */
     public fun rename(deviceId: DeviceId, name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) return
+        val cleaned = DeviceNames.clean(name) ?: return
         viewModelScope.launch {
             val peer = trustStore.find(deviceId) ?: return@launch
-            trustStore.put(peer.copy(name = trimmed))
+            trustStore.setNickname(deviceId, cleaned.takeUnless { it == peer.name })
+            _state.value = _state.value.copy(renaming = null)
+        }
+    }
+
+    /** "Use the device's own name": drops the nickname. */
+    public fun useOwnName(deviceId: DeviceId) {
+        viewModelScope.launch {
+            trustStore.setNickname(deviceId, null)
             _state.value = _state.value.copy(renaming = null)
         }
     }
