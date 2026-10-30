@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR-062: widget colours, dark. Veyro's Material 3 dark scheme. -->
+<resources>
+    <color name="veyro_widget_surface">#FF171C1F</color>
+    <color name="veyro_widget_on_surface">#FFDEE3E6</color>
+    <color name="veyro_widget_on_surface_variant">#FFC0C8CD</color>
+    <color name="veyro_widget_button">#FF004D62</color>
+    <color name="veyro_widget_on_button">#FFBAEAFF</color>
+    <color name="veyro_widget_connected">#FF5FD4FD</color>
+    <color name="veyro_widget_ripple">#33FFFFFF</color>
+</resources>

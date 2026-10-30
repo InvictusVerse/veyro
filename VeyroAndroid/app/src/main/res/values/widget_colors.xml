@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ADR-062: widget colours, light. Veyro's Material 3 scheme (core:designsystem Theme.kt);
+     values-v31 replaces them with the system's dynamic palette. -->
+<resources>
+    <color name="veyro_widget_surface">#FFF0F4F7</color>
+    <color name="veyro_widget_on_surface">#FF171C1F</color>
+    <color name="veyro_widget_on_surface_variant">#FF40484C</color>
+    <color name="veyro_widget_button">#FFBAEAFF</color>
+    <color name="veyro_widget_on_button">#FF001F29</color>
+    <color name="veyro_widget_connected">#FF006782</color>
+    <color name="veyro_widget_ripple">#33000000</color>
+</resources>
