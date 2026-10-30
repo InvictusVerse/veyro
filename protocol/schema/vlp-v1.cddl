@@ -36,6 +36,9 @@ capability = &(
   handoff: 32,
   multi-stream: 64,
   compression: 128,
+  ; Companion bits 0x0100..0x4000 are listed in 04-PROTOCOL.md section 6. Appended here:
+  phone-controls: 262144,   ; 0x40000, ADR-060
+  device-info: 2097152,     ; 0x200000, ADR-059
 )
 
 ; Presence token derivation:
@@ -157,6 +160,36 @@ pong   = { 0: uint }                          ; the same nonce, echoed
 ; Reserved for phase P6 (Veyro Clipboard), declared now so the number is not reused:
 ; clipboard-push = { 0: tstr }   ; text, size-capped, per-device opt-in
 
+; =============================================================================================
+; Companion JSON messages (session frames, "t" discriminator, nulls omitted). Additions only;
+; the full list is in 04-PROTOCOL.md section 6.
+; =============================================================================================
+
+; ADR-059, gated by device-info. Either direction, on connect and on every change. Each field
+; is applied on its own; a name that fails the rule below is ignored.
+device-info = {
+  "t": "deviceInfo",
+  ? "name": device-name,        ; the sender's own name
+  ? "clipReceive": bool,        ; phone only: "Auto-fetch clipboard" is on
+}
+device-name = tstr .size (1..64) ; after trimming; no C0/C1 control, U+2028/2029, U+202A-202E, U+2066-2069
+
+; ADR-060, gated by phone-controls (and device-status). Optional additions to devStatus
+; (phone to PC) and devControl (PC to phone); never between phones.
+dev-status-phone-controls = (
+  ? "torch": bool,
+  ? "mediaVolume": 0..100,
+  ? "brightness": 0..100,
+  ? "autoBrightness": bool,
+  ? "controls": { ? "torch": control-state, ? "volume": control-state, ? "brightness": control-state },
+)
+control-state = "ok" / "off" / "permission" / "unsupported" / "busy"   ; unknown = not available
+dev-control-phone-controls = (
+  ? "torch": bool,
+  ? "mediaVolume": 0..100,      ; outside the range: ignored by the phone
+  ? "brightness": 0..100,       ; also turns automatic brightness off
+  ? "autoBrightness": bool,
+)
 ; =============================================================================================
 ; Convergence rules
 ; =============================================================================================

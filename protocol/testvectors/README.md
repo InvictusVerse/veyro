@@ -31,6 +31,7 @@ worst possible moment. Both platforms must pass every vector here before a phase
 | `discovery/presence-beacon.json` | `core/protocol` `PresenceBeaconVectorTest` | `Veyro.Tests` `DiscoveryVectorTests` |
 | `link/control-messages.json` | `core/link` `ControlMessageVectorTest` | `Veyro.Tests` `ControlMessageVectorTests` |
 | `pair-confirm.json` | `core/crypto` `PairConfirmVectorTest` | `Veyro.Tests` `PairConfirmVectorTests` |
+| `link-device-info-controls.json` | `core/link` `DeviceInfoControlsVectorTest` | `Veyro.Tests` `DeviceInfoControlsVectorTests` |
 
 Run them:
 

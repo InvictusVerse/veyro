@@ -62,14 +62,17 @@ public value class Capabilities(public val bits: Int) {
             Capability.CALLS,
             Capability.PHOTOS,
             Capability.WALLPAPER,
+            Capability.PHONE_CONTROLS,
+            Capability.DEVICE_INFO,
         )
 
         /**
          * What one phone uses with another (ADR-052): files, media control in both directions,
          * battery status, and text and links shared with "Send with Veyro", which arrive as a
-         * clipboard notification (ADR-054). Everything else Android advertises exists to serve
-         * a PC (notifications, messages, calls, photos, wallpaper) and must not flow from phone
-         * to phone.
+         * clipboard notification (ADR-054), and each phone's own name (ADR-059). Everything else
+         * Android advertises exists to serve a PC (notifications, messages, calls, photos,
+         * wallpaper, flashlight / volume / brightness control) and must not flow from phone to
+         * phone.
          */
         public val PHONE_TO_PHONE: Capabilities = of(
             Capability.FILE_TRANSFER,
@@ -78,6 +81,7 @@ public value class Capabilities(public val bits: Int) {
             Capability.MEDIA_CONTROL,
             Capability.DEVICE_STATUS,
             Capability.CLIPBOARD,
+            Capability.DEVICE_INFO,
         )
 
         /** The part of [advertised] this phone uses with a peer running on [platform]. */
@@ -116,4 +120,13 @@ public enum class Capability(public val bit: Int) {
 
     /** Wallpaper exchanged so each side can draw the other device (ADR-038). */
     WALLPAPER(0x4000),
+
+    /**
+     * Flashlight, media volume and screen brightness in `devStatus` / `devControl` (ADR-060).
+     * Only meaningful together with [DEVICE_STATUS]. PC to phone only, never phone to phone.
+     */
+    PHONE_CONTROLS(0x40000),
+
+    /** `deviceInfo`: the sender's own name, sent on connect and when the user changes it (ADR-059). */
+    DEVICE_INFO(0x200000),
 }

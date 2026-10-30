@@ -420,6 +420,60 @@ public sealed interface PeerMessage {
         val bluetooth: Boolean? = null,
         /** Mobile data in use for the internet connection. */
         val mobileData: Boolean? = null,
+        // ADR-060, only to a peer that advertises PHONE_CONTROLS (04-PROTOCOL.md 6.2.2).
+        /** Flashlight on. Absent when the phone has no flashlight or cannot tell. */
+        val torch: Boolean? = null,
+        /** Media (music) stream volume, 0..100 percent of the stream's range. */
+        val mediaVolume: Int? = null,
+        /** Screen brightness setting, 0..100 percent of the setting's range. */
+        val brightness: Int? = null,
+        val autoBrightness: Boolean? = null,
+        /** Whether each of those can be changed from the peer now, and if not, why. */
+        val controls: PhoneControlState? = null,
+    ) : PeerMessage
+
+    /**
+     * Per control in [DeviceStatus.controls]: [OK], or why the peer cannot change it now. An absent
+     * entry or an unknown value means "not available" to the receiver.
+     */
+    @Serializable
+    public data class PhoneControlState(
+        val torch: String? = null,
+        val volume: String? = null,
+        val brightness: String? = null,
+    ) {
+        public companion object {
+            public const val OK: String = "ok"
+
+            /** The phone's "Let PCs control flashlight, volume and brightness" switch is off. */
+            public const val OFF: String = "off"
+
+            /** The phone needs a system grant first (brightness: "Modify system settings"). */
+            public const val PERMISSION: String = "permission"
+
+            /** No flashlight, or a fixed-volume device. */
+            public const val UNSUPPORTED: String = "unsupported"
+
+            /** The flashlight is held by another app (camera open). */
+            public const val BUSY: String = "busy"
+        }
+    }
+
+    /**
+     * Either direction (ADR-059, 04-PROTOCOL.md 6.7), gated by DEVICE_INFO: the sender's own
+     * details, sent on connect and whenever one changes. Each field is optional and applied on
+     * its own. Names are user data: never log them.
+     */
+    @Serializable
+    @SerialName("deviceInfo")
+    public data class DeviceInfo(
+        /** The name the sender's user gave it, 1..64 chars, no control characters. */
+        val name: String? = null,
+        /**
+         * Phone only: "Auto-fetch clipboard" is on. False asks the receiver not to send its
+         * automatic copies (`clip` with `apply = false`); deliberate shares still go (ADR-059).
+         */
+        val clipReceive: Boolean? = null,
     ) : PeerMessage
 
     /**
@@ -482,6 +536,13 @@ public sealed interface PeerMessage {
         val ring: Boolean? = null,
         val ringer: String? = null,
         val dnd: Boolean? = null,
+        // ADR-060, gated by PHONE_CONTROLS. Out-of-range values are ignored, not clamped.
+        val torch: Boolean? = null,
+        /** 0..100 percent of the media stream's range. */
+        val mediaVolume: Int? = null,
+        /** 0..100 percent of the brightness range; also turns automatic brightness off. */
+        val brightness: Int? = null,
+        val autoBrightness: Boolean? = null,
     ) : PeerMessage
 
     // ── Companion: SMS (ADR-027), gated by MESSAGING (0x0800) ───────────────────────────────

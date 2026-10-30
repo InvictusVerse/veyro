@@ -21,7 +21,21 @@ class CapabilitiesTest {
             Capability.CALLS,
             Capability.PHOTOS,
             Capability.WALLPAPER,
+            // ADR-060: another phone never drives this phone's flashlight, volume or brightness.
+            Capability.PHONE_CONTROLS,
         ).forEach { assertFalse("$it must not flow between phones", it in used) }
+        // ADR-059: names are harmless between phones and a rename there should show too.
+        assertTrue(Capability.DEVICE_INFO in used)
+    }
+
+    @Test
+    fun `the new bits keep their assigned numbers and Android advertises them`() {
+        assertEquals(0x40000, Capability.PHONE_CONTROLS.bit)
+        assertEquals(0x200000, Capability.DEVICE_INFO.bit)
+        assertTrue(Capability.PHONE_CONTROLS in Capabilities.ANDROID_CURRENT)
+        assertTrue(Capability.DEVICE_INFO in Capabilities.ANDROID_CURRENT)
+        // Append-only: no two capabilities share a bit.
+        assertEquals(Capability.entries.size, Capability.entries.map { it.bit }.toSet().size)
     }
 
     @Test
