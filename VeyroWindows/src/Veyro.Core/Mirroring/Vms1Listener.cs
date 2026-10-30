@@ -39,12 +39,15 @@ public sealed class Vms1Listener : IAsyncDisposable
     private readonly TaskCompletionSource<Vms1Connection?> _accepted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim _slots = new(MaxUnauthenticated, MaxUnauthenticated);
 
-    private Vms1Listener(TcpListener listener, string pcId, byte[] sid, Vms1PendingSession session)
+    private readonly byte _source;
+
+    private Vms1Listener(TcpListener listener, string pcId, byte[] sid, Vms1PendingSession session, byte source)
     {
         _listener = listener;
         _pcId = pcId;
         _sid = sid;
         _session = session;
+        _source = source;
     }
 
     /// <summary>The port the phone dials (<c>streamStart.port</c>).</summary>
@@ -52,7 +55,8 @@ public sealed class Vms1Listener : IAsyncDisposable
 
     /// <summary>Starts listening for session <paramref name="sid"/>. <paramref name="address"/> is for tests (loopback).</summary>
     public static Vms1Listener Start(string pcId, byte[] sid, Vms1PendingSession session, IPAddress? address = null,
-        int portStart = LinkServer.PortRangeStart, int portEnd = LinkServer.PortRangeEnd, TimeSpan? waitTimeout = null)
+        int portStart = LinkServer.PortRangeStart, int portEnd = LinkServer.PortRangeEnd, TimeSpan? waitTimeout = null,
+        byte source = Vms1.SourceScreen)
     {
         if (sid.Length != Vms1.SidSize) throw new ArgumentException("VMS1 sid is 16 bytes.", nameof(sid));
         for (int port = portStart; port <= portEnd; port++)
@@ -66,7 +70,7 @@ public sealed class Vms1Listener : IAsyncDisposable
             {
                 continue;
             }
-            var vms = new Vms1Listener(listener, pcId, sid, session) { Port = ((IPEndPoint)listener.LocalEndpoint).Port };
+            var vms = new Vms1Listener(listener, pcId, sid, session, source) { Port = ((IPEndPoint)listener.LocalEndpoint).Port };
             vms._stop.CancelAfter(waitTimeout ?? WaitTimeout);
             _ = vms.AcceptLoopAsync();
             return vms;
@@ -114,7 +118,7 @@ public sealed class Vms1Listener : IAsyncDisposable
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(HandshakeTimeout);
             var (channel, _) = await Vms1Channel.AcceptAsPcAsync(client.GetStream(), _pcId,
-                preface => preface.Source == Vms1.SourceScreen && preface.Sid.AsSpan().SequenceEqual(_sid) ? _session : null,
+                preface => preface.Source == _source && preface.Sid.AsSpan().SequenceEqual(_sid) ? _session : null,
                 timeout.Token).ConfigureAwait(false);
             var connection = new Vms1Connection(client, channel);
             if (_accepted.TrySetResult(connection))

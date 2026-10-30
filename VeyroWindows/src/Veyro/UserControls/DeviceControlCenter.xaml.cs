@@ -70,6 +70,12 @@ public sealed partial class DeviceControlCenter : UserControl
 
     private void PhoneFrame_PointerEntered(object sender, PointerRoutedEventArgs e) => AnimateOverlay(true);
 
+    // ADR-067: the camera window (and the virtual camera, when it is set up).
+    private void PhoneCamera_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Device is { } device) VeyroContainer.Instance.Mirror.OpenCamera(device.DeviceId);
+    }
+
     // ADR-066: the phone frame opens its mirror window (Sefirah starts scrcpy here).
     private void PhoneFrame_Tapped(object sender, TappedRoutedEventArgs e)
     {

@@ -37,17 +37,19 @@ public sealed class MirrorController : IDisposable
     private bool _mayAskAudio;
     private bool _disposed;
 
+    /// <param name="camera">ADR-067: this session shows the phone's camera, not its screen.</param>
     public MirrorController(string peerId, string phoneName, string pcId, IPeerSessionRegistry sessions, ISettingsStore settings,
-        Func<PeerMessage.StreamCaps?> caps, MediaPlayerElement element)
+        Func<PeerMessage.StreamCaps?> caps, MediaPlayerElement element, bool camera = false)
     {
         PeerId = peerId;
+        IsCamera = camera;
         _pcId = pcId;
         _sessions = sessions;
         _settings = settings;
         _caps = caps;
         _element = element;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
-        _session = new MirrorSession(phoneName);
+        _session = new MirrorSession(phoneName, camera: camera);
         _session.Changed += OnSessionChanged;
         _timer = _dispatcher.CreateTimer();
         _timer.Interval = TimeSpan.FromSeconds(1);
@@ -56,6 +58,19 @@ public sealed class MirrorController : IDisposable
     }
 
     public string PeerId { get; }
+
+    /// <summary>ADR-067: the phone's camera rather than its screen.</summary>
+    public bool IsCamera { get; }
+
+    /// <summary>ADR-067: another consumer (the virtual camera) needs frames while the window is minimised.</summary>
+    public bool KeepStreamingWhenHidden { get; set; }
+
+    /// <summary>The phone's latest cleaned caps.</summary>
+    public PeerMessage.StreamCaps? Caps => _caps();
+
+    /// <summary>The player while the media socket is open; null otherwise.</summary>
+    public MirrorPlayer? Player => _player;
+
     public MirrorStatus Status => _session.Status;
     public PeerMessage.StreamState? LastState => _session.LastState;
 
@@ -99,13 +114,26 @@ public sealed class MirrorController : IDisposable
 
         PeerMessage.StreamCaps? caps = _caps();
         MirrorQuality quality = Quality;
-        StreamPlan? plan = caps is null ? null : StreamPlanner.Plan(caps, PcVideoDecoders.Find(), quality);
+        StreamPlan? plan;
+        string? cameraId = null;
+        bool ready;
+        if (IsCamera)
+        {
+            (plan, cameraId) = PlanCamera(caps);
+            ready = MirrorSession.WhyCameraUnavailable(phone, caps, plan) is null && cameraId is not null;
+        }
+        else
+        {
+            plan = caps is null ? null : StreamPlanner.Plan(caps, PcVideoDecoders.Find(), quality);
+            ready = MirrorSession.WhyUnavailable(phone, caps, plan) is null;
+        }
         string sid = StreamRules.NewSid();
-        if (MirrorSession.WhyUnavailable(phone, caps, plan) is null)
+        if (ready)
         {
             try
             {
-                _listener = Vms1Listener.Start(_pcId, StreamRules.SidBytes(sid)!, new Vms1PendingSession(PeerId, export));
+                _listener = Vms1Listener.Start(_pcId, StreamRules.SidBytes(sid)!, new Vms1PendingSession(PeerId, export),
+                    source: IsCamera ? Vms1.SourceCamera : Vms1.SourceScreen);
             }
             catch (IOException error)
             {
@@ -114,7 +142,9 @@ public sealed class MirrorController : IDisposable
                 return;
             }
         }
-        PeerMessage.StreamStart? start = _session.Begin(sid, caps, plan, quality.Audio, host, _listener?.Port ?? 0);
+        PeerMessage.StreamStart? start = IsCamera
+            ? _session.BeginCamera(sid, caps, _listener is null ? null : plan, cameraId, host, _listener?.Port ?? 0)
+            : _session.Begin(sid, caps, plan, quality.Audio, host, _listener?.Port ?? 0);
         if (start is null)
         {
             await TearDownAsync();
@@ -145,9 +175,37 @@ public sealed class MirrorController : IDisposable
     /// The user picked another quality or flipped the hardware switch. A live session gets the
     /// new plan as <c>streamConfig</c>; codec and encoder switch on the same capture.
     /// </summary>
+    /// <summary>ADR-067: the camera, size and frame rate from this PC's settings, limited to what the phone offers.</summary>
+    private (StreamPlan? Plan, string? CameraId) PlanCamera(PeerMessage.StreamCaps? caps)
+    {
+        AppSettings s = _settings.Current;
+        if (caps is null || CameraPlanner.Choose(caps, s.WebcamCamera) is not { } camera) return (null, null);
+        if (CameraPlanner.ChooseSize(camera, s.WebcamWidth, s.WebcamHeight) is not { } size) return (null, camera.Id);
+        return (CameraPlanner.Plan(caps, size, s.WebcamFps, PcVideoDecoders.Find(), s.MirrorHardwareEncode), camera.Id);
+    }
+
+    /// <summary>ADR-067: the camera settings changed; a live session switches lens or size without a new consent.</summary>
+    private async Task OnCameraChangedAsync(string sid, StreamPlan old)
+    {
+        var (plan, cameraId) = PlanCamera(_caps());
+        if (plan is null || cameraId is null) return;
+        _plan = plan;
+        _bitrate?.Retarget(plan.Bitrate);
+        await SendAsync(new PeerMessage.StreamConfig(sid,
+            Codec: plan.Codec != old.Codec ? plan.Codec : null,
+            Hw: plan.HwEncode != old.HwEncode ? plan.HwEncode : null,
+            MaxLong: plan.MaxLong, Fps: plan.Fps, Bitrate: plan.Bitrate,
+            Camera: cameraId, W: plan.Width, H: plan.Height));
+    }
+
     public async Task OnQualityChangedAsync()
     {
         if (!_session.Status.IsLive || _session.Sid is not { } sid || _plan is not { } old) return;
+        if (IsCamera)
+        {
+            await OnCameraChangedAsync(sid, old);
+            return;
+        }
         if (_caps() is not { } caps || StreamPlanner.Plan(caps, PcVideoDecoders.Find(), Quality) is not { } plan) return;
         _plan = plan;
         _bitrate?.Retarget(plan.Bitrate);

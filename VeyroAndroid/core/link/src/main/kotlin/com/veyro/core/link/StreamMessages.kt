@@ -32,10 +32,22 @@ public data class StreamCaps(
      * (Android no longer shows it; asking opens Veyro's settings on the phone).
      */
     val audioPermission: String? = null,
+    /** "Let PCs use this phone's camera" is on (ADR-067). Android still needs a tap each time. */
+    val cameraAllowed: Boolean? = null,
+    /** The cameras a PC may ask for, with the sizes both the camera and an encoder support; absent when off. */
+    val cameras: List<StreamCamera>? = null,
 ) : PeerMessage
 
 @Serializable
 public data class StreamScreen(val w: Int, val h: Int, val maxFps: Int)
+
+/** One phone camera (ADR-067). [facing]: `back`, `front` or `external`. */
+@Serializable
+public data class StreamCamera(val id: String, val facing: String, val sizes: List<StreamSize> = emptyList())
+
+/** A camera size in the sensor's landscape orientation (w >= h) and its highest frame rate. */
+@Serializable
+public data class StreamSize(val w: Int, val h: Int, val fps: Int)
 
 @Serializable
 public data class StreamEncoder(val codec: String, val hw: Boolean, val maxW: Int, val maxH: Int, val fps: Int)
@@ -63,6 +75,10 @@ public data class StreamStart(
     /** Where the PC listens for this session's VMS1 socket. */
     val host: String,
     val port: Int,
+    /** Camera only (ADR-067): which camera, and the exact size from its [StreamCamera.sizes]. */
+    val camera: String? = null,
+    val w: Int? = null,
+    val h: Int? = null,
 ) : PeerMessage
 
 /** Phone to PC: what the session is doing and the values in use. */
@@ -83,6 +99,8 @@ public data class StreamState(
     val thermal: Int? = null,
     /** As in [StreamCaps.audioPermission]; sent while the PC asked for audio and it is not playing. */
     val audioPermission: String? = null,
+    /** Camera sessions: the camera in use (sent with every state). */
+    val camera: String? = null,
 ) : PeerMessage
 
 /**
@@ -111,6 +129,10 @@ public data class StreamConfig(
     val bitrate: Int? = null,
     val audio: Boolean? = null,
     val paused: Boolean? = null,
+    /** Camera sessions: switch to this camera and/or this size (both from the caps), no new consent. */
+    val camera: String? = null,
+    val w: Int? = null,
+    val h: Int? = null,
 ) : PeerMessage
 
 /** PC to phone: send a keyframe (decode error, overflow). At most one per 500 ms is honoured. */
@@ -208,15 +230,33 @@ public object StreamRules {
         return value
     }
 
-    /** A `streamStart` the phone may act on. Camera is reserved (ADR-067) and not accepted yet. */
-    public fun isValid(m: StreamStart): Boolean =
-        sidBytes(m.sid) != null && m.source == SOURCE_SCREEN && isCodec(m.codec) &&
-            m.maxLong in MAX_LONG && m.fps in FPS && m.bitrate in BITRATE &&
-            isPrivateIpv4(m.host) && m.port in PORT
+    public val CAMERA_SIZE: IntRange = 16..8192
+    public const val MAX_CAMERA_ID: Int = 32
+
+    /** A camera id as Android names them: 1..32 ASCII letters, digits, `.`, `_` or `-`. */
+    public fun isCameraId(id: String?): Boolean =
+        id != null && id.length in 1..MAX_CAMERA_ID && id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' || it == '-' }
+
+    private fun sizeOk(w: Int?, h: Int?): Boolean = (w == null && h == null) || (w != null && h != null && w in CAMERA_SIZE && h in CAMERA_SIZE)
+
+    /**
+     * A `streamStart` the phone may act on. Screen: no camera fields. Camera (ADR-067): a camera
+     * id and an exact size, no sound (a phone camera never sends the microphone).
+     */
+    public fun isValid(m: StreamStart): Boolean {
+        val common = sidBytes(m.sid) != null && isCodec(m.codec) && m.maxLong in MAX_LONG && m.fps in FPS &&
+            m.bitrate in BITRATE && isPrivateIpv4(m.host) && m.port in PORT
+        return common && when (m.source) {
+            SOURCE_SCREEN -> m.camera == null && m.w == null && m.h == null
+            SOURCE_CAMERA -> isCameraId(m.camera) && m.w != null && m.h != null && sizeOk(m.w, m.h) && !m.audio
+            else -> false
+        }
+    }
 
     public fun isValid(m: StreamConfig): Boolean =
         sidBytes(m.sid) != null && (m.codec == null || isCodec(m.codec)) && (m.maxLong == null || m.maxLong in MAX_LONG) &&
-            (m.fps == null || m.fps in FPS) && (m.bitrate == null || m.bitrate in BITRATE)
+            (m.fps == null || m.fps in FPS) && (m.bitrate == null || m.bitrate in BITRATE) &&
+            (m.camera == null || isCameraId(m.camera)) && sizeOk(m.w, m.h)
 
     public fun isValid(m: StreamKeyframe): Boolean = sidBytes(m.sid) != null
 

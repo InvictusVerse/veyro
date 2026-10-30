@@ -66,6 +66,8 @@ public value class Capabilities(public val bits: Int) {
             Capability.DEVICE_INFO,
             // ADR-066: the screen goes to a PC only after the user's switch and Android's consent.
             Capability.SCREEN_SOURCE,
+            // ADR-067: the camera likewise, after the switch and a tap on the phone each time.
+            Capability.CAMERA_SOURCE,
         )
 
         /**
@@ -134,6 +136,12 @@ public enum class Capability(public val bit: Int) {
 
     /** Touch and keys from the PC to the phone while mirroring (ADR-066, reserved). */
     REMOTE_INPUT(0x20000),
+
+    /**
+     * This phone streams a camera to a PC (ADR-067): `streamStart{source: "camera"}` over the
+     * same VMS1 socket as the screen. Phone only, PCs only.
+     */
+    CAMERA_SOURCE(0x80000),
 
     /**
      * Flashlight, media volume and screen brightness in `devStatus` / `devControl` (ADR-060).

@@ -28,7 +28,23 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("encoders")] IReadOnlyList<StreamEncoder>? Encoders = null,
         [property: JsonPropertyName("audio")] bool Audio = false,
         /// <summary>Android's audio permission for playback capture: granted, ask, denied or blocked (<see cref="StreamRules"/>).</summary>
-        [property: JsonPropertyName("audioPermission")] string? AudioPermission = null) : PeerMessage;
+        [property: JsonPropertyName("audioPermission")] string? AudioPermission = null,
+        /// <summary>ADR-067: "Let PCs use this phone's camera" is on.</summary>
+        [property: JsonPropertyName("cameraAllowed")] bool? CameraAllowed = null,
+        /// <summary>ADR-067: the phone's cameras with the sizes its camera and encoders both support.</summary>
+        [property: JsonPropertyName("cameras")] IReadOnlyList<StreamCamera>? Cameras = null) : PeerMessage;
+
+    /// <summary>One phone camera (ADR-067). <c>Facing</c>: back, front or external.</summary>
+    public sealed record StreamCamera(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("facing")] string Facing,
+        [property: JsonPropertyName("sizes")] IReadOnlyList<StreamSize>? Sizes = null);
+
+    /// <summary>A camera size in landscape (W at least H) and its highest frame rate.</summary>
+    public sealed record StreamSize(
+        [property: JsonPropertyName("w")] int W,
+        [property: JsonPropertyName("h")] int H,
+        [property: JsonPropertyName("fps")] int Fps);
 
     public sealed record StreamScreen(
         [property: JsonPropertyName("w")] int W,
@@ -57,7 +73,11 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("bitrate")] int Bitrate,
         [property: JsonPropertyName("audio")] bool Audio,
         [property: JsonPropertyName("host")] string Host,
-        [property: JsonPropertyName("port")] int Port) : PeerMessage;
+        [property: JsonPropertyName("port")] int Port,
+        /// <summary>Camera only (ADR-067): which camera and the exact size from its caps.</summary>
+        [property: JsonPropertyName("camera")] string? Camera = null,
+        [property: JsonPropertyName("w")] int? W = null,
+        [property: JsonPropertyName("h")] int? H = null) : PeerMessage;
 
     /// <summary>Phone to PC: what the session is doing and the values in use.</summary>
     public sealed record StreamState(
@@ -72,7 +92,8 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("hw")] bool? Hw = null,
         [property: JsonPropertyName("audio")] bool? Audio = null,
         [property: JsonPropertyName("thermal")] int? Thermal = null,
-        [property: JsonPropertyName("audioPermission")] string? AudioPermission = null) : PeerMessage;
+        [property: JsonPropertyName("audioPermission")] string? AudioPermission = null,
+        [property: JsonPropertyName("camera")] string? Camera = null) : PeerMessage;
 
     /// <summary>
     /// PC to phone: ask the phone's user again for the audio permission during this session. The
@@ -94,7 +115,11 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("fps")] int? Fps = null,
         [property: JsonPropertyName("bitrate")] int? Bitrate = null,
         [property: JsonPropertyName("audio")] bool? Audio = null,
-        [property: JsonPropertyName("paused")] bool? Paused = null) : PeerMessage;
+        [property: JsonPropertyName("paused")] bool? Paused = null,
+        /// <summary>Camera sessions: switch lens and/or size (from the caps) without a new consent.</summary>
+        [property: JsonPropertyName("camera")] string? Camera = null,
+        [property: JsonPropertyName("w")] int? W = null,
+        [property: JsonPropertyName("h")] int? H = null) : PeerMessage;
 
     /// <summary>PC to phone: send a keyframe. Sent at most once per 500 ms.</summary>
     public sealed record StreamKeyframe([property: JsonPropertyName("sid")] string Sid) : PeerMessage;
@@ -152,7 +177,15 @@ public static class StreamRules
 
     public static bool IsCodec(string? codec) => codec is CodecH264 or CodecH265;
 
-    /// <summary>The usable part of a phone's caps, or null when it breaks a rule. Unknown codecs are dropped, not fatal.</summary>
+    public const string SourceCamera = "camera";
+    public const int MaxCameras = 8;
+    public const int MaxCameraSizes = 16;
+
+    /// <summary>A camera id as Android names them: 1..32 ASCII letters, digits, '.', '_' or '-'.</summary>
+    public static bool IsCameraId(string? id) =>
+        id is { Length: >= 1 and <= 32 } && id.All(c => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-');
+
+    /// <summary>The usable part of a phone's caps, or null when it breaks a rule. Unknown codecs and facings are dropped, not fatal.</summary>
     public static PeerMessage.StreamCaps? Clean(PeerMessage.StreamCaps caps)
     {
         if (caps.Screen is { } s && (s.W is < 16 or > 8192 || s.H is < 16 or > 8192 || s.MaxFps is < 1 or > 240)) return null;
@@ -161,7 +194,16 @@ public static class StreamRules
             .Where(e => e is not null && IsCodec(e.Codec) && e.MaxW is >= 16 and <= 8192 && e.MaxH is >= 16 and <= 8192 && e.Fps is >= 1 and <= 240)
             .Take(16)
             .ToList();
-        return caps with { Encoders = encoders };
+        var cameras = new List<PeerMessage.StreamCamera>();
+        foreach (PeerMessage.StreamCamera? camera in (caps.Cameras ?? []).Take(MaxCameras))
+        {
+            if (camera is null || !IsCameraId(camera.Id) || camera.Facing is not ("back" or "front" or "external")) continue;
+            var sizes = camera.Sizes ?? [];
+            if (sizes.Any(z => z is null || z.W is < 16 or > 8192 || z.H is < 16 or > 8192 || z.Fps is < 1 or > 240)) return null;
+            if (sizes.Count == 0) continue;
+            cameras.Add(camera with { Sizes = sizes.Take(MaxCameraSizes).ToList() });
+        }
+        return caps with { Encoders = encoders, Cameras = caps.CameraAllowed == true ? cameras : [] };
     }
 
     public static bool IsValid(PeerMessage.StreamState m) =>
@@ -171,7 +213,8 @@ public static class StreamRules
         m.W is null or (>= 16 and <= 8192) && m.H is null or (>= 16 and <= 8192) &&
         m.Fps is null or (>= 1 and <= 240) && m.Bitrate is null or (>= 0 and <= MaxBitrate) &&
         m.Thermal is null or (>= 0 and <= 6) &&
-        (m.AudioPermission is null || IsAudioPermission(m.AudioPermission));
+        (m.AudioPermission is null || IsAudioPermission(m.AudioPermission)) &&
+        (m.Camera is null || IsCameraId(m.Camera));
 
     public static bool IsValid(PeerMessage.StreamStop m) => SidBytes(m.Sid) is not null && Reasons.Contains(m.Reason);
 }

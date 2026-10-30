@@ -40,16 +40,18 @@ public sealed class MirrorWindow : Window
     private void OnSettingsChanged(AppSettings settings) =>
         DispatcherQueue.TryEnqueue(_view.RefreshQuiet);
 
+    /// <param name="camera">ADR-067: the phone's camera ("&lt;phone&gt; - Veyro camera") instead of its screen.</param>
     public MirrorWindow(string peerId, string phoneName, string pcId, IPeerSessionRegistry sessions, ISettingsStore settings,
-        Func<PeerMessage.StreamCaps?> caps, IAppThemeModeService theme)
+        Func<PeerMessage.StreamCaps?> caps, IAppThemeModeService theme, bool camera = false)
     {
         PeerId = peerId;
-        Title = $"{phoneName} - Veyro mirror";
+        IsCamera = camera;
+        Title = camera ? $"{phoneName} - Veyro camera" : $"{phoneName} - Veyro mirror";
         SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
-        _view = new MirrorView(settings);
+        _view = new MirrorView(settings, camera);
         _view.SetWindowTitle(Title);
         Content = _view;
-        Controller = new MirrorController(peerId, phoneName, pcId, sessions, settings, caps, _view.PlayerElement);
+        Controller = new MirrorController(peerId, phoneName, pcId, sessions, settings, caps, _view.PlayerElement, camera);
         _view.Attach(Controller);
         _view.CloseRequested += Close;
         _view.FullScreenRequested += SetFullScreen;
@@ -70,6 +72,8 @@ public sealed class MirrorWindow : Window
 
     public string PeerId { get; }
 
+    public bool IsCamera { get; }
+
     public MirrorController Controller { get; }
 
     /// <summary>A phone-shaped window at the screen's scale, no taller than the work area.</summary>
@@ -84,8 +88,9 @@ public sealed class MirrorWindow : Window
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException)
         {
         }
-        int width = (int)(WidthDip * scale);
-        int height = (int)(HeightDip * scale);
+        // A camera picture is landscape; a phone screen is portrait.
+        int width = (int)((IsCamera ? 960 : WidthDip) * scale);
+        int height = (int)((IsCamera ? 600 : HeightDip) * scale);
         DisplayArea? area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
         if (area is not null)
         {
@@ -101,6 +106,8 @@ public sealed class MirrorWindow : Window
         bool minimised = sender.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
         if (minimised == _minimised) return;
         _minimised = minimised;
+        // A camera that feeds the virtual camera keeps streaming while its window is minimised.
+        if (minimised && Controller.KeepStreamingWhenHidden) return;
         _ = Controller.SetPausedAsync(minimised);
     }
 

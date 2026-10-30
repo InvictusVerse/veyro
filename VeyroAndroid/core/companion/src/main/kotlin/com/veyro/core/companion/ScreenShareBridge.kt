@@ -32,8 +32,17 @@ import java.io.IOException
 /** What the phone can share right now, for `streamCaps` (ADR-066). Built by the platform. */
 public interface ScreenShareHost {
 
-    /** This phone's `streamCaps`; [allowed] false gives the empty form the PC shows as "off". */
-    public suspend fun caps(allowed: Boolean): StreamCaps
+    /**
+     * This phone's `streamCaps`; [allowed] false gives the empty screen part the PC shows as
+     * "off", [cameraAllowed] false leaves out the cameras (ADR-067).
+     */
+    public suspend fun caps(allowed: Boolean, cameraAllowed: Boolean = false): StreamCaps
+
+    /**
+     * ADR-067: asks the phone's user to let [pcName] use the camera (a notification, then the
+     * camera permission if needed). Suspends until answered; null when declined.
+     */
+    public suspend fun requestCameraConsent(sid: String, pcName: String): ScreenGrant? = null
 
     /** Fires when the caps may have changed: rotation, an audio-permission answer. */
     public val capsChanges: Flow<Unit>
@@ -74,6 +83,8 @@ public data class ScreenSessionState(
     /** StreamRules.AUDIO_*; reported while the PC asked for sound and it is not playing. */
     val audioPermission: String? = null,
     val thermal: Int? = null,
+    /** Camera sessions: the camera in use. */
+    val camera: String? = null,
     /** Set once: why the capture ended (a 6.9 reason). */
     val stopped: String? = null,
 )
@@ -118,6 +129,8 @@ public class ScreenShareBridge(
     private val scope: CoroutineScope,
     /** Monotonic milliseconds, for the rate limits. */
     private val clock: () -> Long = { System.nanoTime() / 1_000_000L },
+    /** ADR-067: "Let PCs use this phone's camera". */
+    private val cameraAllowed: Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false),
 ) {
 
     public companion object {
@@ -129,7 +142,7 @@ public class ScreenShareBridge(
     }
 
     /** The one session across every PC, from `streamStart` to the end. */
-    private inner class Active(val link: CompanionLink, val sid: String, val audioRequested: Boolean) {
+    private inner class Active(val link: CompanionLink, val sid: String, val audioRequested: Boolean, val source: String) {
         @Volatile var session: ScreenSession? = null
         @Volatile var job: Job? = null
         @Volatile var lastKeyframe: Long = Long.MIN_VALUE
@@ -160,19 +173,24 @@ public class ScreenShareBridge(
         try {
             coroutineScope {
                 val on = MutableStateFlow(allowed.first())
+                val cameraOn = MutableStateFlow(cameraAllowed.first())
                 launch { allowed.collect { on.value = it } }
+                launch { cameraAllowed.collect { cameraOn.value = it } }
                 launch {
                     // First caps at once, then after every change that may alter them.
-                    merge(on.map { }, host.capsChanges).conflate().collect {
-                        link.send(host.caps(on.value))
+                    merge(kotlinx.coroutines.flow.combine(on, cameraOn) { _, _ -> }, host.capsChanges).conflate().collect {
+                        link.send(host.caps(on.value, cameraOn.value))
                     }
                 }
                 launch {
-                    on.collect { enabled -> if (!enabled) end(link, sid = null, reason = "disabled", tellPc = true) }
+                    on.collect { enabled -> if (!enabled) end(link, sid = null, reason = "disabled", tellPc = true, source = StreamRules.SOURCE_SCREEN) }
+                }
+                launch {
+                    cameraOn.collect { enabled -> if (!enabled) end(link, sid = null, reason = "disabled", tellPc = true, source = StreamRules.SOURCE_CAMERA) }
                 }
                 link.incoming.collect { message ->
                     when (message) {
-                        is StreamStart -> onStart(link, message, on.value)
+                        is StreamStart -> onStart(link, message, if (message.source == StreamRules.SOURCE_CAMERA) cameraOn.value else on.value)
                         is StreamConfig -> if (StreamRules.isValid(message)) sessionFor(link, message.sid)?.session?.configure(message)
                         is StreamKeyframe -> if (StreamRules.isValid(message)) onKeyframe(link, message.sid)
                         is StreamAskAudio -> if (StreamRules.isValid(message)) onAskAudio(link, message.sid)
@@ -222,7 +240,7 @@ public class ScreenShareBridge(
             send(link, StreamStop(start.sid, "disabled"))
             return
         }
-        val claim = Active(link, start.sid, start.audio)
+        val claim = Active(link, start.sid, start.audio, start.source)
         val busy = synchronized(lock) {
             if (active != null) true else { active = claim; false }
         }
@@ -240,7 +258,10 @@ public class ScreenShareBridge(
         try {
             send(link, StreamState(sid, StreamRules.STATE_ASKING))
             val grant = try {
-                withTimeout(CONSENT_TIMEOUT_MS) { host.requestConsent(sid, pcName(link), start.audio) }
+                withTimeout(CONSENT_TIMEOUT_MS) {
+                    if (start.source == StreamRules.SOURCE_CAMERA) host.requestCameraConsent(sid, pcName(link))
+                    else host.requestConsent(sid, pcName(link), start.audio)
+                }
             } catch (e: TimeoutCancellationException) {
                 stopReason = "timeout"
                 return
@@ -309,6 +330,7 @@ public class ScreenShareBridge(
         audio = if (audioRequested) s.audio else null,
         thermal = s.thermal,
         audioPermission = if (audioRequested && !s.audio) s.audioPermission else null,
+        camera = s.camera,
     )
 
     private fun isCurrent(claim: Active): Boolean = synchronized(lock) { active === claim }
@@ -317,9 +339,10 @@ public class ScreenShareBridge(
      * Ends the live session of [link] ([sid], or any when null) for [reason]. [tellPc]: send
      * `streamStop` (the phone ended it); false when the PC ended it or its session is gone.
      */
-    private suspend fun end(link: CompanionLink, sid: String?, reason: String, tellPc: Boolean) {
+    private suspend fun end(link: CompanionLink, sid: String?, reason: String, tellPc: Boolean, source: String? = null) {
         val current = synchronized(lock) {
-            active?.takeIf { it.link == link && (sid == null || it.sid == sid) }?.also { if (!tellPc) it.endedByPc = true }
+            active?.takeIf { it.link == link && (sid == null || it.sid == sid) && (source == null || it.source == source) }
+                ?.also { if (!tellPc) it.endedByPc = true }
         } ?: return
         val session = current.session
         if (session != null) {

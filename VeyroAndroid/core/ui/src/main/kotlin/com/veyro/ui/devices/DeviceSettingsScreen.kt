@@ -332,6 +332,18 @@ public fun DeviceSettingsScreen(
                 }
 
                 item {
+                    // ADR-067. The PC picks lens and quality; the phone asks for a tap every time.
+                    SwitchPreferenceWidget(
+                        title = "Let PCs use this phone's camera",
+                        subtitle = "A PC can ask to use this phone as its webcam. You tap Allow on the phone each " +
+                            "time, and a notification with Stop shows while it is in use.",
+                        icon = VeyroIcons.Image,
+                        checked = settings.cameraShareAllowed,
+                        onCheckedChanged = { on -> settingsViewModel.setCameraShareAllowed(on) },
+                    )
+                }
+
+                item {
                     SwitchPreferenceWidget(
                         title = "Ring and sound mode",
                         subtitle = "Let the PC ring this phone to find it, and switch its ringer mode or " +

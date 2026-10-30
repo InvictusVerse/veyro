@@ -71,12 +71,36 @@
                 <Button.Flyout>
                     <Flyout Placement="BottomEdgeAlignedLeft">
                         <StackPanel Width="280" Spacing="12">
-                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Mirroring on this PC" />
+                            <TextBlock x:Name="SettingsTitle" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Mirroring on this PC" />
                             <ComboBox
                                 x:Name="QualityCombo"
                                 HorizontalAlignment="Stretch"
                                 Header="Quality"
                                 SelectionChanged="QualityCombo_SelectionChanged" />
+                            <!--  ADR-067: only what the phone's camera and encoders offer  -->
+                            <ComboBox
+                                x:Name="LensCombo"
+                                HorizontalAlignment="Stretch"
+                                Header="Camera"
+                                SelectionChanged="LensCombo_SelectionChanged"
+                                Visibility="Collapsed" />
+                            <ComboBox
+                                x:Name="SizeCombo"
+                                HorizontalAlignment="Stretch"
+                                Header="Resolution"
+                                SelectionChanged="SizeCombo_SelectionChanged"
+                                Visibility="Collapsed" />
+                            <ComboBox
+                                x:Name="FpsCombo"
+                                HorizontalAlignment="Stretch"
+                                Header="Frame rate"
+                                SelectionChanged="FpsCombo_SelectionChanged"
+                                Visibility="Collapsed" />
+                            <ToggleSwitch
+                                x:Name="MirrorSwitch"
+                                Header="Mirror image"
+                                Toggled="MirrorSwitch_Toggled"
+                                Visibility="Collapsed" />
                             <ToggleSwitch
                                 x:Name="HardwareSwitch"
                                 Header="Hardware encoding on the phone"
@@ -179,7 +203,12 @@
             Grid.Row="2"
             AreTransportControlsEnabled="False"
             AutomationProperties.Name="Phone screen"
-            Stretch="Uniform" />
+            RenderTransformOrigin="0.5,0.5"
+            Stretch="Uniform">
+            <MediaPlayerElement.RenderTransform>
+                <ScaleTransform x:Name="PlayerFlip" ScaleX="1" />
+            </MediaPlayerElement.RenderTransform>
+        </MediaPlayerElement>
 
         <!--  Status: asking, connecting, declined, stopped  -->
         <Grid

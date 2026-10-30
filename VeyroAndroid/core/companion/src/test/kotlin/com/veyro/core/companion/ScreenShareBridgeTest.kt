@@ -79,8 +79,14 @@ class ScreenShareBridgeTest {
         var answer = CompletableDeferred<ScreenGrant?>()
         val requests = mutableListOf<Pair<String, Boolean>>()
         var withdrawn = 0
-        override suspend fun caps(allowed: Boolean): StreamCaps = StreamCaps(allowed = allowed, audio = allowed)
+        override suspend fun caps(allowed: Boolean, cameraAllowed: Boolean): StreamCaps =
+            StreamCaps(allowed = allowed, audio = allowed, cameraAllowed = cameraAllowed)
         override val capsChanges: Flow<Unit> get() = changes
+        val cameraRequests = mutableListOf<String>()
+        override suspend fun requestCameraConsent(sid: String, pcName: String): ScreenGrant? {
+            cameraRequests += sid
+            return answer.await()
+        }
         override suspend fun requestConsent(sid: String, pcName: String, audio: Boolean): ScreenGrant? {
             requests += sid to audio
             try {
@@ -92,17 +98,66 @@ class ScreenShareBridgeTest {
         }
     }
 
-    private class Rig(val links: MutableStateFlow<List<CompanionLink>>, val allowed: MutableStateFlow<Boolean>, val host: FakeHost)
+    private class Rig(
+        val links: MutableStateFlow<List<CompanionLink>>,
+        val allowed: MutableStateFlow<Boolean>,
+        val host: FakeHost,
+        val camera: MutableStateFlow<Boolean>,
+    )
 
     private val viewCaps = Capabilities.of(Capability.FILE_TRANSFER, Capability.SCREEN_VIEW)
 
-    private fun TestScope.rig(allowed: Boolean = true): Rig {
+    private fun TestScope.rig(allowed: Boolean = true, camera: Boolean = true): Rig {
         val links = MutableStateFlow<List<CompanionLink>>(emptyList())
         val on = MutableStateFlow(allowed)
+        val cameraOn = MutableStateFlow(camera)
         val host = FakeHost()
-        ScreenShareBridge(links, on, host, { "Office PC" }, backgroundScope, clock = { testScheduler.currentTime }).start()
+        ScreenShareBridge(links, on, host, { "Office PC" }, backgroundScope, clock = { testScheduler.currentTime }, cameraAllowed = cameraOn).start()
         runCurrent()
-        return Rig(links, on, host)
+        return Rig(links, on, host, cameraOn)
+    }
+
+    private fun cameraStart(sid: String = SID) = start(sid, audio = false).copy(source = "camera", camera = "0", w = 1280, h = 720, maxLong = 1280, fps = 30)
+
+    @Test
+    fun `camera requests ask for the camera, follow their own switch, and keep the screen apart`() = runTest {
+        val rig = rig(camera = false)
+        val pc = connect(rig)
+        receive(pc, cameraStart())
+        assertEquals(listOf(StreamStop(SID, "disabled")), pc.of<StreamStop>())
+        assertTrue(rig.host.cameraRequests.isEmpty())
+
+        rig.camera.value = true
+        runCurrent()
+        assertEquals("caps follow the camera switch", listOf(false, true), pc.of<StreamCaps>().map { it.cameraAllowed == true })
+        val session = FakeSession()
+        receive(pc, cameraStart(SID2))
+        assertEquals(listOf(SID2), rig.host.cameraRequests)
+        assertTrue("never the screen consent", rig.host.requests.isEmpty())
+        rig.host.answer.complete(FakeGrant(session))
+        runCurrent()
+        session.state.value = ScreenSessionState(streaming = true, camera = "0")
+        runCurrent()
+        assertEquals("0", pc.of<StreamState>().last().camera)
+
+        rig.allowed.value = false
+        runCurrent()
+        assertTrue("turning screen sharing off leaves the camera running", session.stops.isEmpty())
+        rig.camera.value = false
+        runCurrent()
+        assertEquals("disabled", session.stops.first())
+    }
+
+    @Test
+    fun `a camera start needs a camera id and a size, and never sound`() = runTest {
+        val rig = rig()
+        val pc = connect(rig)
+        receive(pc, cameraStart().copy(camera = null))
+        receive(pc, cameraStart().copy(w = null, h = null))
+        receive(pc, cameraStart().copy(audio = true))
+        receive(pc, cameraStart().copy(camera = "../0"))
+        receive(pc, start().copy(camera = "0"))
+        assertTrue(rig.host.cameraRequests.isEmpty() && rig.host.requests.isEmpty())
     }
 
     private fun TestScope.connect(rig: Rig, caps: Capabilities = viewCaps): FakeLink {

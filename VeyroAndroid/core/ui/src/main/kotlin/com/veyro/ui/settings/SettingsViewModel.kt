@@ -147,6 +147,10 @@ public class SettingsViewModel(
             .onEach { _state.value = _state.value.copy(screenShareAllowed = it) }
             .launchIn(viewModelScope)
 
+        settingsStore.cameraShareAllowed
+            .onEach { _state.value = _state.value.copy(cameraShareAllowed = it) }
+            .launchIn(viewModelScope)
+
         settingsStore.wallpaperShareEnabled
             .onEach { _state.value = _state.value.copy(wallpaperShareEnabled = it) }
             .launchIn(viewModelScope)
@@ -172,6 +176,11 @@ public class SettingsViewModel(
     /** ADR-066. Off: PCs are told mirroring is off and any running session ends. */
     public fun setScreenShareAllowed(allowed: Boolean) {
         viewModelScope.launch { settingsStore.setScreenShareAllowed(allowed) }
+    }
+
+    /** ADR-067. Off: PCs no longer see the cameras and a running camera session ends. */
+    public fun setCameraShareAllowed(allowed: Boolean) {
+        viewModelScope.launch { settingsStore.setCameraShareAllowed(allowed) }
     }
 
     /** ADR-038. The photo permission, if needed, is requested by the Activity. */

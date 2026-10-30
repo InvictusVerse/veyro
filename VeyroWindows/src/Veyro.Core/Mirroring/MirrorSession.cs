@@ -46,11 +46,50 @@ public sealed class MirrorSession
     private MirrorPhase _phase = MirrorPhase.Idle;
     private string? _reason;
 
-    public MirrorSession(string phoneName, TimeProvider? time = null)
+    private readonly bool _camera;
+
+    /// <param name="camera">ADR-067: a session for the phone's camera; changes the texts only.</param>
+    public MirrorSession(string phoneName, TimeProvider? time = null, bool camera = false)
     {
         _phone = string.IsNullOrWhiteSpace(phoneName) ? "the phone" : phoneName;
         _time = time ?? TimeProvider.System;
+        _camera = camera;
         Status = Build();
+    }
+
+    /// <summary>Why the PC cannot use the phone's camera now, or null when it can (ADR-067).</summary>
+    public static string? WhyCameraUnavailable(string phone, PeerMessage.StreamCaps? caps, StreamPlan? plan)
+    {
+        if (caps is null) return $"{phone} has not offered its camera. Update Veyro on the phone.";
+        if (caps.CameraAllowed != true) return $"Camera use is off on {phone}. In Veyro on the phone, turn on \"Let PCs use this phone's camera\".";
+        if ((caps.Cameras ?? []).Count == 0) return $"{phone} has no camera Veyro can use.";
+        if (plan is null) return $"{phone}'s encoders cannot send that size. Pick a smaller resolution.";
+        return null;
+    }
+
+    /// <summary>
+    /// ADR-067: <c>streamStart</c> for the camera <paramref name="cameraId"/> at the plan's size, or
+    /// enters <see cref="MirrorPhase.Unavailable"/> and returns null.
+    /// </summary>
+    public PeerMessage.StreamStart? BeginCamera(string sid, PeerMessage.StreamCaps? caps, StreamPlan? plan, string? cameraId, string host, int port)
+    {
+        _lastAsk = _time.GetTimestamp();
+        if (WhyCameraUnavailable(_phone, caps, plan) is { } why || cameraId is null)
+        {
+            Sid = null;
+            _reason = WhyCameraUnavailable(_phone, caps, plan) ?? $"{_phone} has no camera Veyro can use.";
+            Enter(MirrorPhase.Unavailable);
+            return null;
+        }
+        Sid = sid;
+        LastState = null;
+        _reason = null;
+        _audioRequested = false;
+        _audioSupported = false;
+        _audio = PhoneAudioState.Off;
+        Enter(MirrorPhase.Starting);
+        return new PeerMessage.StreamStart(sid, StreamRules.SourceCamera, plan!.Codec, plan.HwEncode, plan.MaxLong,
+            plan.Fps, plan.Bitrate, false, host, port, cameraId, plan.Width, plan.Height);
     }
 
     /// <summary>The live session's id, or null between sessions.</summary>
@@ -253,6 +292,7 @@ public sealed class MirrorSession
             MirrorPhase.Idle => ("Not mirroring", (string?)null),
             MirrorPhase.Unavailable => ("Cannot mirror right now", _reason),
             MirrorPhase.Starting => ($"Asking {_phone}…", "Waiting for the phone to answer."),
+            MirrorPhase.Asking when _camera => ($"Allow the camera on {_phone}", "Tap Allow in the notification on the phone."),
             MirrorPhase.Asking => ($"Allow screen sharing on {_phone}", "Tap \"Start now\" in the dialog on the phone."),
             MirrorPhase.Connecting => ($"Connecting to {_phone}…", null),
             MirrorPhase.Streaming => (_phone, null),
@@ -275,7 +315,25 @@ public sealed class MirrorSession
             live && audio is PhoneAudioState.Denied or PhoneAudioState.Blocked or PhoneAudioState.Waiting);
     }
 
-    private (string, string?) StopText(string reason) => reason switch
+    private (string, string?) StopText(string reason) => _camera ? CameraStopText(reason) : ScreenStopText(reason);
+
+    private (string, string?) CameraStopText(string reason) => reason switch
+    {
+        "declined" => ($"Camera use was declined on {_phone}", "You can ask again; the phone asks each time."),
+        "timeout" => ($"{_phone} did not answer in time", "Make sure the phone is unlocked and Veyro may show notifications."),
+        "busy" => ($"{_phone}'s camera is busy", "Another app or Veyro session is using it. Close it and start again."),
+        "disabled" => ($"Camera use is off on {_phone}", "In Veyro on the phone, turn on \"Let PCs use this phone's camera\"."),
+        "permission" => ($"Veyro on {_phone} may not use the camera", "Allow Camera for Veyro in the phone's settings, then start again."),
+        "unsupported" => ($"{_phone}'s camera cannot use this size", "Pick another resolution and start again."),
+        "thermal" => ($"{_phone} got too hot", "The camera stopped to protect the phone. Let it cool down."),
+        "encoder" => ($"{_phone}'s video encoder stopped", "Start again, or pick a smaller resolution."),
+        "network" => ($"The connection to {_phone} was lost", null),
+        "session-closed" => ($"{_phone} disconnected", null),
+        "user" => ("Camera stopped", null),
+        _ => ("The camera stopped because of an error", null),
+    };
+
+    private (string, string?) ScreenStopText(string reason) => reason switch
     {
         "declined" => ($"Screen sharing was declined on {_phone}", "You can ask again; the phone shows its dialog each time."),
         "timeout" => ($"{_phone} did not answer in time", "Make sure the phone is unlocked and Veyro may show notifications."),

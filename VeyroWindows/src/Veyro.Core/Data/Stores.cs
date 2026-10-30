@@ -55,7 +55,14 @@ public sealed record AppSettings(
     // mirror window turn it on.
     bool NotificationPopupsPaused = false,
     // The same, automatically while a phone's screen is mirrored (a film in full screen). On.
-    bool QuietWhileMirroring = true
+    bool QuietWhileMirroring = true,
+    // ADR-067: phone as webcam, chosen on this PC: camera id (null: the back camera), size from
+    // that camera's list (1280 x 720 by default), frame rate, and a mirror image (off).
+    string? WebcamCamera = null,
+    int WebcamWidth = 1280,
+    int WebcamHeight = 720,
+    int WebcamFps = 30,
+    bool WebcamMirror = false
 );
 
 /// <summary>Whether a phone notification or message may pop up a toast now (Do not disturb).</summary>

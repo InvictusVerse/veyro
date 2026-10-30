@@ -208,7 +208,7 @@ public sealed class MirroringVectorTests
     {
         using var doc = Load("link-stream.json");
         var vectors = doc.RootElement.GetProperty("vectors").EnumerateArray().ToList();
-        Assert.Equal(13, vectors.Count);
+        Assert.Equal(16, vectors.Count);
         foreach (var vector in vectors)
         {
             string json = vector.GetProperty("json").GetString()!;

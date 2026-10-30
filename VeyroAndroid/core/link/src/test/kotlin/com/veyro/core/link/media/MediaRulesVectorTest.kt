@@ -41,7 +41,7 @@ class MediaRulesVectorTest {
             "streamAskAudio" to StreamAskAudio::class,
         )
         val vectors = MediaVectors.load("link-stream.json").getValue("vectors").jsonArray.map { it.jsonObject }
-        assertEquals(13, vectors.size)
+        assertEquals(16, vectors.size)
         for (vector in vectors) {
             val type = vector.getValue("type").jsonPrimitive.content
             val text = vector.getValue("json").jsonPrimitive.content

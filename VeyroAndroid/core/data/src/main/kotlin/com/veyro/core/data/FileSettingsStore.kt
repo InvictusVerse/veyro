@@ -73,6 +73,8 @@ public class FileSettingsStore(
         val phoneControlsAllowed: Boolean = false,
         // ADR-066. Defaulted so older files decode; on (Android asks every session anyway).
         val screenShareAllowed: Boolean = true,
+        // ADR-067. On: the phone still asks for a tap every time a PC wants the camera.
+        val cameraShareAllowed: Boolean = true,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -189,6 +191,13 @@ public class FileSettingsStore(
 
     override suspend fun setScreenShareAllowed(allowed: Boolean) {
         update { it.copy(screenShareAllowed = allowed) }
+    }
+
+    override val cameraShareAllowed: Flow<Boolean> =
+        state.asStateFlow().map { it.cameraShareAllowed }
+
+    override suspend fun setCameraShareAllowed(allowed: Boolean) {
+        update { it.copy(cameraShareAllowed = allowed) }
     }
 
     override val wallpaperShareEnabled: Flow<Boolean> =

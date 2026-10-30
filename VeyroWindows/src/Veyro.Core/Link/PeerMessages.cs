@@ -135,6 +135,8 @@ public static class PeerCapabilities
     public const int ScreenView = 0x10000;
     /// <summary>ADR-066: touch and keys from the PC to the phone while mirroring (reserved).</summary>
     public const int RemoteInput = 0x20000;
+    /// <summary>ADR-067: the phone streams a camera (streamStart source "camera"). Phone only.</summary>
+    public const int CameraSource = 0x80000;
     /// <summary>ADR-060: flashlight, media volume and brightness in devStatus / devControl. PC to phone only.</summary>
     public const int PhoneControls = 0x40000;
     /// <summary>ADR-059: deviceInfo, the sender's own name (and a phone's clipboard-receive switch).</summary>

@@ -33,14 +33,19 @@ public class MirrorConsentActivity : Activity() {
         private const val EXTRA_MODE = "mode"
         private const val MODE_SCREEN = "screen"
         private const val MODE_AUDIO = "audio"
+        private const val MODE_CAMERA = "camera"
         private const val REQUEST_CAPTURE = 1
         private const val REQUEST_AUDIO = 2
+        private const val REQUEST_CAMERA = 3
         private const val STATE_STEP = "step"
         private const val STATE_LEFT = "leftForAppInfo"
 
         fun screenIntent(context: Context, sid: String): Intent = intent(context, sid, MODE_SCREEN)
 
         fun audioIntent(context: Context, sid: String): Intent = intent(context, sid, MODE_AUDIO)
+
+        /** ADR-067: the camera permission if needed, then the camera service. */
+        fun cameraIntent(context: Context, sid: String): Intent = intent(context, sid, MODE_CAMERA)
 
         private fun intent(context: Context, sid: String, mode: String): Intent =
             Intent(context, MirrorConsentActivity::class.java)
@@ -69,6 +74,7 @@ public class MirrorConsentActivity : Activity() {
         if (step != Step.START) return
         when (mode) {
             MODE_AUDIO -> startAudio()
+            MODE_CAMERA -> startCamera()
             else -> startScreen()
         }
     }
@@ -125,8 +131,36 @@ public class MirrorConsentActivity : Activity() {
         }
     }
 
+    /** Tapping Allow is the consent; Android's camera permission is asked only the first time. */
+    private fun startCamera() {
+        val id = sid
+        if (coordinator.pendingCameraRequest(id) == null || id == null) return close()
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            coordinator.cameraGranted(this, id)
+            close()
+        } else {
+            step = Step.AUDIO_DIALOG
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CAMERA) {
+            val id = sid
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && id != null) {
+                coordinator.cameraGranted(this, id)
+            } else {
+                VeyroLog.i(TAG) { "Camera permission refused" }
+                if (!shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+                    // Android will not ask again: show where to allow it.
+                    runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))) }
+                }
+                coordinator.declineCamera(id)
+            }
+            close()
+            return
+        }
         if (requestCode != REQUEST_AUDIO) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         coordinator.audioAnswered(granted, shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO))

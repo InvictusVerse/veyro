@@ -97,6 +97,12 @@
          for the phone's sound; Veyro never opens the microphone (AudioPlaybackCaptureConfiguration
          only). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Phone as webcam (ADR-067): asked the first time a PC asks for the camera and the user
+         taps Allow. Without the "Let PCs use this phone's camera" switch nothing opens it. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />

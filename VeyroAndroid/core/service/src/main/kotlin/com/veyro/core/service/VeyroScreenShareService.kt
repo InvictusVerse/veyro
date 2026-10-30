@@ -28,6 +28,12 @@ public interface ScreenShareServiceHost {
 
     public fun openAppIntent(context: Context): Intent
 
+    /** ADR-067: the camera notification's title and text. */
+    public fun cameraNotice(): Pair<String, String> = "Streaming your camera" to "A PC is using this phone's camera."
+
+    /** ADR-067: the camera notification's Stop. */
+    public fun onCameraStopRequested() {}
+
     /** Implemented by the Application. */
     public interface Provider {
         public val screenShareHost: ScreenShareServiceHost

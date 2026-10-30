@@ -974,6 +974,7 @@ public class VeyroContainer(context: Context) {
             host = screenShareCoordinator,
             pcName = { link -> clipSourceName(link.peerDeviceId) },
             scope = appScope,
+            cameraAllowed = flow { emitAll(settingsStore.cameraShareAllowed) },
         )
     }
 

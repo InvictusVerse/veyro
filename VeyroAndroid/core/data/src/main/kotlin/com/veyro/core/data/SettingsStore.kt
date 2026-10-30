@@ -85,6 +85,11 @@ public interface SettingsStore {
 
     public suspend fun setScreenShareAllowed(allowed: Boolean) {}
 
+    /** "Let PCs use this phone's camera" (ADR-067). On; the phone still asks for a tap each time. */
+    public val cameraShareAllowed: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setCameraShareAllowed(allowed: Boolean) {}
+
     /** "Auto-fetch PC clipboard" (ADR-043): keep what the PC copies here. On by default. */
     public val clipboardReceiveEnabled: Flow<Boolean> get() = flowOf(true)
 

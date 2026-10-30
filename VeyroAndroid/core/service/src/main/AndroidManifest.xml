@@ -17,6 +17,8 @@
          (playback capture) while Veyro is in the background; the microphone is never opened. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Phone as webcam (ADR-067). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
     <application>
         <!--
@@ -33,6 +35,12 @@
             android:name="com.veyro.core.service.VeyroScreenShareService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection|microphone" />
+
+        <!-- ADR-067: holds a PC's use of the camera; started only from Veyro's consent window. -->
+        <service
+            android:name="com.veyro.core.service.VeyroCameraService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
 
         <!-- Exported only because the system sends BOOT_COMPLETED and MY_PACKAGE_REPLACED; it
              checks the action and does nothing else. -->

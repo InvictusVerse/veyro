@@ -70,6 +70,9 @@ public data class SettingsUiState(
     /** "Let PCs mirror this screen" (ADR-066). On by default; Android asks every session. */
     val screenShareAllowed: Boolean = true,
 
+    /** "Let PCs use this phone's camera" (ADR-067). On; a tap on the phone each time. */
+    val cameraShareAllowed: Boolean = true,
+
     /** Clipboard and sent / received notifications clear themselves (ADR-044). On by default. */
     val notificationAutoClear: Boolean = true,
 

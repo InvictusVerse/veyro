@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml.Automation;
 using Veyro.Core.Mirroring;
 using Veyro.Services;
 
@@ -16,12 +17,127 @@ public sealed partial class MirrorView : UserControl
     private bool _hasPicture;
     private bool _updating;
 
-    public MirrorView(ISettingsStore settings)
+    private readonly bool _camera;
+    private string? _cameraSignature;
+
+    /// <param name="camera">ADR-067: the phone's camera: lens, resolution, frame rate and mirror instead of quality and sound.</param>
+    public MirrorView(ISettingsStore settings, bool camera = false)
     {
         _settings = settings;
+        _camera = camera;
         InitializeComponent();
         foreach (var preset in MirrorQuality.Presets) QualityCombo.Items.Add(new ComboBoxItem { Content = preset.Label, Tag = preset.Key });
+        if (camera)
+        {
+            SettingsTitle.Text = "Camera on this PC";
+            QualityCombo.Visibility = Visibility.Collapsed;
+            SoundToggle.Visibility = Visibility.Collapsed;
+            LensCombo.Visibility = Visibility.Visible;
+            SizeCombo.Visibility = Visibility.Visible;
+            FpsCombo.Visibility = Visibility.Visible;
+            MirrorSwitch.Visibility = Visibility.Visible;
+            QualityShortText.Text = "Camera";
+            AutomationProperties.SetName(Player, "Phone camera");
+        }
         LoadSettings();
+    }
+
+    // ── Camera (ADR-067) ─────────────────────────────────────────────────────────────
+
+    /// <summary>Fills lens, resolution and frame rate from what the phone offers; only when the offer changed.</summary>
+    private void RefreshCameraChoices()
+    {
+        if (!_camera || _controller?.Caps is not { } caps) return;
+        var cameras = caps.Cameras ?? [];
+        string signature = string.Join(";", cameras.Select(c => c.Id + ":" + string.Join(",", (c.Sizes ?? []).Select(s => $"{s.W}x{s.H}@{s.Fps}"))));
+        if (signature == _cameraSignature) return;
+        _cameraSignature = signature;
+        _updating = true;
+        try
+        {
+            LensCombo.Items.Clear();
+            int back = 0, front = 0;
+            foreach (var camera in cameras)
+            {
+                string name = camera.Facing switch
+                {
+                    "back" => ++back == 1 ? "Back camera" : $"Back camera {back}",
+                    "front" => ++front == 1 ? "Front camera" : $"Front camera {front}",
+                    _ => "External camera",
+                };
+                LensCombo.Items.Add(new ComboBoxItem { Content = name, Tag = camera.Id });
+            }
+            var chosen = CameraPlanner.Choose(caps, _settings.Current.WebcamCamera);
+            LensCombo.SelectedIndex = chosen is null ? -1 : cameras.ToList().FindIndex(c => c.Id == chosen.Id);
+            FillSizes(chosen);
+        }
+        finally
+        {
+            _updating = false;
+        }
+    }
+
+    private void FillSizes(PeerMessage.StreamCamera? camera)
+    {
+        SizeCombo.Items.Clear();
+        FpsCombo.Items.Clear();
+        if (camera is null) return;
+        AppSettings s = _settings.Current;
+        foreach (var size in camera.Sizes ?? []) SizeCombo.Items.Add(new ComboBoxItem { Content = CameraPlanner.Label(size), Tag = size });
+        var pick = CameraPlanner.ChooseSize(camera, s.WebcamWidth, s.WebcamHeight);
+        SizeCombo.SelectedIndex = pick is null ? -1 : (camera.Sizes ?? []).ToList().IndexOf(pick);
+        FillFps(pick);
+        if (pick is not null) QualityShortText.Text = CameraPlanner.Label(pick);
+    }
+
+    private void FillFps(PeerMessage.StreamSize? size)
+    {
+        FpsCombo.Items.Clear();
+        if (size is null) return;
+        var rates = CameraPlanner.FrameRates(size);
+        foreach (int fps in rates) FpsCombo.Items.Add(new ComboBoxItem { Content = $"{fps} fps", Tag = fps });
+        int want = _settings.Current.WebcamFps;
+        int index = rates.ToList().IndexOf(rates.Contains(want) ? want : rates[0]);
+        FpsCombo.SelectedIndex = index;
+    }
+
+    private async void LensCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updating || LensCombo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+        await _settings.UpdateAsync(s => s with { WebcamCamera = id });
+        var camera = _controller?.Caps?.Cameras?.FirstOrDefault(c => c.Id == id);
+        _updating = true;
+        try { FillSizes(camera); }
+        finally { _updating = false; }
+        if (SizeCombo.SelectedItem is ComboBoxItem { Tag: PeerMessage.StreamSize size })
+            await _settings.UpdateAsync(s => s with { WebcamWidth = size.W, WebcamHeight = size.H });
+        if (_controller is { } controller) await controller.OnQualityChangedAsync();
+    }
+
+    private async void SizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updating || SizeCombo.SelectedItem is not ComboBoxItem { Tag: PeerMessage.StreamSize size }) return;
+        QualityShortText.Text = CameraPlanner.Label(size);
+        await _settings.UpdateAsync(s => s with { WebcamWidth = size.W, WebcamHeight = size.H });
+        _updating = true;
+        try { FillFps(size); }
+        finally { _updating = false; }
+        if (_controller is { } controller) await controller.OnQualityChangedAsync();
+    }
+
+    private async void FpsCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updating || FpsCombo.SelectedItem is not ComboBoxItem { Tag: int fps }) return;
+        await _settings.UpdateAsync(s => s with { WebcamFps = fps });
+        if (_controller is { } controller) await controller.OnQualityChangedAsync();
+    }
+
+    private async void MirrorSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_updating) return;
+        bool on = MirrorSwitch.IsOn;
+        PlayerFlip.ScaleX = on ? -1 : 1;
+        await _settings.UpdateAsync(s => s with { WebcamMirror = on });
     }
 
     /// <summary>The element the controller's player renders into.</summary>
@@ -171,11 +287,13 @@ public sealed partial class MirrorView : UserControl
             int index = keys.IndexOf(current.MirrorQualityPreset);
             if (index < 0) index = keys.IndexOf("balanced");
             QualityCombo.SelectedIndex = index;
-            QualityShortText.Text = ShortLabel(MirrorQuality.Presets[index].Key);
+            if (!_camera) QualityShortText.Text = ShortLabel(MirrorQuality.Presets[index].Key);
             HardwareSwitch.IsOn = current.MirrorHardwareEncode;
             SoundToggle.IsChecked = current.MirrorAudio;
             SoundIcon.Glyph = current.MirrorAudio ? "\uE767" : "\uE74F";
             QuietToggle.IsChecked = current.NotificationPopupsPaused;
+            MirrorSwitch.IsOn = current.WebcamMirror;
+            PlayerFlip.ScaleX = _camera && current.WebcamMirror ? -1 : 1;
         }
         finally
         {
@@ -199,6 +317,7 @@ public sealed partial class MirrorView : UserControl
 
     private void OnStatusChanged(MirrorStatus status)
     {
+        RefreshCameraChoices();
         if (status.Phase != MirrorPhase.Streaming && status.Phase != MirrorPhase.Paused) _hasPicture = false;
         bool waitingForPicture = status.Phase == MirrorPhase.Streaming && !_hasPicture;
         bool showPanel = status.Phase != MirrorPhase.Streaming || waitingForPicture;

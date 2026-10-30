@@ -304,6 +304,16 @@
                         <FontIcon FontSize="14" Glyph="&#xE72C;" />
                     </Button>
 
+                    <!--  ADR-067: the phone's camera as a webcam  -->
+                    <Button
+                        AutomationProperties.Name="Use the phone as a webcam"
+                        Click="PhoneCamera_Click"
+                        IsEnabled="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay}"
+                        Style="{StaticResource PillIconButtonStyle}"
+                        ToolTipService.ToolTip="Use the phone as a webcam">
+                        <FontIcon FontSize="14" Glyph="&#xE960;" />
+                    </Button>
+
                     <!--  ADR-038: Send files opens the file picker directly, no screen in between.  -->
                     <Button
                         AutomationProperties.Name="Send files"

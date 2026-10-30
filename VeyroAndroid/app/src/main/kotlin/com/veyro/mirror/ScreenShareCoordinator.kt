@@ -19,8 +19,13 @@ import com.veyro.core.companion.PeerConnectionLink
 import com.veyro.core.companion.ScreenGrant
 import com.veyro.core.companion.ScreenSession
 import com.veyro.core.companion.ScreenShareHost
+import com.veyro.core.link.StreamCamera
 import com.veyro.core.link.StreamCaps
 import com.veyro.core.link.StreamEncoder
+import com.veyro.core.link.StreamSize
+import com.veyro.core.media.CameraCatalog
+import com.veyro.core.protocol.media.Vms1
+import com.veyro.core.service.VeyroCameraService
 import com.veyro.core.link.StreamRules
 import com.veyro.core.link.StreamScreen
 import com.veyro.core.link.StreamStart
@@ -67,10 +72,13 @@ public class ScreenShareCoordinator(
     internal companion object {
         private const val TAG = "ScreenShareCoordinator"
         const val ACTION_DECLINE = "com.veyro.action.SCREEN_SHARE_DECLINE"
+        const val ACTION_DECLINE_CAMERA = "com.veyro.action.CAMERA_DECLINE"
         const val EXTRA_SID = "sid"
         private const val REQUEST_SHARE = 40
         private const val REQUEST_DECLINE = 41
         private const val REQUEST_AUDIO = 42
+        private const val REQUEST_CAMERA = 43
+        private const val REQUEST_CAMERA_DECLINE = 44
     }
 
     private val app = context.applicationContext
@@ -94,17 +102,146 @@ public class ScreenShareCoordinator(
         displayChanges().mapNotNull { readScreen() }.distinctUntilChanged().drop(1).map { },
     ).conflate()
 
-    override suspend fun caps(allowed: Boolean): StreamCaps = withContext(dispatchers.io) {
-        if (!allowed) return@withContext StreamCaps(allowed = false)
-        val screen = readScreen() ?: return@withContext StreamCaps(allowed = false)
+    override suspend fun caps(allowed: Boolean, cameraAllowed: Boolean): StreamCaps = withContext(dispatchers.io) {
+        val encoders = catalog.summary().take(16).map { StreamEncoder(it.codec, it.hw, it.maxW, it.maxH, it.fps) }
+        val cameraList = if (cameraAllowed) {
+            cameraCatalog.all.take(8).map { c -> StreamCamera(c.id, c.facing, c.sizes.map { StreamSize(it.w, it.h, it.fps) }) }
+        } else {
+            null
+        }
+        val screen = if (allowed) readScreen() else null
+        if (screen == null) {
+            return@withContext StreamCaps(
+                allowed = false,
+                encoders = if (cameraList.isNullOrEmpty()) emptyList() else encoders,
+                cameraAllowed = cameraAllowed,
+                cameras = cameraList,
+            )
+        }
         StreamCaps(
             allowed = true,
             screen = StreamScreen(screen.first, screen.second, maxRefreshRate()),
-            encoders = catalog.summary().take(16).map { StreamEncoder(it.codec, it.hw, it.maxW, it.maxH, it.fps) },
+            encoders = encoders,
             // Android 10+ (Veyro's minimum) has playback capture.
             audio = true,
             audioPermission = audioState.current(),
+            cameraAllowed = cameraAllowed,
+            cameras = cameraList,
         )
+    }
+
+    // ── Camera (ADR-067) ─────────────────────────────────────────────────────────────────────
+
+    private val cameraCatalog by lazy { CameraCatalog(app, catalog) }
+
+    /** One camera request waiting for the phone's user. */
+    internal class PendingCamera(val sid: String, val pcName: String) {
+        val result = CompletableDeferred<Boolean>()
+    }
+
+    @Volatile private var pendingCamera: PendingCamera? = null
+    @Volatile private var cameraSession: PhoneCameraSession? = null
+    @Volatile private var cameraPcName: String = ""
+
+    override suspend fun requestCameraConsent(sid: String, pcName: String): ScreenGrant? {
+        val request = PendingCamera(sid, pcName)
+        pendingCamera = request
+        try {
+            val open = MirrorConsentActivity.cameraIntent(app, sid)
+            val direct = appVisible.value && runCatching { app.startActivity(open) }.isSuccess
+            if (!direct) {
+                notifications.show(
+                    VeyroNotifications.ID_CAMERA_REQUEST,
+                    notifications.screenRequest(
+                        title = "$pcName wants to use your camera",
+                        text = "Tap Allow to start. Only that PC sees it, until you stop.",
+                        shareLabel = "Allow",
+                        shareIntent = PendingIntent.getActivity(app, REQUEST_CAMERA, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
+                        declineIntent = PendingIntent.getBroadcast(
+                            app,
+                            REQUEST_CAMERA_DECLINE,
+                            Intent(app, ScreenShareActionReceiver::class.java).setAction(ACTION_DECLINE_CAMERA).putExtra(EXTRA_SID, sid),
+                            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                        ),
+                        timeoutMs = com.veyro.core.companion.ScreenShareBridge.CONSENT_TIMEOUT_MS,
+                    ),
+                )
+            }
+            return if (request.result.await()) CameraGrant(request) else null
+        } finally {
+            if (pendingCamera === request) pendingCamera = null
+            notifications.cancel(VeyroNotifications.ID_CAMERA_REQUEST)
+        }
+    }
+
+    internal fun pendingCameraRequest(sid: String?): PendingCamera? = pendingCamera?.takeIf { it.sid == sid }
+
+    internal fun declineCamera(sid: String?) {
+        notifications.cancel(VeyroNotifications.ID_CAMERA_REQUEST)
+        pendingCameraRequest(sid)?.result?.complete(false)
+    }
+
+    /** Allowed with the camera permission held: the service enters the foreground from the visible window. */
+    internal fun cameraGranted(activity: Context, sid: String) {
+        val request = pendingCameraRequest(sid) ?: return
+        request.result.complete(VeyroCameraService.start(activity))
+    }
+
+    internal fun refreshCameraNotice() {
+        VeyroCameraService.refresh(app)
+    }
+
+    internal fun onCameraSessionEnded(ended: PhoneCameraSession) {
+        if (cameraSession !== ended) return
+        cameraSession = null
+        VeyroCameraService.stop(app)
+    }
+
+    override fun cameraNotice(): Pair<String, String> {
+        val name = cameraPcName.ifBlank { "your PC" }
+        val lens = when (cameraSession?.pcFacing) {
+            "front" -> "front camera"
+            "back" -> "back camera"
+            else -> "camera"
+        }
+        return "$name is using your $lens" to "Stop ends it. Nothing is recorded on the phone."
+    }
+
+    override fun onCameraStopRequested() {
+        cameraSession?.stop("user") ?: VeyroCameraService.stop(app)
+    }
+
+    private inner class CameraGrant(private val request: PendingCamera) : ScreenGrant {
+        private var used = false
+
+        override suspend fun start(link: CompanionLink, start: StreamStart): ScreenSession {
+            used = true
+            try {
+                val connection = (link as? PeerConnectionLink)?.connection ?: throw IOException("no session")
+                val subnets = runCatching { localSubnets() }.getOrDefault(emptyList())
+                val host = StreamRules.chooseDialHost(start.host, connection.remoteHost, subnets) ?: throw IOException("no address")
+                val sid = StreamRules.sidBytes(start.sid) ?: throw IOException("bad sid")
+                val uplink = Vms1Uplink.dial(connection, host, start.port, sid, scope, dispatchers, Vms1.SOURCE_CAMERA)
+                val created = PhoneCameraSession(app, catalog, cameraCatalog, uplink, start, this@ScreenShareCoordinator, scope, dispatchers)
+                cameraSession = created
+                cameraPcName = request.pcName
+                if (!created.begin()) {
+                    created.stop("unsupported")
+                    throw IllegalStateException("camera did not start")
+                }
+                refreshCameraNotice()
+                return created
+            } catch (e: Exception) {
+                if (cameraSession == null) VeyroCameraService.stop(app)
+                throw e
+            }
+        }
+
+        override fun release() {
+            if (used) return
+            used = true
+            if (cameraSession == null) VeyroCameraService.stop(app)
+        }
     }
 
     override suspend fun requestConsent(sid: String, pcName: String, audio: Boolean): ScreenGrant? {
@@ -336,9 +473,13 @@ public class ScreenShareCoordinator(
 /** Decline on the request notification. Not exported: only Veyro's own PendingIntents reach it. */
 public class ScreenShareActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ScreenShareCoordinator.ACTION_DECLINE) return
         val app = context.applicationContext as? VeyroApplication ?: return
-        app.container.screenShareCoordinator.decline(intent.getStringExtra(ScreenShareCoordinator.EXTRA_SID))
-        VeyroLog.i("ScreenShareCoordinator") { "Screen sharing declined from the notification" }
+        val sid = intent.getStringExtra(ScreenShareCoordinator.EXTRA_SID)
+        when (intent.action) {
+            ScreenShareCoordinator.ACTION_DECLINE -> app.container.screenShareCoordinator.decline(sid)
+            ScreenShareCoordinator.ACTION_DECLINE_CAMERA -> app.container.screenShareCoordinator.declineCamera(sid)
+            else -> return
+        }
+        VeyroLog.i("ScreenShareCoordinator") { "Request declined from the notification" }
     }
 }

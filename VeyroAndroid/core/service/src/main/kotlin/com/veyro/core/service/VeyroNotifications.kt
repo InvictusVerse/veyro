@@ -38,6 +38,8 @@ public class VeyroNotifications(private val context: Context) {
         public const val ID_SCREEN_REQUEST: Int = 1010
         public const val ID_SCREEN_SHARING: Int = 1011
         public const val ID_SCREEN_AUDIO: Int = 1012
+        public const val ID_CAMERA_REQUEST: Int = 1013
+        public const val ID_CAMERA: Int = 1014
 
         /** The default for "Clear notifications automatically": 5 minutes (ADR-044). */
         public const val AUTO_CLEAR_MS: Long = 5 * 60 * 1000L

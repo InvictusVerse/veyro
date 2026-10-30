@@ -57,6 +57,7 @@ public class Vms1Uplink private constructor(
             sid: ByteArray,
             scope: CoroutineScope,
             dispatchers: AppDispatchers,
+            source: Int = Vms1.SOURCE_SCREEN,
         ): Vms1Uplink = withContext(dispatchers.io) {
             val pcId = connection.peerDeviceId ?: throw IOException("the session has no peer id")
             val socket = Socket()
@@ -69,7 +70,7 @@ public class Vms1Uplink private constructor(
                 val channel = Vms1Channel.connectAsPhone(
                     BufferedInputStream(socket.getInputStream()),
                     BufferedOutputStream(socket.getOutputStream(), 128 * 1024),
-                    Vms1.SOURCE_SCREEN,
+                    source,
                     sid,
                     connection.localDeviceId,
                     pcId,
