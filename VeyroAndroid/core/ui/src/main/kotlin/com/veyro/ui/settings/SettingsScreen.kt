@@ -69,6 +69,8 @@ public fun SettingsScreen(
     onOpenDevices: () -> Unit = {},
     /** Asks the Activity to request the messaging runtime permissions (ADR-027). */
     onRequestMessagingPermissions: () -> Unit = {},
+    /** The "Keep Veyro connected" checklist (ADR-061). */
+    onOpenKeepConnected: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -159,6 +161,21 @@ public fun SettingsScreen(
         }
 
         item { SectionLabel("Background") }
+
+        item {
+            val issues = state.keepConnectedIssues
+            TextPreferenceWidget(
+                title = "Keep Veyro connected",
+                subtitle = when (issues) {
+                    0 -> "Battery, autostart and permission settings that keep the connection open in the background."
+                    1 -> "1 setting can close the connection in the background. Tap to fix it."
+                    else -> "$issues settings can close the connection in the background. Tap to fix them."
+                },
+                icon = if (issues == 0) VeyroIcons.Check else VeyroIcons.Warning,
+                iconTint = if (issues == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                onPreferenceClick = onOpenKeepConnected,
+            )
+        }
 
         item {
             SwitchPreferenceWidget(

@@ -41,6 +41,8 @@ public class SettingsViewModel(
     private val batteryOptimizationIgnored: () -> Boolean = { false },
     /** Told when a background setting changes, so a stale Disconnect does not keep it off. */
     private val onBackgroundSettingChanged: () -> Unit = {},
+    /** How many "Keep Veyro connected" items need a change (ADR-061). Re-read on every resume. */
+    private val keepConnectedIssues: () -> Int = { 0 },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -185,6 +187,7 @@ public class SettingsViewModel(
             missingMessagingPermissions = missingMessagingPermissions(),
             photosPermissionGranted = photosPermissionGranted(),
             batteryOptimizationIgnored = batteryOptimizationIgnored(),
+            keepConnectedIssues = keepConnectedIssues(),
         )
     }
 

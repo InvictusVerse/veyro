@@ -24,12 +24,15 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
-        <!-- Exported only because the system sends BOOT_COMPLETED; it does nothing else. -->
+        <!-- Exported only because the system sends BOOT_COMPLETED and MY_PACKAGE_REPLACED; it
+             checks the action and does nothing else. -->
         <receiver
             android:name="com.veyro.core.service.VeyroBootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- ADR-061: Veyro itself was updated; same rules as boot. Only sent to this app. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
     </application>

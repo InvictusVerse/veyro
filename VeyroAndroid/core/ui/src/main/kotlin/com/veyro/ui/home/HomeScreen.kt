@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.veyro.core.designsystem.components.PullRefresh
@@ -48,6 +50,7 @@ import com.veyro.core.designsystem.icons.VeyroIcons
 import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.DeviceId
 import com.veyro.core.network.DiagnosisAdvice
+import com.veyro.core.network.LocalNetworkPermission
 import com.veyro.ui.home.components.ActionTile
 import com.veyro.ui.home.components.HomeRow
 import com.veyro.ui.home.components.MediaCard
@@ -84,6 +87,10 @@ public fun HomeScreen(
     modifier: Modifier = Modifier,
     /** The phone's virtual clipboard (ADR-043). */
     onOpenClipboard: () -> Unit = {},
+    /** ADR-061: asks for the local network permission, or opens App info. */
+    onFixLocalNetwork: () -> Unit = {},
+    /** ADR-061: the "Keep Veyro connected" checklist. */
+    onOpenKeepConnected: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -92,6 +99,11 @@ public fun HomeScreen(
     LifecycleStartEffect(Unit) {
         viewModel.acquireDiscovery()
         onStopOrDispose { viewModel.releaseDiscovery() }
+    }
+    // Background settings change in system screens; read them again whenever Home comes back.
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshHealth()
+        onPauseOrDispose { }
     }
 
     LaunchedEffect(state.message) {
@@ -138,8 +150,28 @@ public fun HomeScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                if (networkNoticeNeeded(state)) {
+                if (state.showLocalNetworkNotice) {
+                    item(key = "local_network") {
+                        Notice(
+                            title = LocalNetworkPermission.TITLE,
+                            text = LocalNetworkPermission.explanation(state.localNetwork),
+                            action = LocalNetworkPermission.actionLabel(state.localNetwork),
+                            onAction = onFixLocalNetwork,
+                        )
+                    }
+                } else if (networkNoticeNeeded(state)) {
                     item(key = "network") { NetworkNotice(state) }
+                }
+
+                if (state.keepAliveNotice) {
+                    item(key = "keep_alive") {
+                        Notice(
+                            title = "Android stops Veyro in the background",
+                            text = "Your PC loses the connection soon after you leave Veyro. Open the checklist to change it.",
+                            action = "Keep Veyro connected",
+                            onAction = onOpenKeepConnected,
+                        )
+                    }
                 }
 
                 item(key = "hero") {
@@ -325,6 +357,31 @@ private fun SendToOption(label: String, selected: Boolean, onSelect: () -> Unit)
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(12.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A problem card with one button (ADR-061), in the network notice's colours. */
+@Composable
+private fun Notice(title: String, text: String, action: String?, onAction: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(VeyroIcons.Warning, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium)
+            }
+            Text(text, style = MaterialTheme.typography.bodyMedium)
+            if (action != null) {
+                FilledTonalButton(onClick = onAction) { Text(action) }
+            }
+        }
     }
 }
 

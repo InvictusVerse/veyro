@@ -590,6 +590,7 @@ public class VeyroContainer(context: Context) {
                 offerNotifier.start()
                 transferNotifier.start()
             },
+            localNetworkBlocked = localNetworkAccess.state.map { it.isBlocked }.distinctUntilChanged(),
         )
     }
 
@@ -597,6 +598,29 @@ public class VeyroContainer(context: Context) {
     public fun isIgnoringBatteryOptimizations(): Boolean =
         appContext.getSystemService(android.os.PowerManager::class.java)
             ?.isIgnoringBatteryOptimizations(appContext.packageName) == true
+
+    // ── Android 17 local network, "Keep Veyro connected" (ADR-061) ─────────────────────────
+
+    /** `ACCESS_LOCAL_NETWORK` on API 37+; NOT_NEEDED below. MainActivity refreshes it on resume. */
+    public val localNetworkAccess: LocalNetworkAccess by lazy { LocalNetworkAccess(appContext) }
+
+    private val keepAliveProbe: KeepAliveProbe by lazy { KeepAliveProbe(appContext) }
+
+    /** What the checklist shows, read now. */
+    public fun keepAliveFacts(): com.veyro.ui.keepalive.KeepAliveFacts =
+        keepAliveProbe.facts(localNetworkAccess.state.value)
+
+    /** A checklist button: opens that system screen, App info when it is missing. */
+    public fun openKeepAliveTarget(target: com.veyro.ui.keepalive.KeepAliveTarget): Boolean = keepAliveProbe.open(target)
+
+    /** Checklist items that need a change, for the Settings row. */
+    public fun keepAliveIssueCount(): Int = com.veyro.ui.keepalive.KeepConnectedChecklist.issueCount(keepAliveFacts())
+
+    /** Home's "Android stops Veyro in the background" notice. */
+    public suspend fun keepAliveHomeNotice(): Boolean = com.veyro.ui.keepalive.KeepConnectedChecklist.homeNotice(
+        keepAliveFacts(),
+        runInBackground = runCatching { settingsStore.runInBackground.first() }.getOrDefault(false),
+    )
 
     // ── Companion: notification mirroring (ADR-025) ────────────────────────────────────────
 

@@ -151,6 +151,29 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `a blocked local network shows its notice, and the background notice follows a refresh`() {
+        val network = MutableStateFlow(com.veyro.core.network.LocalNetworkState.GRANTED)
+        var restricted = false
+        val vm = HomeViewModel(
+            deviceRepository = FakeRepository(),
+            networkMonitor = QuietNetwork,
+            localNetwork = network,
+            keepAliveNotice = { restricted },
+        )
+        assertFalse(vm.state.value.showLocalNetworkNotice)
+        network.value = com.veyro.core.network.LocalNetworkState.DENIED_SETTINGS
+        assertTrue(vm.state.value.showLocalNetworkNotice)
+        network.value = com.veyro.core.network.LocalNetworkState.NOT_NEEDED
+        assertFalse(vm.state.value.showLocalNetworkNotice)
+
+        vm.refreshHealth()
+        assertFalse(vm.state.value.keepAliveNotice)
+        restricted = true
+        vm.refreshHealth()
+        assertTrue(vm.state.value.keepAliveNotice)
+    }
+
+    @Test
     fun `a failed connect is shown on the card`() {
         val office = trusted(1, "Office PC")
         val repo = FakeRepository().apply { peers.value = listOf(seen(office)) }

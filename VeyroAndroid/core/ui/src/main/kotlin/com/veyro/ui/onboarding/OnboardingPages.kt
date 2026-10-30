@@ -3,8 +3,18 @@ package com.veyro.ui.onboarding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.veyro.core.network.LocalNetworkPermission
+import com.veyro.core.network.LocalNetworkState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -79,11 +89,45 @@ internal fun DeviceNamePage(
  * The onboarding ViewModel moves to Done when the trust store gains the new peer.
  */
 @Composable
-internal fun PairPage(viewModelFactory: ViewModelProvider.Factory) {
+internal fun PairPage(
+    viewModelFactory: ViewModelProvider.Factory,
+    localNetwork: LocalNetworkState = LocalNetworkState.NOT_NEEDED,
+    onFixLocalNetwork: () -> Unit = {},
+) {
     val pairing = viewModel<PairingViewModel>(factory = viewModelFactory, key = "onboarding-pairing")
-    // Exactly the Pairing screen (hardware test: the old onboarding page looked different and
-    // worse). It brings its own scan button, nearby list, code prompt and help.
-    PairingScreen(viewModel = pairing)
+    // ADR-061: on Android 17 nothing on the Wi-Fi is reachable until the user allows it, and
+    // onboarding runs before the launch-time permission request. Ask once, when this page is reached.
+    var askedHere by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(localNetwork) {
+        if (!askedHere && LocalNetworkPermission.requestOnPairPage(localNetwork)) {
+            askedHere = true
+            onFixLocalNetwork()
+        }
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (localNetwork.isBlocked) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, top = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(LocalNetworkPermission.TITLE, style = MaterialTheme.typography.titleMedium)
+                    Text(LocalNetworkPermission.explanation(localNetwork), style = MaterialTheme.typography.bodyMedium)
+                    LocalNetworkPermission.actionLabel(localNetwork)?.let { label ->
+                        FilledTonalButton(onClick = onFixLocalNetwork) { Text(label) }
+                    }
+                }
+            }
+        }
+        // Exactly the Pairing screen (hardware test: the old onboarding page looked different and
+        // worse). It brings its own scan button, nearby list, code prompt and help.
+        PairingScreen(viewModel = pairing, modifier = Modifier.weight(1f))
+    }
 }
 
 /** Page (e): what was paired, with the fingerprint to compare against the PC. */

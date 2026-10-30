@@ -16,6 +16,7 @@ import com.veyro.core.model.Platform
 import com.veyro.core.model.PeerDevice
 import com.veyro.core.model.TrustedPeer
 import com.veyro.core.link.PeerConnection
+import com.veyro.core.network.LocalNetworkPermission
 import com.veyro.core.network.NetworkMonitor
 import com.veyro.core.service.BackgroundHost
 import com.veyro.core.service.BackgroundStatus
@@ -66,6 +67,11 @@ public class BackgroundController(
     private val discoverEndpoints: suspend (DeviceId, Long) -> List<Endpoint>,
     /** Makes sure sessions get a receive loop and offers a notification (the coordinator). */
     private val ensureReceiving: () -> Unit,
+    /**
+     * ADR-061: true while Android 17 blocks the local network for Veyro. The notification says so
+     * instead of "Looking for", attempts are skipped, and a grant wakes every keeper loop.
+     */
+    private val localNetworkBlocked: Flow<Boolean> = flowOf(false),
 ) : BackgroundHost {
 
     private companion object {
@@ -157,8 +163,16 @@ public class BackgroundController(
 
     override val backgroundStatus: Flow<BackgroundStatus?> by lazy {
         val selected = flowOf(Unit).flatMapLatest { connectionManager().activeConnection }.map { it?.peerDeviceId }
-        combine(shouldRun, targets, connectedPeerIds, selected) { run, t, live, chosen ->
-            if (!run || t.isEmpty()) null else statusOf(t, live, chosen)
+        combine(shouldRun, targets, connectedPeerIds, selected, localNetworkBlocked) { run, t, live, chosen, blocked ->
+            when {
+                !run || t.isEmpty() -> null
+                // ADR-061: a start from boot without the permission must not look like "Looking for".
+                blocked -> statusOf(t, live, chosen).copy(
+                    problemTitle = LocalNetworkPermission.BACKGROUND_TITLE,
+                    problemText = LocalNetworkPermission.BACKGROUND_TEXT,
+                )
+                else -> statusOf(t, live, chosen)
+            }
         }.distinctUntilChanged()
     }
 
@@ -279,6 +293,15 @@ public class BackgroundController(
     }
 
     override fun onBoot(context: Context, done: () -> Unit) {
+        startIfWanted(context, "Boot", done)
+    }
+
+    /** ADR-061: an update killed the service; the same rules as boot bring it back. */
+    override fun onAppUpdated(context: Context, done: () -> Unit) {
+        startIfWanted(context, "App updated", done)
+    }
+
+    private fun startIfWanted(context: Context, reason: String, done: () -> Unit) {
         scope.launch {
             try {
                 val wanted = settings.startOnBoot.first() && settings.runInBackground.first()
@@ -286,7 +309,7 @@ public class BackgroundController(
                     observe()
                     if (shouldRun.first()) VeyroBackgroundService.start(context)
                 }
-                VeyroLog.i(TAG) { "Boot: start on boot=$wanted" }
+                VeyroLog.i(TAG) { "$reason: start on boot=$wanted" }
             } finally {
                 done()
             }
@@ -306,6 +329,8 @@ public class BackgroundController(
 
     /** One bounded attempt: skip without a network, use known endpoints, else one short window. */
     private suspend fun attempt(t: KeepTarget): Boolean {
+        // ADR-061: every packet would be dropped; no discovery window, no dial.
+        if (localNetworkBlocked.first()) return false
         val network = runCatching { networkMonitor.currentStatus() }.getOrNull()
         if (network != null && !network.hasUsableNetwork) return false
         val id = DeviceId.parseOrNull(t.deviceId) ?: return false
@@ -334,6 +359,12 @@ public class BackgroundController(
             .distinctUntilChanged()
             .runningFold(emptySet<String>() to emptySet<String>()) { (_, previous), now -> previous to now }
             .filter { (previous, now) -> (now - previous).isNotEmpty() }
+            .map { },
+        // ADR-061: the local network permission was just granted.
+        localNetworkBlocked
+            .distinctUntilChanged()
+            .drop(1)
+            .filter { blocked -> !blocked }
             .map { },
     )
 }

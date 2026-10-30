@@ -42,6 +42,8 @@ import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.devices.MediaSettingsScreen
 import com.veyro.ui.devices.MessagesSettingsScreen
 import com.veyro.ui.home.HomeViewModel
+import com.veyro.ui.keepalive.KeepConnectedScreen
+import com.veyro.ui.keepalive.KeepConnectedViewModel
 import com.veyro.ui.pairing.PairingScreen
 import com.veyro.ui.pairing.PairingViewModel
 import com.veyro.ui.receive.ReceiveScreen
@@ -78,6 +80,8 @@ public fun VeyroNavHost(
     /** The clipboard notification was tapped: show Clipboard, then call [onClipboardOpened]. */
     openClipboard: Boolean = false,
     onClipboardOpened: () -> Unit = {},
+    /** ADR-061: asks for the local network permission, or opens App info when only that works. */
+    onFixLocalNetwork: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     LaunchedEffect(openClipboard) {
@@ -131,7 +135,18 @@ public fun VeyroNavHost(
                     devicesViewModel = devicesViewModel,
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
                     onSendFiles = onSendFiles,
+                    onFixLocalNetwork = onFixLocalNetwork,
                 )
+            }
+
+            composable<VeyroDestination.KeepConnected> {
+                VeyroDetailScaffold(title = "Keep Veyro connected", onNavigateBack = { navController.navigateUp() }) { padding ->
+                    KeepConnectedScreen(
+                        viewModel = viewModel<KeepConnectedViewModel>(factory = viewModelFactory),
+                        onFixLocalNetwork = onFixLocalNetwork,
+                        modifier = Modifier.padding(padding),
+                    )
+                }
             }
 
             composable<VeyroDestination.Pairing> {

@@ -6,6 +6,7 @@ import com.veyro.ui.clipboard.ClipboardViewModel
 import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.history.HistoryViewModel
 import com.veyro.ui.home.HomeViewModel
+import com.veyro.ui.keepalive.KeepConnectedViewModel
 import com.veyro.ui.onboarding.OnboardingViewModel
 import com.veyro.ui.pairing.PairingViewModel
 import com.veyro.ui.receive.ReceiveViewModel
@@ -55,6 +56,15 @@ public class VeyroViewModelFactory(
             onPcSelected = { id -> container.selectPc(id) },
             removeHistory = { container.historyStore.remove(it) },
             loadThumbnail = { container.loadThumbnail(it) },
+            // ADR-061: the local network notice and the "stops in the background" notice.
+            localNetwork = container.localNetworkAccess.state,
+            keepAliveNotice = { container.keepAliveHomeNotice() },
+        ) as T
+
+        modelClass.isAssignableFrom(KeepConnectedViewModel::class.java) -> KeepConnectedViewModel(
+            readFacts = container::keepAliveFacts,
+            localNetwork = container.localNetworkAccess.state,
+            open = container::openKeepAliveTarget,
         ) as T
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) -> DevicesViewModel(
@@ -94,6 +104,7 @@ public class VeyroViewModelFactory(
             photosPermissionGranted = container::isPhotosPermissionGranted,
             batteryOptimizationIgnored = container::isIgnoringBatteryOptimizations,
             onBackgroundSettingChanged = { container.backgroundController.onSettingChanged() },
+            keepConnectedIssues = container::keepAliveIssueCount,
         ) as T
 
         modelClass.isAssignableFrom(ClipboardViewModel::class.java) -> ClipboardViewModel(

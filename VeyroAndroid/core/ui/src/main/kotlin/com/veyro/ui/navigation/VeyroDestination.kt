@@ -52,4 +52,8 @@ public sealed interface VeyroDestination {
     /** "Messages and calls on PC" details, behind its switch on DeviceSettings. */
     @Serializable
     public data object DeviceMessages : VeyroDestination
+
+    /** "Keep Veyro connected" checklist (ADR-061), from Settings and Home's notice. */
+    @Serializable
+    public data object KeepConnected : VeyroDestination
 }

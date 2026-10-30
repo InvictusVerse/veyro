@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +29,8 @@ import com.veyro.core.companion.AndroidPhotoSource
 import com.veyro.core.companion.MessagingPermissions
 import com.veyro.core.designsystem.theme.VeyroTheme
 import com.veyro.core.link.OutgoingFile
+import com.veyro.core.network.LocalNetworkFix
+import com.veyro.core.network.LocalNetworkPermission
 import com.veyro.di.VeyroViewModelFactory
 import com.veyro.ui.navigation.VeyroNavHost
 import com.veyro.ui.components.InboundPairingDialog
@@ -93,6 +96,10 @@ public class MainActivity : ComponentActivity() {
         if (result[AndroidPhotoSource.permission()] == true) {
             (application as VeyroApplication).container.wallpaperBridge.refresh()
         }
+        // ADR-061: Home, the notification and the tiles follow the new answer.
+        if (LocalNetworkPermission.NAME in result) {
+            (application as VeyroApplication).container.localNetworkAccess.refresh(this)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,7 +131,15 @@ public class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background),
                     )
-                    showOnboarding -> OnboardingScreen(viewModel = onboarding, viewModelFactory = factory)
+                    showOnboarding -> {
+                        val localNetwork by container.localNetworkAccess.state.collectAsStateWithLifecycle()
+                        OnboardingScreen(
+                            viewModel = onboarding,
+                            viewModelFactory = factory,
+                            localNetwork = localNetwork,
+                            onFixLocalNetwork = ::fixLocalNetwork,
+                        )
+                    }
                     else -> {
                         // Launch-time permissions wait until onboarding is out of the way, so the
                         // first screen a new user sees is not a system dialog.
@@ -137,6 +152,7 @@ public class MainActivity : ComponentActivity() {
                             onRequestPhotosPermission = ::requestPhotosPermission,
                             openClipboard = openClipboard,
                             onClipboardOpened = { openClipboard = false },
+                            onFixLocalNetwork = ::fixLocalNetwork,
                         )
                     }
                 }
@@ -154,6 +170,8 @@ public class MainActivity : ComponentActivity() {
         // ADR-038: "All files access" may have just been granted in system settings. Unchanged
         // wallpapers are not resent, so this costs one local read.
         (application as VeyroApplication).container.wallpaperBridge.refresh()
+        // ADR-061: Nearby devices may have just been allowed in App info.
+        (application as VeyroApplication).container.localNetworkAccess.refresh(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -200,6 +218,13 @@ public class MainActivity : ComponentActivity() {
 
     private fun requestRequiredPermissions() {
         val needed = mutableListOf<String>()
+        // ADR-061: Android 17 blocks the local network until this is granted. Asked once with the
+        // others (same Nearby devices group, so one dialog); never below API 37.
+        val localNetwork = (application as VeyroApplication).container.localNetworkAccess
+        if (LocalNetworkPermission.requestAtLaunch(localNetwork.refresh(this))) {
+            localNetwork.markAsked()
+            needed += LocalNetworkPermission.NAME
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
                 needed += Manifest.permission.NEARBY_WIFI_DEVICES
@@ -217,6 +242,29 @@ public class MainActivity : ComponentActivity() {
             requestPermissions.launch(needed.toTypedArray())
         } else {
             VeyroLog.i(TAG) { "[p2p-perm] All required runtime permissions already granted" }
+        }
+    }
+
+    /**
+     * ADR-061: Allow on Home's notice, onboarding's Pair page and the checklist. Shows the system
+     * dialog while Android still allows it, otherwise App info, where the user allows Nearby devices.
+     */
+    private fun fixLocalNetwork() {
+        val access = (application as VeyroApplication).container.localNetworkAccess
+        when (LocalNetworkPermission.fix(access.refresh(this))) {
+            LocalNetworkFix.NONE -> Unit
+            LocalNetworkFix.REQUEST -> {
+                VeyroLog.i(TAG) { "[p2p-perm] Requesting local network access" }
+                access.markAsked()
+                requestPermissions.launch(arrayOf(LocalNetworkPermission.NAME))
+            }
+            LocalNetworkFix.OPEN_SETTINGS -> try {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)),
+                )
+            } catch (e: android.content.ActivityNotFoundException) {
+                VeyroLog.w(TAG) { "No App info screen on this device" }
+            }
         }
     }
 
