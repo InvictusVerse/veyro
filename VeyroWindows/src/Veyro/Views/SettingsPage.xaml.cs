@@ -135,6 +135,8 @@ public sealed partial class SettingsPage : Page
         if (folder is not null && !string.IsNullOrEmpty(folder.Path)) ViewModel.DownloadDirectory = folder.Path;
     }
 
+    private void UseDefaultDownloads_Click(object sender, RoutedEventArgs e) => ViewModel.UseDefaultDownloadDirectory();
+
     /// <summary>
     /// In-app Bluetooth pairing is unreliable for phones, so pairing happens in Windows Settings;
     /// the device list is refreshed when the user comes back and presses Refresh.

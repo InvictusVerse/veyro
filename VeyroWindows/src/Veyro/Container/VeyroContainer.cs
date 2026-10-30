@@ -184,6 +184,11 @@ public sealed class VeyroContainer
             (DiscoveryService as UdpDiscoveryService)?.SetLocalName(settings.DeviceName);
             DeviceNames.LocalNameChanged();
         };
+        // Settings > Received files: a new folder applies from the next transfer, no restart.
+        SettingsStore.SettingsChanged += settings =>
+        {
+            if (settings.DownloadDirectory != LinkServer.DestinationRoot) LinkServer.SetDestinationRoot(settings.DownloadDirectory);
+        };
         // ADR-034: sends over the phone's live session; dials only when there is none.
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
         // ADR-047: what Veyro may do in the background (polling, EcoQoS), from three facts.

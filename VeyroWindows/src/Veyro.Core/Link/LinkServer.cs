@@ -90,7 +90,9 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     // ADR-059: follows Settings, so every later hello, helloAck and pairing reply carries the new name.
     private volatile string _localName;
     private readonly ITrustStore _trustStore;
-    private readonly string _destinationRoot;
+    // Follows Settings > Received files. Read once per offer, so a transfer in progress keeps
+    // the folder it started in.
+    private volatile string _destinationRoot;
     private readonly byte[] _localPublicKey;
     private readonly Func<byte[], byte[], byte[], byte[]>? _deriveSharedKey;
     private readonly Func<bool> _aeadSupported;
@@ -110,6 +112,28 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     public void SetLocalName(string name)
     {
         if (Devices.DeviceNames.Clean(name) is { } clean) _localName = clean;
+    }
+
+    /// <summary>Where received files are saved now (Settings > Received files).</summary>
+    public string DestinationRoot => _destinationRoot;
+
+    /// <summary>
+    /// The user chose another folder for received files. Applies from the next offer; a transfer
+    /// already running finishes in its folder. Only a full local path is taken; anything else is
+    /// ignored and returns false. Every received path is still validated against the root.
+    /// </summary>
+    public bool SetDestinationRoot(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return false;
+        try
+        {
+            _destinationRoot = Path.GetFullPath(path);
+            return true;
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

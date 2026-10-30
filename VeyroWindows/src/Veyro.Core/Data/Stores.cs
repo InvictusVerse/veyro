@@ -124,16 +124,17 @@ public sealed class FileSettingsStore : ISettingsStore
             // Fall back to defaults
         }
 
-        string defaultDownloads = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads",
-            "Veyro");
-
         return new AppSettings(
             DeviceName: Environment.MachineName,
             IsDiscoverable: true,
-            DownloadDirectory: defaultDownloads);
+            DownloadDirectory: DefaultDownloadDirectory);
     }
+
+    /// <summary>Where received files go until the user picks another folder: Downloads\Veyro.</summary>
+    public static string DefaultDownloadDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Downloads",
+        "Veyro");
 
     public async Task UpdateAsync(Func<AppSettings, AppSettings> transform)
     {

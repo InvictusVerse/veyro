@@ -134,11 +134,16 @@
                                     Style="{StaticResource SettingsCardDescriptionStyle}"
                                     IsTextSelectionEnabled="True"
                                     Text="{x:Bind ViewModel.DownloadDirectory, Mode=OneWay}" />
-                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="A new folder applies the next time Veyro starts." />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="A new folder is used from the next file you receive. Files already received stay where they are." />
                             </StackPanel>
                             <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
                                 <Button Click="OpenDownloads_Click" Content="Open" />
                                 <Button Click="ChangeDownloads_Click" Content="Change" />
+                                <Button
+                                    Click="UseDefaultDownloads_Click"
+                                    Content="Use default"
+                                    ToolTipService.ToolTip="Save to Downloads\Veyro again"
+                                    Visibility="{x:Bind ViewModel.IsCustomDownloadDirectory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             </StackPanel>
                         </Grid>
                     </Border>

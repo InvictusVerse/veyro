@@ -53,6 +53,42 @@ public sealed class LinkServerTests
         }
     }
 
+    /// <summary>Settings > Received files applies without a restart; only a full local path is taken.</summary>
+    [Fact]
+    public async Task DestinationRootFollowsSettingsAndRejectsPartialPaths()
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "veyro-dest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var server = new LinkServer(
+                "00000000000000000000000000", "Test PC", new FileTrustStore(root, new byte[32]),
+                Path.Combine(root, "first"), new byte[32], _ => Task.FromResult(false));
+            Assert.Equal(Path.Combine(root, "first"), server.DestinationRoot);
+
+            string second = Path.Combine(root, "second");
+            Assert.True(server.SetDestinationRoot(second));
+            Assert.Equal(second, server.DestinationRoot);
+
+            Assert.False(server.SetDestinationRoot(""));
+            Assert.False(server.SetDestinationRoot("   "));
+            Assert.False(server.SetDestinationRoot("relative\\folder"));
+            Assert.False(server.SetDestinationRoot("\\no-drive"));
+            Assert.Equal(second, server.DestinationRoot);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void DefaultReceiveFolderIsDownloadsVeyro()
+    {
+        string expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Veyro");
+        Assert.Equal(expected, FileSettingsStore.DefaultDownloadDirectory);
+    }
+
     [Fact]
     public async Task ServerAcceptsWebSocketUpgradeOnVeyroPath()
     {

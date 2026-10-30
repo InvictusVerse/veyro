@@ -3,7 +3,7 @@ namespace Veyro.ViewModels.Settings;
 /// <summary>
 /// Settings > General. Every switch is backed by something that acts on it: sign-in startup by
 /// the MSIX startup task, minimize-to-tray by the real tray icon. Name and received-files folder
-/// are read by the listener at start, so the page says they apply after a restart.
+/// apply at once (the listener follows Settings).
 /// </summary>
 public sealed class GeneralViewModel : BaseViewModel
 {
@@ -38,10 +38,23 @@ public sealed class GeneralViewModel : BaseViewModel
         get => _downloadDirectory;
         set
         {
-            if (!string.IsNullOrWhiteSpace(value) && SetProperty(ref _downloadDirectory, value))
-                _ = _settingsStore.UpdateAsync(s => s with { DownloadDirectory = value });
+            if (string.IsNullOrWhiteSpace(value) || !SetProperty(ref _downloadDirectory, value)) return;
+            _ = _settingsStore.UpdateAsync(s => s with { DownloadDirectory = value });
+            OnPropertyChanged(nameof(IsDefaultDownloadDirectory));
+            OnPropertyChanged(nameof(IsCustomDownloadDirectory));
         }
     }
+
+    /// <summary>Downloads\Veyro in the user's profile, the folder a new install uses.</summary>
+    public static string DefaultDownloadDirectory => FileSettingsStore.DefaultDownloadDirectory;
+
+    public bool IsDefaultDownloadDirectory =>
+        string.Equals(Path.TrimEndingDirectorySeparator(_downloadDirectory), Path.TrimEndingDirectorySeparator(DefaultDownloadDirectory), StringComparison.OrdinalIgnoreCase);
+
+    public bool IsCustomDownloadDirectory => !IsDefaultDownloadDirectory;
+
+    /// <summary>Back to Downloads\Veyro.</summary>
+    public void UseDefaultDownloadDirectory() => DownloadDirectory = DefaultDownloadDirectory;
 
     /// <summary>The startup task's real state; toggling asks Windows and shows what it applied.</summary>
     public bool AutoStartOnLogin
