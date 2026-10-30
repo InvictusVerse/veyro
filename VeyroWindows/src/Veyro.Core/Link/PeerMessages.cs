@@ -141,6 +141,10 @@ public static class PeerCapabilities
     public const int PhoneControls = 0x40000;
     /// <summary>ADR-059: deviceInfo, the sender's own name (and a phone's clipboard-receive switch).</summary>
     public const int DeviceInfo = 0x200000;
+    /// <summary>ADR-073: the PC's sound played on the phone (speakerStart, VMS1 source 3). Both sides, PC-phone only.</summary>
+    public const int PcAudio = 0x1000000;
+    /// <summary>ADR-073: a photo or document scan taken on the phone for the PC (captureReq). Both sides.</summary>
+    public const int PhotoCapture = 0x2000000;
 }
 
 /// <summary>

@@ -142,7 +142,7 @@ public class GenVms1 {
         List<String[]> bad = new ArrayList<>();
         byte[] b1 = good.clone(); b1[3] = 0x32; bad.add(new String[] {"magic VMS2", HEX.formatHex(b1)});
         byte[] b2 = good.clone(); b2[4] = 2; bad.add(new String[] {"version 2", HEX.formatHex(b2)});
-        byte[] b3 = good.clone(); b3[5] = 3; bad.add(new String[] {"source 3", HEX.formatHex(b3)});
+        byte[] b3 = good.clone(); b3[5] = 4; bad.add(new String[] {"source 4", HEX.formatHex(b3)});
         byte[] b4 = good.clone(); b4[7] = 1; bad.add(new String[] {"reserved 1", HEX.formatHex(b4)});
         for (int i = 0; i < bad.size(); i++) {
             sb.append("    {\"why\": ").append(q(bad.get(i)[0])).append(", \"bytes\": ").append(q(bad.get(i)[1])).append("}").append(i < bad.size() - 1 ? ",\n" : "\n");

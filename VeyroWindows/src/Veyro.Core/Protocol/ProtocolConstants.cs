@@ -22,6 +22,8 @@ public static class ProtocolConstants
     public const string ExportLabelVtc3 = "veyro-vtc3";
     public const string ExportLabelScreen = "veyro-screen-v3";
     public const string ExportLabelCamera = "veyro-camera-v3";
+    /// <summary>ADR-073: the PC's sound to the phone.</summary>
+    public const string ExportLabelSpeaker = "veyro-speaker-v3";
 
     // ── Discovery ──────────────────────────────────────────────────────────────────────
     public const string MdnsServiceType = "_veyro._tcp";

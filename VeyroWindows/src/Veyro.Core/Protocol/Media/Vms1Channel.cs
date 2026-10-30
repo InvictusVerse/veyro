@@ -50,7 +50,7 @@ public sealed class Vms1Channel(Vms1Writer writer, Vms1Reader reader) : IDisposa
         await stream.WriteAsync(Vms1.EncodePreface(preface.Source, preface.Sid, saltPc), ct).ConfigureAwait(false);
         await stream.FlushAsync(ct).ConfigureAwait(false);
         byte[] okm = session.ExportKey(Vms1.ExportLabel(preface.Source), Vms1.ExportContext(preface.Source, preface.Sid, preface.Salt, saltPc), Vms1.OkmSize);
-        Vms1Channel channel = FromOkm(stream, okm, phone: false);
+        Vms1Channel channel = FromOkm(stream, okm, phone: false, preface.Source);
         try
         {
             if (await channel.Reader.ReadAsync(ct).ConfigureAwait(false) is not Vms1Frame.AuthFrame { Auth: var auth })
@@ -68,15 +68,15 @@ public sealed class Vms1Channel(Vms1Writer writer, Vms1Reader reader) : IDisposa
     }
 
     /// <summary>Splits <paramref name="okm"/> into the two direction keys and wipes it.</summary>
-    public static Vms1Channel FromOkm(Stream stream, byte[] okm, bool phone)
+    public static Vms1Channel FromOkm(Stream stream, byte[] okm, bool phone, byte source = Vms1.SourceScreen)
     {
         try
         {
             if (okm.Length != Vms1.OkmSize) throw new InvalidDataException($"VMS1 key derivation returned {okm.Length} bytes.");
             ReadOnlySpan<byte> up = okm.AsSpan(0, 32), down = okm.AsSpan(32, 32);
             return phone
-                ? new Vms1Channel(new Vms1Writer(stream, up, Vms1.StreamUp), new Vms1Reader(stream, down, Vms1.StreamDown, fromPhone: false))
-                : new Vms1Channel(new Vms1Writer(stream, down, Vms1.StreamDown), new Vms1Reader(stream, up, Vms1.StreamUp, fromPhone: true));
+                ? new Vms1Channel(new Vms1Writer(stream, up, Vms1.StreamUp), new Vms1Reader(stream, down, Vms1.StreamDown, fromPhone: false, source))
+                : new Vms1Channel(new Vms1Writer(stream, down, Vms1.StreamDown), new Vms1Reader(stream, up, Vms1.StreamUp, fromPhone: true, source));
         }
         finally
         {
@@ -181,14 +181,16 @@ public sealed class Vms1Reader : IDisposable
     private readonly Stream _stream;
     private readonly AeadStreamFramer _framer;
     private readonly bool _fromPhone;
+    private readonly byte _source;
     private readonly byte[] _header = new byte[Vms1.HeaderSize];
     private readonly byte[] _sealed = new byte[Vms1.MaxPlaintext + Vms1.TagSize];
     private readonly byte[] _plain = new byte[Vms1.MaxPlaintext];
     private bool _failed;
     private bool _first = true;
 
-    public Vms1Reader(Stream stream, ReadOnlySpan<byte> key, uint streamId, bool fromPhone)
+    public Vms1Reader(Stream stream, ReadOnlySpan<byte> key, uint streamId, bool fromPhone, byte source = Vms1.SourceScreen)
     {
+        _source = source;
         _stream = stream;
         _framer = new AeadStreamFramer(key, streamId, FramerRole.Open);
         _fromPhone = fromPhone;
@@ -205,7 +207,7 @@ public sealed class Vms1Reader : IDisposable
             await _stream.ReadExactlyAsync(_header.AsMemory(1, Vms1.HeaderSize - 1), ct).ConfigureAwait(false);
             byte kind = _header[0], flags = _header[1];
             int len = BinaryPrimitives.ReadInt32BigEndian(_header.AsSpan(2));
-            Vms1.CheckHeader(kind, flags, len, _fromPhone);
+            Vms1.CheckHeader(kind, flags, len, _fromPhone, _source);
             byte expectedFirst = _fromPhone ? Vms1.KindAuth : Vms1.KindAuthAck;
             if (_first != (kind == expectedFirst)) throw new InvalidDataException("VMS1 handshake record out of order.");
             await _stream.ReadExactlyAsync(_sealed.AsMemory(0, len), ct).ConfigureAwait(false);

@@ -59,6 +59,7 @@ public class Vms1Channel(public val writer: Vms1Writer, public val reader: Vms1R
                 input, output,
                 exportKey(Vms1.exportLabel(source), Vms1.exportContext(source, sid, saltPhone, preface.salt), Vms1.OKM_SIZE),
                 phone = true,
+                source = source,
             )
             try {
                 channel.writer.writeAuth(phoneId, pcId, source, sid)
@@ -75,16 +76,16 @@ public class Vms1Channel(public val writer: Vms1Writer, public val reader: Vms1R
          * Splits [okm] into the two direction keys and wipes it. [phone] chooses which one this
          * side seals with. Public for the PC-side test listener and the vectors.
          */
-        public fun fromOkm(input: InputStream, output: OutputStream, okm: ByteArray, phone: Boolean): Vms1Channel {
+        public fun fromOkm(input: InputStream, output: OutputStream, okm: ByteArray, phone: Boolean, source: Int = Vms1.SOURCE_SCREEN): Vms1Channel {
             try {
                 if (okm.size != Vms1.OKM_SIZE) throw AeadStreamException("VMS1 key derivation returned ${okm.size} bytes")
                 val up = okm.copyOfRange(0, 32)
                 val down = okm.copyOfRange(32, 64)
                 try {
                     return if (phone) {
-                        Vms1Channel(Vms1Writer(output, up, Vms1.STREAM_UP), Vms1Reader(input, down, Vms1.STREAM_DOWN, fromPhone = false))
+                        Vms1Channel(Vms1Writer(output, up, Vms1.STREAM_UP), Vms1Reader(input, down, Vms1.STREAM_DOWN, fromPhone = false, source = source))
                     } else {
-                        Vms1Channel(Vms1Writer(output, down, Vms1.STREAM_DOWN), Vms1Reader(input, up, Vms1.STREAM_UP, fromPhone = true))
+                        Vms1Channel(Vms1Writer(output, down, Vms1.STREAM_DOWN), Vms1Reader(input, up, Vms1.STREAM_UP, fromPhone = true, source = source))
                     }
                 } finally {
                     up.fill(0)
@@ -225,7 +226,14 @@ public class Vms1Writer(private val output: OutputStream, key: ByteArray, stream
 }
 
 /** The only reader of one VMS1 direction. [fromPhone]: the records it expects come from the phone. */
-public class Vms1Reader(private val input: InputStream, key: ByteArray, streamId: Int, private val fromPhone: Boolean) {
+public class Vms1Reader(
+    private val input: InputStream,
+    key: ByteArray,
+    streamId: Int,
+    private val fromPhone: Boolean,
+    /** The socket's source: on a speaker socket the sound comes from the PC (ADR-073). */
+    private val source: Int = Vms1.SOURCE_SCREEN,
+) {
 
     private val framer = AeadStreamFramer(key, streamId, AeadStreamFramer.Role.OPEN)
     private val header = ByteArray(Vms1.HEADER_SIZE)
@@ -246,7 +254,7 @@ public class Vms1Reader(private val input: InputStream, key: ByteArray, streamId
             val kind = header[0].toInt() and 0xFF
             val flags = header[1].toInt() and 0xFF
             val len = Vms1.readInt(header, 2)
-            Vms1.checkHeader(kind, flags, len, fromPhone)
+            Vms1.checkHeader(kind, flags, len, fromPhone, source)
             // The first record of each direction is the handshake one.
             val expectedFirst = if (fromPhone) Vms1.KIND_AUTH else Vms1.KIND_AUTH_ACK
             if (first != (kind == expectedFirst)) throw AeadStreamException("VMS1 handshake record out of order")

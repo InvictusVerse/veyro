@@ -33,6 +33,9 @@ public object Vms1 {
     public const val SOURCE_SCREEN: Int = 0x01
     public const val SOURCE_CAMERA: Int = 0x02
 
+    /** ADR-073: the PC's sound to the phone. The only source whose media the PC sends. */
+    public const val SOURCE_SPEAKER: Int = 0x03
+
     public const val SID_SIZE: Int = 16
     public const val SALT_SIZE: Int = 16
     public const val PREFACE_SIZE: Int = 40
@@ -87,6 +90,7 @@ public object Vms1 {
     public fun exportLabel(source: Int): String = when (source) {
         SOURCE_SCREEN -> ProtocolConstants.EXPORT_LABEL_SCREEN
         SOURCE_CAMERA -> ProtocolConstants.EXPORT_LABEL_CAMERA
+        SOURCE_SPEAKER -> ProtocolConstants.EXPORT_LABEL_SPEAKER
         else -> throw IllegalArgumentException("unknown VMS1 source")
     }
 
@@ -108,7 +112,7 @@ public object Vms1 {
 
     /** `"VMS1" | u8 1 | u8 source | u16 0 | sid | salt`. */
     public fun encodePreface(source: Int, sid: ByteArray, salt: ByteArray): ByteArray {
-        require(source == SOURCE_SCREEN || source == SOURCE_CAMERA) { "unknown VMS1 source" }
+        require(isSource(source)) { "unknown VMS1 source" }
         require(sid.size == SID_SIZE && salt.size == SALT_SIZE) { "VMS1 sid and salt are 16 bytes" }
         val out = ByteArray(PREFACE_SIZE)
         System.arraycopy(MAGIC, 0, out, 0, 4)
@@ -124,24 +128,31 @@ public object Vms1 {
         for (i in 0 until 4) if (bytes[i] != MAGIC[i]) throw AeadStreamException("VMS1 preface has a bad magic")
         if (bytes[4].toInt() != VERSION) throw AeadStreamException("VMS1 version not supported")
         val source = bytes[5].toInt() and 0xFF
-        if (source != SOURCE_SCREEN && source != SOURCE_CAMERA) throw AeadStreamException("VMS1 preface has an unknown source")
+        if (!isSource(source)) throw AeadStreamException("VMS1 preface has an unknown source")
         if (bytes[6].toInt() != 0 || bytes[7].toInt() != 0) throw AeadStreamException("VMS1 preface reserved bytes set")
         return Preface(source, bytes.copyOfRange(8, 24), bytes.copyOfRange(24, 40))
     }
 
     // ── Records ───────────────────────────────────────────────────────────────────────────────
 
-    /** True when [kind] may be sent by the phone ([fromPhone]) or by the PC. */
-    public fun allowedFrom(kind: Int, fromPhone: Boolean): Boolean = when (kind) {
+    public fun isSource(source: Int): Boolean = source == SOURCE_SCREEN || source == SOURCE_CAMERA || source == SOURCE_SPEAKER
+
+    /**
+     * True when [kind] may be sent by the phone ([fromPhone]) or by the PC on a [source] socket.
+     * Media flows from the phone, except on a speaker socket, where only the PC sends sound.
+     */
+    public fun allowedFrom(kind: Int, fromPhone: Boolean, source: Int = SOURCE_SCREEN): Boolean = when (kind) {
         KIND_CLOSE -> true
-        KIND_AUTH, KIND_VIDEO_CONFIG, KIND_VIDEO, KIND_AUDIO_CONFIG, KIND_AUDIO -> fromPhone
+        KIND_AUTH -> fromPhone
         KIND_AUTH_ACK -> !fromPhone
+        KIND_VIDEO_CONFIG, KIND_VIDEO -> fromPhone && source != SOURCE_SPEAKER
+        KIND_AUDIO_CONFIG, KIND_AUDIO -> fromPhone == (source != SOURCE_SPEAKER)
         else -> false
     }
 
     /** Header check before any buffer is allocated. Throws on anything outside the rules. */
-    public fun checkHeader(kind: Int, flags: Int, sealedLength: Int, fromPhone: Boolean) {
-        if (!allowedFrom(kind, fromPhone)) throw AeadStreamException("VMS1 record kind not allowed")
+    public fun checkHeader(kind: Int, flags: Int, sealedLength: Int, fromPhone: Boolean, source: Int = SOURCE_SCREEN) {
+        if (!allowedFrom(kind, fromPhone, source)) throw AeadStreamException("VMS1 record kind not allowed")
         if (kind == KIND_VIDEO) {
             if (flags and VIDEO_FLAGS.inv() != 0) throw AeadStreamException("VMS1 video flags not allowed")
         } else if (flags != 0) {

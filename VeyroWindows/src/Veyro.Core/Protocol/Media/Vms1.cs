@@ -22,6 +22,10 @@ public static class Vms1
 
     public const byte SourceScreen = 0x01;
     public const byte SourceCamera = 0x02;
+    /// <summary>ADR-073: the PC's sound to the phone; the only source whose media the PC sends.</summary>
+    public const byte SourceSpeaker = 0x03;
+
+    public static bool IsSource(byte source) => source is SourceScreen or SourceCamera or SourceSpeaker;
 
     public const int SidSize = 16;
     public const int SaltSize = 16;
@@ -65,6 +69,7 @@ public static class Vms1
     {
         SourceScreen => ProtocolConstants.ExportLabelScreen,
         SourceCamera => ProtocolConstants.ExportLabelCamera,
+        SourceSpeaker => ProtocolConstants.ExportLabelSpeaker,
         _ => throw new ArgumentException("Unknown VMS1 source.", nameof(source)),
     };
 
@@ -82,7 +87,7 @@ public static class Vms1
 
     public static byte[] EncodePreface(byte source, ReadOnlySpan<byte> sid, ReadOnlySpan<byte> salt)
     {
-        if (source is not (SourceScreen or SourceCamera)) throw new ArgumentException("Unknown VMS1 source.", nameof(source));
+        if (!IsSource(source)) throw new ArgumentException("Unknown VMS1 source.", nameof(source));
         if (sid.Length != SidSize || salt.Length != SaltSize) throw new ArgumentException("VMS1 sid and salt are 16 bytes.");
         byte[] o = new byte[PrefaceSize];
         Magic.CopyTo(o);
@@ -98,25 +103,28 @@ public static class Vms1
         if (b.Length != PrefaceSize) throw new InvalidDataException("VMS1 preface has a bad length.");
         if (!b[..4].SequenceEqual(Magic)) throw new InvalidDataException("VMS1 preface has a bad magic.");
         if (b[4] != Version) throw new InvalidDataException("VMS1 version not supported.");
-        if (b[5] is not (SourceScreen or SourceCamera)) throw new InvalidDataException("VMS1 preface has an unknown source.");
+        if (!IsSource(b[5])) throw new InvalidDataException("VMS1 preface has an unknown source.");
         if (b[6] != 0 || b[7] != 0) throw new InvalidDataException("VMS1 preface reserved bytes set.");
         return new Preface(b[5], b.Slice(8, SidSize).ToArray(), b.Slice(24, SaltSize).ToArray());
     }
 
     // ── Records ──────────────────────────────────────────────────────────────────────────────
 
-    public static bool AllowedFrom(byte kind, bool fromPhone) => kind switch
+    /// <summary>Media flows from the phone, except on a speaker socket, where only the PC sends sound (ADR-073).</summary>
+    public static bool AllowedFrom(byte kind, bool fromPhone, byte source = SourceScreen) => kind switch
     {
         KindClose => true,
-        KindAuth or KindVideoConfig or KindVideo or KindAudioConfig or KindAudio => fromPhone,
+        KindAuth => fromPhone,
         KindAuthAck => !fromPhone,
+        KindVideoConfig or KindVideo => fromPhone && source != SourceSpeaker,
+        KindAudioConfig or KindAudio => fromPhone == (source != SourceSpeaker),
         _ => false,
     };
 
     /// <summary>Header check before any buffer is used. Throws <see cref="InvalidDataException"/>.</summary>
-    public static void CheckHeader(byte kind, byte flags, int sealedLength, bool fromPhone)
+    public static void CheckHeader(byte kind, byte flags, int sealedLength, bool fromPhone, byte source = SourceScreen)
     {
-        if (!AllowedFrom(kind, fromPhone)) throw new InvalidDataException("VMS1 record kind not allowed.");
+        if (!AllowedFrom(kind, fromPhone, source)) throw new InvalidDataException("VMS1 record kind not allowed.");
         if (kind == KindVideo ? (flags & ~VideoFlags) != 0 : flags != 0) throw new InvalidDataException("VMS1 record flags not allowed.");
         if (sealedLength < TagSize + 1 || sealedLength > MaxPlaintext + TagSize) throw new InvalidDataException("VMS1 record has a bad length.");
     }

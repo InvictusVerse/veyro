@@ -208,7 +208,7 @@ public sealed class MirroringVectorTests
     {
         using var doc = Load("link-stream.json");
         var vectors = doc.RootElement.GetProperty("vectors").EnumerateArray().ToList();
-        Assert.Equal(16, vectors.Count);
+        Assert.Equal(21, vectors.Count);
         foreach (var vector in vectors)
         {
             string json = vector.GetProperty("json").GetString()!;
@@ -222,6 +222,11 @@ public sealed class MirroringVectorTests
                 "streamKeyframe" => typeof(PeerMessage.StreamKeyframe),
                 "streamStop" => typeof(PeerMessage.StreamStop),
                 "streamAskAudio" => typeof(PeerMessage.StreamAskAudio),
+                "speakerStart" => typeof(PeerMessage.SpeakerStart),
+                "speakerState" => typeof(PeerMessage.SpeakerState),
+                "speakerStop" => typeof(PeerMessage.SpeakerStop),
+                "captureReq" => typeof(PeerMessage.CaptureRequest),
+                "captureResult" => typeof(PeerMessage.CaptureResult),
                 var other => throw new InvalidOperationException(other),
             };
             Assert.IsType(expected, decoded);
@@ -232,6 +237,9 @@ public sealed class MirroringVectorTests
                 case PeerMessage.StreamState state: Assert.True(StreamRules.IsValid(state)); break;
                 case PeerMessage.StreamStop stop: Assert.True(StreamRules.IsValid(stop)); break;
                 case PeerMessage.StreamCaps caps: Assert.NotNull(StreamRules.Clean(caps)); break;
+                case PeerMessage.SpeakerState s: Assert.True(SpeakerCaptureRules.IsValid(s)); break;
+                case PeerMessage.SpeakerStop s: Assert.True(SpeakerCaptureRules.IsValid(s)); break;
+                case PeerMessage.CaptureResult r: Assert.True(SpeakerCaptureRules.IsValid(r)); break;
             }
         }
     }
@@ -249,6 +257,8 @@ public sealed class MirroringVectorTests
                 PeerMessage.StreamState s => StreamRules.IsValid(s),
                 PeerMessage.StreamStop s => StreamRules.IsValid(s),
                 PeerMessage.StreamCaps c => StreamRules.Clean(c) is not null,
+                PeerMessage.SpeakerState s => SpeakerCaptureRules.IsValid(s),
+                PeerMessage.CaptureResult r => SpeakerCaptureRules.IsValid(r),
                 _ => true,
             };
             Assert.False(valid, entry.GetProperty("why").GetString());

@@ -39,9 +39,12 @@ class MediaRulesVectorTest {
             "streamCaps" to StreamCaps::class, "streamStart" to StreamStart::class, "streamState" to StreamState::class,
             "streamConfig" to StreamConfig::class, "streamKeyframe" to StreamKeyframe::class, "streamStop" to StreamStop::class,
             "streamAskAudio" to StreamAskAudio::class,
+            "speakerStart" to com.veyro.core.link.SpeakerStart::class, "speakerState" to com.veyro.core.link.SpeakerState::class,
+            "speakerStop" to com.veyro.core.link.SpeakerStop::class, "captureReq" to com.veyro.core.link.CaptureRequest::class,
+            "captureResult" to com.veyro.core.link.CaptureResult::class,
         )
         val vectors = MediaVectors.load("link-stream.json").getValue("vectors").jsonArray.map { it.jsonObject }
-        assertEquals(16, vectors.size)
+        assertEquals(21, vectors.size)
         for (vector in vectors) {
             val type = vector.getValue("type").jsonPrimitive.content
             val text = vector.getValue("json").jsonPrimitive.content
@@ -81,10 +84,24 @@ class MediaRulesVectorTest {
                 is StreamKeyframe -> StreamRules.isValid(m)
                 is StreamStop -> StreamRules.isValid(m)
                 is StreamAskAudio -> StreamRules.isValid(m)
+                is com.veyro.core.link.SpeakerStart -> com.veyro.core.link.SpeakerCaptureRules.isValid(m)
+                is com.veyro.core.link.CaptureRequest -> com.veyro.core.link.SpeakerCaptureRules.isValid(m)
                 else -> true
             }
             assertFalse("accepted: $why", valid)
         }
+    }
+
+    @Test
+    fun `on a speaker socket only the PC sends sound, and nobody sends video`() {
+        val v = com.veyro.core.protocol.media.Vms1
+        assertTrue(v.allowedFrom(v.KIND_AUDIO, fromPhone = false, source = v.SOURCE_SPEAKER))
+        assertTrue(v.allowedFrom(v.KIND_AUDIO_CONFIG, fromPhone = false, source = v.SOURCE_SPEAKER))
+        assertFalse(v.allowedFrom(v.KIND_AUDIO, fromPhone = true, source = v.SOURCE_SPEAKER))
+        assertFalse(v.allowedFrom(v.KIND_VIDEO, fromPhone = true, source = v.SOURCE_SPEAKER))
+        assertFalse(v.allowedFrom(v.KIND_AUDIO, fromPhone = false, source = v.SOURCE_SCREEN))
+        assertTrue(v.allowedFrom(v.KIND_AUDIO, fromPhone = true, source = v.SOURCE_SCREEN))
+        assertEquals("veyro-speaker-v3", v.exportLabel(v.SOURCE_SPEAKER))
     }
 
     @Test

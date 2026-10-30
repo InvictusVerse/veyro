@@ -29,6 +29,9 @@ public object ProtocolConstants {
     /** Reserved for the phone-as-webcam stream (ADR-067). */
     public const val EXPORT_LABEL_CAMERA: String = "veyro-camera-v3"
 
+    /** The PC's sound to the phone (ADR-073). */
+    public const val EXPORT_LABEL_SPEAKER: String = "veyro-speaker-v3"
+
     // ── Discovery ──────────────────────────────────────────────────────────────────────────
     public const val MDNS_SERVICE_TYPE: String = "_veyro._tcp"
     public const val MDNS_DOMAIN: String = "local."

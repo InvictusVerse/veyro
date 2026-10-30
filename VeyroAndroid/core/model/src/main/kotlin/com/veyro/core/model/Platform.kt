@@ -68,6 +68,9 @@ public value class Capabilities(public val bits: Int) {
             Capability.SCREEN_SOURCE,
             // ADR-067: the camera likewise, after the switch and a tap on the phone each time.
             Capability.CAMERA_SOURCE,
+            // ADR-073: the PC's sound on this phone, and photos or scans taken for the PC.
+            Capability.PC_AUDIO,
+            Capability.PHOTO_CAPTURE,
         )
 
         /**
@@ -136,6 +139,12 @@ public enum class Capability(public val bit: Int) {
 
     /** Touch and keys from the PC to the phone while mirroring (ADR-066, reserved). */
     REMOTE_INPUT(0x20000),
+
+    /** The PC's sound played on the phone (ADR-073): `speakerStart` and a VMS1 socket with source 3. PCs only. */
+    PC_AUDIO(0x1000000),
+
+    /** Take a photo or scan a document on the phone for the PC (ADR-073): `captureReq`. PCs only. */
+    PHOTO_CAPTURE(0x2000000),
 
     /**
      * This phone streams a camera to a PC (ADR-067): `streamStart{source: "camera"}` over the
