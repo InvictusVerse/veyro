@@ -73,6 +73,34 @@ public class MediaMirror(
         /** Minimum spacing between two `mediaState` sends. */
         public const val MIN_INTERVAL_MS: Long = 500L
 
+        /** Position drift from the predicted position that counts as a seek (same as Windows). */
+        public const val POSITION_TOLERANCE_MS: Long = 1_500L
+
+        /**
+         * Whether [next] differs from [previous] in a way the PC must hear about. Position moving
+         * as playback predicts (positionMs + elapsed ts while playing) is not a change; a seek,
+         * pause, track, art, capability or volume change is. Mirrors Windows
+         * `MediaSnapshots.IsSignificantChange`.
+         */
+        public fun isSignificantChange(previous: PeerMessage.MediaState?, next: PeerMessage.MediaState): Boolean {
+            if (previous == null) return true
+            if (previous.volume != next.volume || previous.muted != next.muted) return true
+            if (previous.sessions.size != next.sessions.size) return true
+            for (i in next.sessions.indices) {
+                val before = previous.sessions[i]
+                val after = next.sessions[i]
+                if (before.copy(positionMs = null, ts = null) != after.copy(positionMs = null, ts = null)) return true
+                if ((before.positionMs == null) != (after.positionMs == null)) return true
+                val oldPosition = before.positionMs ?: continue
+                val newPosition = after.positionMs ?: continue
+                val oldTs = before.ts
+                val newTs = after.ts
+                val elapsed = if (before.playing && oldTs != null && newTs != null) maxOf(0L, newTs - oldTs) else 0L
+                if (kotlin.math.abs(newPosition - (oldPosition + elapsed)) > POSITION_TOLERANCE_MS) return true
+            }
+            return false
+        }
+
         private val SESSION_ACTIONS = setOf(
             PeerMessage.MediaCommand.PLAY,
             PeerMessage.MediaCommand.PAUSE,
@@ -179,7 +207,10 @@ public class MediaMirror(
                 VeyroLog.i(TAG) { "Media sharing started" }
                 while (true) {
                     val snapshot = source.snapshot()
-                    if (snapshot != peer.published) {
+                    // Many players (YouTube among them) report their position about once a
+                    // second. Progress the PC can extrapolate from positionMs + ts is not sent;
+                    // the last sent sample stays, as on Windows (MediaSnapshots.IsSignificantChange).
+                    if (isSignificantChange(peer.published, snapshot)) {
                         link.send(snapshot)
                         peer.published = snapshot
                     }

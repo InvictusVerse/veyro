@@ -198,6 +198,65 @@ class MediaMirrorTest {
     }
 
     @Test
+    fun `position moving as playback predicts is not resent, a seek or pause is`() = runTest {
+        // Players such as YouTube report their position about once a second; each report used
+        // to resend the whole snapshot with its artwork (about 17 KB a second on a Redmi K50i).
+        val rig = rig()
+        fun at(positionMs: Long, ts: Long, playing: Boolean = true) =
+            state(session("a").copy(positionMs = positionMs, ts = ts, playing = playing, art = "QUJD"))
+        rig.source.current = at(10_000, 1_000_000)
+        val link = FakeLink(mediaCaps)
+        rig.links.value = link
+        runCurrent()
+        assertEquals(1, link.states.size)
+
+        // Ten one-second ticks of normal playback: nothing goes out.
+        for (i in 1..10) {
+            advanceTimeBy(1_000)
+            rig.source.current = at(10_000 + i * 1_000L, 1_000_000 + i * 1_000L)
+            rig.source.changeFlow.emit(Unit)
+            runCurrent()
+        }
+        assertEquals("playback progress is extrapolated by the PC", 1, link.states.size)
+
+        // A seek (position jumps against the clock) goes out.
+        advanceTimeBy(1_000)
+        rig.source.current = at(90_000, 1_011_000)
+        rig.source.changeFlow.emit(Unit)
+        runCurrent()
+        assertEquals(2, link.states.size)
+        assertEquals(90_000L, link.states.last().sessions.single().positionMs)
+
+        // Pausing goes out.
+        advanceTimeBy(1_000)
+        rig.source.current = at(91_000, 1_012_000, playing = false)
+        rig.source.changeFlow.emit(Unit)
+        runCurrent()
+        assertEquals(3, link.states.size)
+
+        // While paused the position does not move; a report with a later ts is not a change.
+        advanceTimeBy(1_000)
+        rig.source.current = at(91_000, 1_013_000, playing = false)
+        rig.source.changeFlow.emit(Unit)
+        runCurrent()
+        assertEquals(3, link.states.size)
+    }
+
+    @Test
+    fun `significant change rule matches Windows`() {
+        fun s(positionMs: Long?, ts: Long?, playing: Boolean = true) =
+            state(session("a").copy(positionMs = positionMs, ts = ts, playing = playing))
+        assertTrue(MediaMirror.isSignificantChange(null, s(0, 0)))
+        assertFalse(MediaMirror.isSignificantChange(s(0, 0), s(5_000, 5_000)))
+        assertFalse(MediaMirror.isSignificantChange(s(0, 0), s(6_400, 5_000)))
+        assertTrue(MediaMirror.isSignificantChange(s(0, 0), s(6_600, 5_000)))
+        assertTrue(MediaMirror.isSignificantChange(s(0, 0), s(null, null)))
+        assertTrue(MediaMirror.isSignificantChange(s(0, 0, playing = true), s(0, 0, playing = false)))
+        assertTrue(MediaMirror.isSignificantChange(state(session("a")), state(session("a"), session("b"))))
+        assertTrue(MediaMirror.isSignificantChange(state(session("a")), state(session("a")).copy(volume = 10)))
+    }
+
+    @Test
     fun `commands for unknown sessions are ignored, known ones dispatched`() = runTest {
         val rig = rig()
         rig.source.current = state(session("a"), session("b", canSeek = false))
