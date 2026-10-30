@@ -16,7 +16,6 @@ public static class PairConfirm
 {
     public const string InfoCommit = "veyro-commit-v1";
     public const string InfoCode = "veyro-sas-v1";
-    public const string InfoBootstrap = "veyro-pair-confirm-v1";
     public const int NonceSize = 32;
     public const int KeySize = 32;
     public const int CommitSize = 32;
@@ -59,26 +58,6 @@ public static class PairConfirm
     /// <summary><c>123 456</c>, for display only.</summary>
     public static string FormatCode(string code) => code.Length == 6 ? $"{code[..3]} {code[3..]}" : code;
 
-    /// <summary>HKDF salt: <c>nA || nB</c>.</summary>
-    public static byte[] BootstrapSalt(ReadOnlySpan<byte> nA, ReadOnlySpan<byte> nB)
-    {
-        RequireSize(nA, NonceSize, nameof(nA));
-        RequireSize(nB, NonceSize, nameof(nB));
-        byte[] salt = new byte[NonceSize * 2];
-        nA.CopyTo(salt);
-        nB.CopyTo(salt.AsSpan(NonceSize));
-        return salt;
-    }
-
-    /// <summary>HKDF info: <c>"veyro-pair-confirm-v1" || idA || idB</c>, US-ASCII DeviceId strings.</summary>
-    public static byte[] BootstrapInfo(string idA, string idB) => Encoding.ASCII.GetBytes(InfoBootstrap + idA + idB);
-
-    /// <summary>
-    /// <c>K = HKDF-SHA256(ikm = sharedSecret, salt = nA || nB, info, 32)</c>. For vectors; production
-    /// goes through <see cref="IIdentityManager.DeriveSharedKey"/> so the X25519 output stays inside.
-    /// </summary>
-    public static byte[] BootstrapKey(ReadOnlySpan<byte> sharedSecret, ReadOnlySpan<byte> nA, ReadOnlySpan<byte> nB, string idA, string idB)
-        => Hkdf.Expand(Hkdf.Extract(BootstrapSalt(nA, nB), sharedSecret), BootstrapInfo(idA, idB), KeySize);
 
     private static byte[] Hash(params byte[][] parts)
     {

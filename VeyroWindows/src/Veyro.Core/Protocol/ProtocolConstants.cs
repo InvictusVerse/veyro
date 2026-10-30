@@ -3,8 +3,8 @@ namespace Veyro.Core.Protocol;
 /// <summary>
 /// Veyro Link Protocol (VLP) v1 constants.
 ///
-/// Mirrors com.veyro.core.protocol.Vlp. Every value here is normative and must match the
-/// Kotlin side byte-for-byte; see ProjectInfo/04-PROTOCOL.md.
+/// Mirrors the Kotlin object com.veyro.core.protocol.ProtocolConstants. Every value here is
+/// normative and must match the Kotlin side byte-for-byte; see ProjectInfo/04-PROTOCOL.md.
 ///
 /// NOTE: the Kotlin Vlp object still carries vestigial Noise/CBOR constants
 /// (NOISE_PATTERN_*, PROLOGUE_PREFIX, MAX_NOISE_*, FRAME_CONTROL/BULK/KEEPALIVE) that no
@@ -14,6 +14,14 @@ namespace Veyro.Core.Protocol;
 public static class ProtocolConstants
 {
     public const int VlpVersion = 1;
+
+    /// <summary>The pairing QR string format (04-PROTOCOL.md 4.2). 2 = 128-bit secret <c>s</c> (ADR-058).</summary>
+    public const int QrFormatVersion = 2;
+
+    /// <summary>Key exporter labels (04-PROTOCOL.md 5.4). VTC3 is in use; screen and camera are reserved.</summary>
+    public const string ExportLabelVtc3 = "veyro-vtc3";
+    public const string ExportLabelScreen = "veyro-screen-v3";
+    public const string ExportLabelCamera = "veyro-camera-v3";
 
     // ── Discovery ──────────────────────────────────────────────────────────────────────
     public const string MdnsServiceType = "_veyro._tcp";

@@ -1,0 +1,118 @@
+{
+  "description": "Link protocol v3 session frames (ProjectInfo/04-PROTOCOL.md section 5, ADR-058). Keys are the first vector of connection-schedule-v3.json. Each frame is sealed with ChaCha20-Poly1305 under the sender's direction key; the receiver computes nonce and AAD from its own counter and the expected peer id, never from the wire.",
+  "algorithm": {
+    "wire": "{\"f\": fromDeviceId, \"c\": base64(ciphertext || tag)}, standard padded base64",
+    "nonce": "u32be(0) || u64be(counter)",
+    "aad": "utf8(fromDeviceId) || 0x00 || dirByte || u64be(counter); dirByte 0x01 for i2r, 0x02 for r2i",
+    "envelope": "plaintext is the envelope JSON; v must be 3, from must be the peer id, seq must be counter + 1"
+  },
+  "input": {
+    "idI": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+    "idR": "9NHR2CYTZRWMJXWSNTWVRKQW6R",
+    "kI2rHex": "2a270dbbfa10e43078c777e94cc1ff1357c6afb7666b5a5549e67ec3a6c2b996",
+    "kR2iHex": "9e2e78b23c39504fc8b13d398cc3e69023ce96219fe3eb940261a63dda31f645"
+  },
+  "frames": [
+    {
+      "name": "hello, initiator to responder, counter 0",
+      "direction": "i2r",
+      "from": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "counter": 0,
+      "envelope": "{\"v\":3,\"msgId\":\"m-1\",\"from\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"seq\":1,\"ts\":1700000000000,\"payload\":{\"t\":\"hello\",\"deviceId\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"deviceName\":\"Test Phone\",\"platform\":\"android\",\"capabilities\":0,\"maxChunk\":4194304}}",
+      "aadHex": "3243395656373244465346314132534330544e3651424150454300010000000000000000",
+      "nonceHex": "000000000000000000000000",
+      "sealedHex": "a62413707f90b139ea4b31087ba8d865462c5560feb558b58d618c95309e38b678a20f21ba5e0914df3626335bcf6724831f24f92354b1385655b1a50917b41fd0ef577484ad6572476939e81c84bb526e618de9f19410771f4efb9af4d014a8597317200bfabb9f547374686310fdf24e305a8d432d2da76c14eb5ef8d4923c814e265b084d0bee9f060c061a47d2e63f143e9b918216e150a7a6ee66c5a063fddafb53ec665788a24d2c234cf2ccdcaf2e69e13d6eb4b7d473fc7c23668832c109251c52a00ba4439ed531657f6326fa8e1ac4f9f3cdebeff356f5b2591e1aeb31174625077b3d2395bf78891728f2c5669b25e84579",
+      "wire": "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ==\"}"
+    },
+    {
+      "name": "helloAck, responder to initiator, counter 0",
+      "direction": "r2i",
+      "from": "9NHR2CYTZRWMJXWSNTWVRKQW6R",
+      "counter": 0,
+      "envelope": "{\"v\":3,\"msgId\":\"m-2\",\"from\":\"9NHR2CYTZRWMJXWSNTWVRKQW6R\",\"seq\":1,\"ts\":1700000000001,\"payload\":{\"t\":\"helloAck\",\"deviceId\":\"9NHR2CYTZRWMJXWSNTWVRKQW6R\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"capabilities\":0,\"chunkSize\":4194304}}",
+      "aadHex": "394e4852324359545a52574d4a5857534e545756524b5157365200020000000000000000",
+      "nonceHex": "000000000000000000000000",
+      "sealedHex": "6455ff2b49ab063093620eeb363c0e70ca213dfb3a430d228d9a4bb39794a6271a5fec5f9492367eebe1e1eda7d1c8444675144ad4ca866fa48b1dae4b3126090fa903df1258807552cc33b1b980b85edaf944fb80212810a53232d0156b1a919c3f92cb2a91dd8da4eb96ebe43dee12c0fb89120661e17b98b93f456b2afb363c89327f8047c8ee1e6d266badc0c27fd6894869b6cd53664710ddf514c47f592893bff761754d1715545817c97ee444809cc3c726f50c6ebdb03c3b97fa24f319045b24ba32c4f3fadb7457d1bf54c407561e728648b5689feb32a9887bed863bd32663875f900810ef1a764988c97f5562f26bc00d5dfc",
+      "wire": "{\"f\":\"9NHR2CYTZRWMJXWSNTWVRKQW6R\",\"c\":\"ZFX/K0mrBjCTYg7rNjwOcMohPfs6Qw0ijZpLs5eUpicaX+xflJI2fuvh4e2n0chERnUUStTKhm+kix2uSzEmCQ+pA98SWIB1UswzsbmAuF7a+UT7gCEoEKUyMtAVaxqRnD+SyyqR3Y2k65br5D3uEsD7iRIGYeF7mLk/RWsq+zY8iTJ/gEfI7h5tJmutwMJ/1olIabbNU2ZHEN31FMR/WSiTv/dhdU0XFVRYF8l+5ESAnMPHJvUMbr2wPDuX+iTzGQRbJLoyxPP623RX0b9UxAdWHnKGSLVon+syqYh77YY70yZjh1+QCBDvGnZJiMl/VWLya8ANXfw=\"}"
+    },
+    {
+      "name": "ping, initiator to responder, counter 1",
+      "direction": "i2r",
+      "from": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "counter": 1,
+      "envelope": "{\"v\":3,\"msgId\":\"m-3\",\"from\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"seq\":2,\"ts\":1700000000002,\"payload\":{\"t\":\"ping\",\"nonce\":\"n-1\"}}",
+      "aadHex": "3243395656373244465346314132534330544e3651424150454300010000000000000001",
+      "nonceHex": "000000000000000000000001",
+      "sealedHex": "c4e9b9e71367a66fd7b91f2c7eaec27af19fb0b39fd4372b9a1215971c564db27c3dc414e275a6f642387937b5c3e2584de21e53c3cb0ad909ad8248bc1613dcc043d93fe2239ccb1d449e2f9254e325d500b3e8dde1ee7222c8d8335dbc205f72370e87d341316aaa3d29d596af9ffdc0e3386a5466349236524318156a948f479432cac8fbdc4a6b",
+      "wire": "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"xOm55xNnpm/XuR8sfq7CevGfsLOf1DcrmhIVlxxWTbJ8PcQU4nWm9kI4eTe1w+JYTeIeU8PLCtkJrYJIvBYT3MBD2T/iI5zLHUSeL5JU4yXVALPo3eHuciLI2DNdvCBfcjcOh9NBMWqqPSnVlq+f/cDjOGpUZjSSNlJDGBVqlI9HlDLKyPvcSms=\"}"
+    }
+  ],
+  "negativesNote": "Each negative is opened in order by a fresh receiver for direction 'direction' that expects peer 'peerId'. Every wire before index failsAt opens; the one at failsAt must be rejected and the connection closed.",
+  "negatives": [
+    {
+      "name": "replay within the connection",
+      "direction": "i2r",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 1,
+      "wires": [
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ==\"}",
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ==\"}"
+      ]
+    },
+    {
+      "name": "skipped counter (frame at counter 1 first)",
+      "direction": "i2r",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 0,
+      "wires": [
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"xOm55xNnpm/XuR8sfq7CevGfsLOf1DcrmhIVlxxWTbJ8PcQU4nWm9kI4eTe1w+JYTeIeU8PLCtkJrYJIvBYT3MBD2T/iI5zLHUSeL5JU4yXVALPo3eHuciLI2DNdvCBfcjcOh9NBMWqqPSnVlq+f/cDjOGpUZjSSNlJDGBVqlI9HlDLKyPvcSms=\"}"
+      ]
+    },
+    {
+      "name": "reordered pair",
+      "direction": "i2r",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 0,
+      "wires": [
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"xOm55xNnpm/XuR8sfq7CevGfsLOf1DcrmhIVlxxWTbJ8PcQU4nWm9kI4eTe1w+JYTeIeU8PLCtkJrYJIvBYT3MBD2T/iI5zLHUSeL5JU4yXVALPo3eHuciLI2DNdvCBfcjcOh9NBMWqqPSnVlq+f/cDjOGpUZjSSNlJDGBVqlI9HlDLKyPvcSms=\"}",
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ==\"}"
+      ]
+    },
+    {
+      "name": "reflected frame (own i2r frame read as r2i)",
+      "direction": "r2i",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 0,
+      "wires": [
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ==\"}"
+      ]
+    },
+    {
+      "name": "flipped tag bit",
+      "direction": "i2r",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 0,
+      "wires": [
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeA==\"}"
+      ]
+    },
+    {
+      "name": "wrong f (not the expected peer)",
+      "direction": "i2r",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 0,
+      "wires": [
+        "{\"f\":\"9NHR2CYTZRWMJXWSNTWVRKQW6R\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ==\"}"
+      ]
+    },
+    {
+      "name": "c without base64 padding",
+      "direction": "i2r",
+      "peerId": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "failsAt": 0,
+      "wires": [
+        "{\"f\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"c\":\"piQTcH+QsTnqSzEIe6jYZUYsVWD+tVi1jWGMlTCeOLZ4og8hul4JFN82JjNbz2ckgx8k+SNUsThWVbGlCRe0H9DvV3SErWVyR2k56ByEu1JuYY3p8ZQQdx9O+5r00BSoWXMXIAv6u59Uc3RoYxD98k4wWo1DLS2nbBTrXvjUkjyBTiZbCE0L7p8GDAYaR9LmPxQ+m5GCFuFQp6buZsWgY/3a+1PsZleIok0sI0zyzNyvLmnhPW60t9Rz/HwjZogywQklHFKgC6RDntUxZX9jJvqOGsT5883r7/NW9bJZHhrrMRdGJQd7PSOVv3iJFyjyxWabJehFeQ\"}"
+      ]
+    }
+  ]
+}

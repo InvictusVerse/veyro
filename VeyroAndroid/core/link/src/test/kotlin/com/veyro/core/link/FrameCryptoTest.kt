@@ -1,149 +1,121 @@
 package com.veyro.core.link
 
+import com.veyro.core.crypto.LinkKeys
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.security.SecureRandom
-import javax.crypto.spec.SecretKeySpec
+import java.util.Base64
 
+/**
+ * Session frame sealing and opening (04-PROTOCOL.md 5, ADR-058). Every rejection here closes a
+ * real connection; see [PeerConnectionV3Test] for that half.
+ */
 class FrameCryptoTest {
 
+    private val idI = "INITIATOR"
+    private val idR = "RESPONDER"
+    private val keys: Pair<LinkKeys, LinkKeys> = TestLinkKeys.sessionPair(idI, idR)
+    private fun sealer() = SessionSealer(keys.first.sendKey, idI, FrameCrypto.DIR_I2R)
+    private fun opener() = SessionOpener(keys.second.recvKey, idI, FrameCrypto.DIR_I2R)
+
     @Test
-    fun `bootstrap key derives deterministically from matching pin and device IDs`() {
-        val pin = "123456"
-        val initiator = "dev-alice-1234"
-        val target = "dev-bob-5678"
-
-        val keyInitiator = FrameCrypto.deriveBootstrapKey(pin, initiator, target)
-        val keyTarget = FrameCrypto.deriveBootstrapKey(pin, initiator, target)
-
-        assertEquals("AES", keyInitiator.algorithm)
-        assertEquals(32, keyInitiator.encoded.size)
-        assertEquals(keyInitiator, keyTarget)
+    fun `a sealed frame opens in order and carries only f and c`() {
+        val s = sealer()
+        val o = opener()
+        val wire = s.seal("""{"x":1}""")
+        val obj = PeerMessageJson.codec.parseToJsonElement(wire).let { it as kotlinx.serialization.json.JsonObject }
+        assertEquals(setOf("f", "c"), obj.keys)
+        assertEquals("""{"x":1}""", o.open(wire))
+        assertEquals("""{"x":2}""", o.open(s.seal("""{"x":2}""")))
+        assertEquals(2, o.nextCounter)
     }
 
     @Test
-    fun `salt is canonical and reversing roles produces the identical key`() {
-        val pin = "654321"
-        val dev1 = "dev-alpha"
-        val dev2 = "dev-beta"
-
-        val keyDirect = FrameCrypto.deriveBootstrapKey(pin, dev1, dev2)
-        val keyReversed = FrameCrypto.deriveBootstrapKey(pin, dev2, dev1)
-
-        assertTrue(
-            "Reversing initiator and target roles must produce the identical bootstrap key",
-            keyDirect.encoded.contentEquals(keyReversed.encoded),
-        )
+    fun `the same plaintext seals differently at each counter`() {
+        val s = sealer()
+        assertNotEquals(s.seal("same"), s.seal("same"))
     }
 
     @Test
-    fun `device IDs in salt are case-insensitive`() {
-        val pin = "999888"
-        val keyLower = FrameCrypto.deriveBootstrapKey(pin, "device-a", "device-b")
-        val keyUpper = FrameCrypto.deriveBootstrapKey(pin, "DEVICE-A", "Device-B")
-
-        assertEquals(keyLower, keyUpper)
+    fun `replay within the connection fails authentication`() {
+        val s = sealer()
+        val o = opener()
+        val first = s.seal("one")
+        o.open(first)
+        val e = assertThrows(SessionFrameException::class.java) { o.open(first) }
+        assertTrue(e.authFailed)
     }
 
     @Test
-    fun `plaintext sealing and opening roundtrips cleanly`() {
-        val key = FrameCrypto.newSessionSecret().let { FrameCrypto.sessionKeyFromBytes(it) }
-        val payload = """{"msgId":"test-123","action":"hello"}"""
-        val senderId = "sender-phone"
-
-        val sealed = FrameCrypto.seal(payload, key, encrypt = false, fromDeviceId = senderId)
-        assertFalse("Frame should not be marked encrypted", sealed.encrypted)
-
-        val opened = FrameCrypto.open(sealed, key)
-        assertEquals(payload, opened)
+    fun `a skipped or reordered frame fails authentication`() {
+        val s = sealer()
+        s.seal("zero")
+        val one = s.seal("one")
+        assertTrue(assertThrows(SessionFrameException::class.java) { opener().open(one) }.authFailed)
     }
 
     @Test
-    fun `encrypted sealing and opening roundtrips cleanly`() {
-        val secret = FrameCrypto.newSessionSecret()
-        val key = FrameCrypto.sessionKeyFromBytes(secret)
-        val payload = """{"secretData":"sensitive_file_chunk_content_abc_123"}"""
-        val senderId = "sender-laptop"
-
-        val sealed = FrameCrypto.seal(payload, key, encrypt = true, fromDeviceId = senderId)
-        assertTrue("Frame must be marked encrypted", sealed.encrypted)
-        assertFalse(
-            "Ciphertext body must not contain plaintext string",
-            String(sealed.body, Charsets.UTF_8).contains("sensitive_file_chunk"),
-        )
-
-        val opened = FrameCrypto.open(sealed, key)
-        assertEquals(payload, opened)
+    fun `a reflected frame fails under the other direction key`() {
+        val s = sealer()
+        val reflected = SessionOpener(keys.first.recvKey, idI, FrameCrypto.DIR_R2I)
+        assertTrue(assertThrows(SessionFrameException::class.java) { reflected.open(s.seal("back")) }.authFailed)
     }
 
     @Test
-    fun `tampering with ciphertext body causes authentication failure`() {
-        val key = FrameCrypto.sessionKeyFromBytes(FrameCrypto.newSessionSecret())
-        val sealed = FrameCrypto.seal("payload data", key, encrypt = true, fromDeviceId = "dev-1")
-
-        // Corrupt one byte of ciphertext body
-        val corruptedBody = sealed.body.copyOf()
-        corruptedBody[0] = (corruptedBody[0].toInt() xor 0xFF).toByte()
-
-        val tamperedFrame = sealed.copy(body = corruptedBody)
-        val opened = FrameCrypto.open(tamperedFrame, key)
-        assertNull("Opening tampered frame must return null", opened)
+    fun `a frame from another connection with the same pairing secret fails`() {
+        val other = TestLinkKeys.sessionPair(idI, idR)
+        val foreign = SessionSealer(other.first.sendKey, idI, FrameCrypto.DIR_I2R).seal("recorded")
+        assertTrue(assertThrows(SessionFrameException::class.java) { opener().open(foreign) }.authFailed)
     }
 
     @Test
-    fun `tampering with mac causes authentication failure`() {
-        val key = FrameCrypto.sessionKeyFromBytes(FrameCrypto.newSessionSecret())
-        val sealed = FrameCrypto.seal("payload data", key, encrypt = true, fromDeviceId = "dev-1")
-
-        val corruptedMac = sealed.mac.copyOf()
-        corruptedMac[corruptedMac.lastIndex] = (corruptedMac[corruptedMac.lastIndex].toInt() xor 0x01).toByte()
-
-        val tamperedFrame = sealed.copy(mac = corruptedMac)
-        assertNull("Opening frame with corrupted MAC must return null", FrameCrypto.open(tamperedFrame, key))
+    fun `a wrong f is refused before any crypto`() {
+        val wire = sealer().seal("x").replace("\"f\":\"$idI\"", "\"f\":\"$idR\"")
+        val e = assertThrows(SessionFrameException::class.java) { opener().open(wire) }
+        assertFalse(e.authFailed)
     }
 
     @Test
-    fun `tampering with fromDeviceId causes mac verification failure`() {
-        val key = FrameCrypto.sessionKeyFromBytes(FrameCrypto.newSessionSecret())
-        val sealed = FrameCrypto.seal("transfer chunk", key, encrypt = true, fromDeviceId = "alice")
-
-        // Frame replayed under a different claimed sender id
-        val spoofedFrame = sealed.copy(fromDeviceId = "eve")
-        assertNull("Frame attributed to spoofed sender must fail MAC verification", FrameCrypto.open(spoofedFrame, key))
-    }
-
-    @Test
-    fun `wrong key fails authentication and returns null`() {
-        val key1 = FrameCrypto.sessionKeyFromBytes(FrameCrypto.newSessionSecret())
-        val key2 = FrameCrypto.sessionKeyFromBytes(FrameCrypto.newSessionSecret())
-
-        val sealed = FrameCrypto.seal("some data", key1, encrypt = true, fromDeviceId = "dev")
-        assertNull("Opening with wrong key must return null", FrameCrypto.open(sealed, key2))
-    }
-
-    @Test
-    fun `newPin produces 6 digits`() {
-        for (i in 0 until 50) {
-            val pin = FrameCrypto.newPin()
-            assertEquals(6, pin.length)
-            assertTrue("Pin must be numeric: $pin", pin.all { it.isDigit() })
+    fun `flipped bits in ciphertext or tag fail authentication`() {
+        val wire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), sealer().seal("""{"payload":1}"""))
+        val raw = Base64.getDecoder().decode(wire.ciphertext)
+        for (index in listOf(0, raw.size - 1)) {
+            val tampered = raw.copyOf().also { it[index] = (it[index].toInt() xor 1).toByte() }
+            val text = PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), wire.copy(ciphertext = Base64.getEncoder().encodeToString(tampered)))
+            assertTrue(assertThrows(SessionFrameException::class.java) { opener().open(text) }.authFailed)
         }
     }
 
     @Test
-    fun `nonce cache rejects replayed nonces`() {
-        val cache = NonceCache(capacity = 10)
-        val nonce = "random-nonce-abc"
+    fun `truncated or non-canonical c is malformed`() {
+        val wire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), sealer().seal("x"))
+        for (c in listOf("", "AAAA", wire.ciphertext.dropLast(4), wire.ciphertext.trimEnd('='), " " + wire.ciphertext, "-" + wire.ciphertext.drop(1))) {
+            val text = PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), wire.copy(ciphertext = c))
+            assertThrows(SessionFrameException::class.java) { opener().open(text) }
+        }
+    }
 
-        assertTrue("First check of nonce must succeed", cache.checkAndStore(nonce))
-        assertFalse("Second check of same nonce must be rejected as replay", cache.checkAndStore(nonce))
+    @Test
+    fun `strict base64 accepts only canonical padded standard base64`() {
+        assertArrayEquals(byteArrayOf(1, 2, 3), FrameCrypto.decodeStrictBase64("AQID"))
+        assertArrayEquals(byteArrayOf(1, 2), FrameCrypto.decodeStrictBase64("AQI="))
+        assertNull(FrameCrypto.decodeStrictBase64("AQJ="))   // non-zero padding bits
+        assertNull(FrameCrypto.decodeStrictBase64("AQI"))    // missing padding
+        assertNull(FrameCrypto.decodeStrictBase64("AQ=I"))   // padding inside
+        assertNull(FrameCrypto.decodeStrictBase64("AQ I"))
+        assertNull(FrameCrypto.decodeStrictBase64("AQ_I"))   // base64url alphabet
+        assertNull(FrameCrypto.decodeKey32(Base64.getEncoder().encodeToString(ByteArray(31))))
+        assertEquals(32, FrameCrypto.decodeKey32(Base64.getEncoder().encodeToString(ByteArray(32)))?.size)
+    }
 
-        cache.clear()
-        assertTrue("After clear, nonce is accepted again", cache.checkAndStore(nonce))
+    @Test
+    fun `session secrets are 32 random bytes`() {
+        assertEquals(32, FrameCrypto.newSessionSecret().size)
+        assertFalse(FrameCrypto.newSessionSecret().contentEquals(FrameCrypto.newSessionSecret()))
     }
 }

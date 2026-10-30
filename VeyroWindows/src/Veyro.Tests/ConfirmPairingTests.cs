@@ -68,19 +68,25 @@ public sealed class PairConfirmVectorTests
         Assert.Equal(Str(expected, "codeDigestHex"),
             ToHex(SHA256.HashData([.. Encoding.ASCII.GetBytes("veyro-sas-v1"), .. pkA, .. pkB, .. nA, .. nB])));
 
-        Assert.Equal(Str(expected, "bootstrapKeyHex"), ToHex(PairConfirm.BootstrapKey(shared, nA, nB, idA, idB)));
+        // ADR-058: bootstrapKeyHex is the retired v2 key. The v3 static key is pinned by
+        // link/pairing-schedule-v3.json (confirm: transcriptHex, staticKeyHex).
+        byte[] prk = Hkdf.Extract(Convert.FromHexString(V3TranscriptHex), shared);
+        Assert.Equal(V3StaticKeyHex, ToHex(Hkdf.Expand(prk, ConnectionKeySchedule.StaticInfo(idA, idB), 32)));
     }
 
+    private const string V3TranscriptHex = "96d9e04d4e6853917249a880f153f546ed1369d49887b2bd6d288401bea6b746";
+    private const string V3StaticKeyHex = "e5a8fc1b998e73e89405ec843981059b50ba870a982fa854d773ee1bd812ad52";
+
     [Fact]
-    public void IdentityManager_DerivesTheVectorKeyOnBothSides()
+    public void IdentityManager_DerivesTheV3StaticKeyOnBothSides()
     {
         JsonElement v = Vector();
         JsonElement input = v.GetProperty("input");
-        string expectedKey = Str(v.GetProperty("expected"), "bootstrapKeyHex");
+        string expectedKey = V3StaticKeyHex;
         var phone = new DefaultIdentityManager(new MemorySeedStore(Hex(input, "privateKeyAHex")));
         var pc = new DefaultIdentityManager(new MemorySeedStore(Hex(input, "privateKeyBHex")));
-        byte[] salt = PairConfirm.BootstrapSalt(Hex(input, "nonceAHex"), Hex(input, "nonceBHex"));
-        byte[] info = PairConfirm.BootstrapInfo(phone.DeviceId.Value, pc.DeviceId.Value);
+        byte[] salt = Convert.FromHexString(V3TranscriptHex);
+        byte[] info = ConnectionKeySchedule.StaticInfo(phone.DeviceId.Value, pc.DeviceId.Value);
 
         Assert.Equal(expectedKey, ToHex(phone.DeriveSharedKey(pc.PublicKey.Span, salt, info)));
         Assert.Equal(expectedKey, ToHex(pc.DeriveSharedKey(phone.PublicKey.Span, salt, info)));
@@ -105,6 +111,20 @@ public sealed class PairConfirmVectorTests
         Assert.False(PairConfirm.VerifyCommitment(commit[..31], pkB, pkA, nB));
         Assert.NotEqual(Str(expected, "code"), PairConfirm.Code(pkB, pkA, nB, Hex(input, "nonceAHex")));
     }
+}
+
+/// <summary>A trust store that runs a test hook right after each upsert (review issue 2).</summary>
+internal sealed class HookedTrustStore(ITrustStore inner) : ITrustStore
+{
+    public Func<TrustedPeer, Task>? AfterUpsert { get; set; }
+    public IReadOnlyList<TrustedPeer> GetTrustedPeers() => inner.GetTrustedPeers();
+    public TrustedPeer? GetPeer(string deviceId) => inner.GetPeer(deviceId);
+    public async Task UpsertAsync(TrustedPeer peer)
+    {
+        await inner.UpsertAsync(peer);
+        if (AfterUpsert is { } hook) await hook(peer);
+    }
+    public Task RemoveAsync(string deviceId) => inner.RemoveAsync(deviceId);
 }
 
 internal sealed class MemorySeedStore(byte[]? seed = null) : ISeedStore
@@ -140,6 +160,7 @@ public sealed class LinkServerConfirmPairingTests
         public string Root { get; } = Path.Combine(AppContext.BaseDirectory, "veyro-confirm-" + Guid.NewGuid().ToString("N"));
         public DefaultIdentityManager Pc { get; } = new(new MemorySeedStore());
         public FileTrustStore TrustStore { get; }
+        public HookedTrustStore Hooks { get; }
         public LinkServer Server { get; }
         public List<InboundPairingRequest> Prompts { get; } = [];
         public TaskCompletionSource<bool> Answer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -148,8 +169,9 @@ public sealed class LinkServerConfirmPairingTests
         {
             Directory.CreateDirectory(Root);
             TrustStore = new FileTrustStore(Root, new byte[32]);
+            Hooks = new HookedTrustStore(TrustStore);
             Server = new LinkServer(
-                Pc.DeviceId.Value, "Test PC", TrustStore, Path.Combine(Root, "received"), Pc.PublicKey.Span,
+                Pc.DeviceId.Value, "Test PC", Hooks, Path.Combine(Root, "received"), Pc.PublicKey.Span,
                 _ => Task.FromResult(false),
                 deriveSharedKey: (peerKey, salt, info) => Pc.DeriveSharedKey(peerKey, salt, info));
             Server.PairingAuthorizer = request =>
@@ -179,19 +201,19 @@ public sealed class LinkServerConfirmPairingTests
     }
 
     private static async Task<(ClientWebSocket Socket, LinkPreambleAck? Ack)> SendPreambleAsync(
-        Fixture f, LinkPreamble preamble, CancellationToken ct)
+        Fixture f, V3Dialer dialer, CancellationToken ct, string? pair = null, byte[]? pk = null, int protocolVersion = LinkProtocol.Version)
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{f.Server.Port}/veyro"), ct);
-        await SendTextAsync(socket, PeerMessageJson.Encode(preamble), ct);
-        return (socket, PeerMessageJson.Decode<LinkPreambleAck>(await ReceiveTextAsync(socket, ct)));
+        LinkPreambleAck ack = await dialer.SendPreambleAsync(socket, "Phone", ct, pair: pair, pk: pk, protocolVersion: protocolVersion);
+        return (socket, ack);
     }
 
     /// <summary>The phone's side up to and including pairHello, with every check Android makes.</summary>
     private static async Task<PhoneSide> PairUntilPromptAsync(Fixture f, TestPhone phone, CancellationToken ct)
     {
-        var (socket, ack) = await SendPreambleAsync(f, new LinkPreamble(
-            phone.Id, "Phone", "android", Pair: LinkPreamble.PairConfirm, Pk: Convert.ToBase64String(phone.PublicKey)), ct);
+        using var dialer = new V3Dialer(phone.Id);
+        var (socket, ack) = await SendPreambleAsync(f, dialer, ct, LinkPreamble.PairConfirm, phone.PublicKey);
         Assert.Equal(LinkPreambleAck.ModePairingConfirm, ack?.Mode);
         byte[] pkB = Convert.FromBase64String(ack!.Pk!);
         byte[] commit = Convert.FromBase64String(ack.Commit!);
@@ -205,8 +227,13 @@ public sealed class LinkServerConfirmPairingTests
         Assert.True(PairConfirm.VerifyCommitment(commit, pkB, phone.PublicKey, nB), "nB must match the commitment");
 
         string code = PairConfirm.Code(phone.PublicKey, pkB, nA, nB);
-        byte[] key = PairConfirm.BootstrapKey(X25519Crypto.SharedSecret(phone.Seed, pkB), nA, nB, phone.Id, f.Pc.DeviceId.Value);
-        var secure = new SecureLinkSession(socket, phone.Id, key, encrypt: false, expectedPeerId: f.Pc.DeviceId.Value);
+        // The v3 confirm schedule (04-PROTOCOL.md 4.3): ikm = dh || staticKey, salt over transcript, nA, nB.
+        string pcId = f.Pc.DeviceId.Value;
+        byte[] transcript = dialer.Transcript;
+        byte[] prk = Hkdf.Extract(transcript, X25519Crypto.SharedSecret(phone.Seed, pkB));
+        byte[] staticKey = Hkdf.Expand(prk, ConnectionKeySchedule.StaticInfo(phone.Id, pcId), 32);
+        LinkKeys keys = ConnectionKeySchedule.PairConfirm(LinkRole.Initiator, phone.Id, pcId, transcript, nA, nB, dialer.Dh(), staticKey);
+        var secure = new SecureLinkSession(socket, keys);
         await secure.SendAsync(new PeerMessage.PairHello(phone.Id, "Phone", "android", "1.0",
             PublicKeyB64: Convert.ToBase64String(phone.PublicKey)), ct);
         return new PhoneSide(socket, secure, code, pkB);
@@ -254,7 +281,7 @@ public sealed class LinkServerConfirmPairingTests
             Assert.Equal(side.PcPublicKey, Convert.FromBase64String(pairOk.PublicKeyB64!));
 
             // The receive the PC held during the prompt now reads under the session key.
-            side.Secure.Rekey(Convert.FromBase64String(pairOk.SessionSecretB64));
+            await side.Secure.SwitchToSessionAsync(Convert.FromBase64String(pairOk.SessionSecretB64), ct);
             await side.Secure.SendAsync(new PeerMessage.Hello(phone.Id, "Phone", "android"), ct);
             Assert.IsType<PeerMessage.HelloAck>((await side.Secure.ReceiveAsync(ct))!.Envelope.Payload);
 
@@ -264,6 +291,43 @@ public sealed class LinkServerConfirmPairingTests
             Assert.Equal(Convert.ToBase64String(phone.PublicKey), stored.PublicKeyBase64);
             Assert.Equal(pairOk.SessionSecretB64, stored.PairingSecretBase64);
             Assert.False(prompt.Abandoned.IsCancellationRequested);
+        }
+    }
+
+    /// <summary>
+    /// Review issue 2 (ADR-058): when pairOk cannot be sent after the trust write, the record is
+    /// deleted again and no pairing is reported, so the PC never trusts a phone without the secret.
+    /// </summary>
+    [Fact]
+    public async Task Accept_WhenPairOkCannotBeSent_LeavesNoTrustRecord()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        await using var f = new Fixture();
+        var phone = new TestPhone();
+        bool completed = false;
+        f.Server.PairingCompleted += _ => completed = true;
+        await f.Server.StartAsync();
+
+        PhoneSide side = await PairUntilPromptAsync(f, phone, ct);
+        await using (side.Secure)
+        {
+            await WaitForPromptAsync(f, ct);
+            var upserted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Between the trust write and pairOk the session fails: the phone sends a second
+            // pairHello, which the PC's outstanding read refuses (04-PROTOCOL.md 5.3).
+            f.Hooks.AfterUpsert = async _ =>
+            {
+                await side.Secure.SendAsync(new PeerMessage.PairHello(phone.Id, "Phone", "android", "1.0",
+                    PublicKeyB64: Convert.ToBase64String(phone.PublicKey)), ct);
+                await Task.Delay(500, ct);
+                upserted.TrySetResult();
+            };
+            f.Answer.SetResult(true);
+            await upserted.Task.WaitAsync(ct);
+            await Assert.ThrowsAnyAsync<Exception>(() => side.Secure.ReceiveAsync(ct));
+            Assert.Null(f.TrustStore.GetPeer(phone.Id));
+            Assert.False(completed);
         }
     }
 
@@ -340,8 +404,8 @@ public sealed class LinkServerConfirmPairingTests
         var other = new TestPhone();
         await f.Server.StartAsync();
 
-        var (socket, ack) = await SendPreambleAsync(f, new LinkPreamble(
-            phone.Id, "Phone", "android", Pair: LinkPreamble.PairConfirm, Pk: Convert.ToBase64String(other.PublicKey)), ct);
+        using var dialer = new V3Dialer(phone.Id);
+        var (socket, ack) = await SendPreambleAsync(f, dialer, ct, LinkPreamble.PairConfirm, other.PublicKey);
         using (socket)
         {
             Assert.Equal(LinkPreambleAck.ModeRefused, ack?.Mode);
@@ -352,7 +416,7 @@ public sealed class LinkServerConfirmPairingTests
     }
 
     [Fact]
-    public async Task ProtocolVersion1_IsRefused()
+    public async Task ProtocolVersion2_IsRefused()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         CancellationToken ct = timeout.Token;
@@ -360,9 +424,9 @@ public sealed class LinkServerConfirmPairingTests
         var phone = new TestPhone();
         await f.Server.StartAsync();
 
-        var (socket, ack) = await SendPreambleAsync(f, new LinkPreamble(
-            phone.Id, "Phone", "android", ProtocolVersion: 1, Pair: LinkPreamble.PairConfirm,
-            Pk: Convert.ToBase64String(phone.PublicKey)), ct);
+        // ADR-058: v3 only, no fallback to the v2 handshake.
+        using var dialer = new V3Dialer(phone.Id);
+        var (socket, ack) = await SendPreambleAsync(f, dialer, ct, LinkPreamble.PairConfirm, phone.PublicKey, protocolVersion: 2);
         using (socket)
         {
             Assert.Equal(LinkPreambleAck.ModeRefused, ack?.Mode);
@@ -380,12 +444,54 @@ public sealed class LinkServerConfirmPairingTests
         var phone = new TestPhone();
         await f.Server.StartAsync();
 
-        var (socket, ack) = await SendPreambleAsync(f, new LinkPreamble(phone.Id, "Phone", "android", Pair: LinkPreamble.PairQr), ct);
+        using var dialer = new V3Dialer(phone.Id);
+        var (socket, ack) = await SendPreambleAsync(f, dialer, ct, LinkPreamble.PairQr, phone.PublicKey);
         using (socket)
         {
             Assert.Equal(LinkPreambleAck.ModeRefused, ack?.Mode);
             Assert.Equal("no-pairing-window", ack?.Reason);
             Assert.Empty(f.Prompts);
+        }
+    }
+
+    [Fact]
+    public async Task UnknownPeerWithoutPairRequest_IsRefusedAsNotPaired()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        await using var f = new Fixture();
+        var phone = new TestPhone();
+        await f.Server.StartAsync();
+
+        // ADR-058: the legacy PIN flow is gone; an unknown device must ask to pair.
+        using var dialer = new V3Dialer(phone.Id);
+        var (socket, ack) = await SendPreambleAsync(f, dialer, ct);
+        using (socket)
+        {
+            Assert.Equal(LinkPreambleAck.ModeRefused, ack?.Mode);
+            Assert.Equal("not-paired", ack?.Reason);
+            Assert.Null(ack?.Epk);
+            Assert.Empty(f.Prompts);
+        }
+    }
+
+    [Fact]
+    public async Task WithoutChaCha20Poly1305_TheServerRefusesToStart()
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "veyro-noaead-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var pc = new DefaultIdentityManager(new MemorySeedStore());
+            await using var server = new LinkServer(
+                pc.DeviceId.Value, "Test PC", new FileTrustStore(root, new byte[32]), Path.Combine(root, "received"), pc.PublicKey.Span,
+                _ => Task.FromResult(false), aeadSupported: () => false);
+            await Assert.ThrowsAsync<PlatformNotSupportedException>(server.StartAsync);
+            Assert.False(server.IsRunning);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
 }

@@ -39,8 +39,7 @@ class BinaryTransferIntegrityTest {
 
     private fun createConnectedPair(): Pair<PeerConnection, PeerConnection> {
         val secret = ByteArray(32) { 77 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val initToRecv = Channel<Frame>(Channel.UNLIMITED)
         val recvToInit = Channel<Frame>(Channel.UNLIMITED)
 
@@ -56,28 +55,30 @@ class BinaryTransferIntegrityTest {
 
         val initiator = PeerConnection(
             ws = initWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal("sender-dev", "receiver-dev"),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = "sender-dev",
             tag = "TestSender",
             dispatcher = testDispatcher,
-            peerDeviceId = "receiver-dev",
             enableHeartbeat = false,
         )
 
         val receiver = PeerConnection(
             ws = recvWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal("receiver-dev", "sender-dev"),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = "receiver-dev",
             tag = "TestReceiver",
             dispatcher = testDispatcher,
-            peerDeviceId = "sender-dev",
             enableHeartbeat = false,
         )
 
         initiator.start()
         receiver.start()
+        initiator.admit()
+        receiver.admit()
 
         return initiator to receiver
     }

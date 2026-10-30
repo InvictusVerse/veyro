@@ -6,10 +6,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Bumped on any change to bytes on the wire. 2 = confirm-code pairing (04-PROTOCOL.md 4.3,
- * ADR-031); version 1 peers are refused.
+ * Bumped on any change to bytes on the wire. 3 = per-connection keys, ChaCha20-Poly1305 frames,
+ * QR secret and the sealed VTC3 data plane (ADR-058). Every other version is refused with
+ * `unsupported-protocol-version`; there is no v2 support.
  */
-public const val LINK_PROTOCOL_VERSION: Int = 2
+public const val LINK_PROTOCOL_VERSION: Int = 3
 
 /**
  * The unauthenticated identification preamble.
@@ -30,8 +31,12 @@ public data class LinkPreamble(
     val protocolVersion: Int = LINK_PROTOCOL_VERSION,
     /** How to pair if the receiver does not know us: [PAIR_CONFIRM], [PAIR_QR], or absent (legacy PIN). */
     val pair: String? = null,
-    /** Sender's static X25519 public key, base64. Sent with [PAIR_CONFIRM]. */
+    /** Sender's static X25519 public key, base64. Sent with [PAIR_CONFIRM] and [PAIR_QR]. */
     val pk: String? = null,
+    /** 32 fresh random bytes, standard base64 (44 characters). Required (ADR-058). */
+    val cn: String? = null,
+    /** This connection's ephemeral X25519 public key, standard base64 (44 characters). Required. */
+    val epk: String? = null,
 ) {
     public companion object {
         /** Compare a code on both screens and accept on the receiver (04-PROTOCOL.md 4.3). */
@@ -48,10 +53,14 @@ public data class LinkPreambleAck(
     /** `session` | `pairing` | `pairing-confirm` | `busy` | `refused` */
     val mode: String,
     val reason: String? = null,
-    /** Receiver's static X25519 public key, base64. Only with [MODE_PAIRING_CONFIRM]. */
+    /** Receiver's static X25519 public key, base64. With [MODE_PAIRING_CONFIRM] and [MODE_PAIRING]. */
     val pk: String? = null,
     /** `SHA-256("veyro-commit-v1" || pkB || pkA || nB)`, base64. Only with [MODE_PAIRING_CONFIRM]. */
     val commit: String? = null,
+    /** The responder's 32 fresh bytes; with session, pairing-confirm and pairing (ADR-058). */
+    val cn: String? = null,
+    /** The responder's ephemeral X25519 public key; with the same modes as [cn]. */
+    val epk: String? = null,
 ) {
     public companion object {
         public const val MODE_SESSION: String = "session"
@@ -79,26 +88,23 @@ public data class LinkPairNonce(
 }
 
 /**
- * The outer wire frame. Either `ciphertext` (session mode) or `plaintext` (pairing mode) is set.
+ * The outer wire frame (04-PROTOCOL.md 5.1, ADR-058): `{"f": fromDeviceId, "c": base64(ciphertext || tag)}`.
  *
- * `from` travels in the clear because the receiver needs it to pick a key before it can verify
- * anything. It is therefore untrusted - but it is also inside the MAC, so a frame cannot be
- * re-attributed to a different sender without breaking the tag.
+ * Every frame after the ack is sealed with ChaCha20-Poly1305. The nonce is a counter each side
+ * tracks itself, so it is not on the wire. `from` is untrusted; the receiver requires it to equal
+ * the expected peer id and binds that id into the AAD.
  */
 @Serializable
 public data class LinkWireFrame(
     @SerialName("f") val from: String,
-    @SerialName("n") val nonce: String,
-    @SerialName("c") val ciphertext: String? = null,
-    @SerialName("p") val plaintext: String? = null,
-    @SerialName("m") val mac: String,
+    @SerialName("c") val ciphertext: String,
 )
 
 /**
  * The envelope inside a frame.
  *
- * `seq` is monotonic per sender and is enforced on receipt, which is what makes a reordered or
- * truncated stream detectable rather than silently accepted.
+ * `v` must be 3, `from` the expected peer, and `seq` the frame counter + 1; any mismatch closes
+ * the connection (04-PROTOCOL.md 6).
  */
 @Serializable
 public data class LinkEnvelope(
@@ -126,7 +132,7 @@ public data class LinkEnvelope(
 @Serializable
 public sealed interface PeerMessage {
 
-    /** Sent by the pairing initiator, under the PIN-derived bootstrap key. */
+    /** Sent by the pairing initiator, sealed under the bootstrap keys (ADR-058). */
     @Serializable
     @SerialName("pairHello")
     public data class PairHello(
@@ -136,15 +142,15 @@ public sealed interface PeerMessage {
         val appVersion: String,
         val protocolVersion: Int = LINK_PROTOCOL_VERSION,
         val publicKeyB64: String? = null,
+        /** QR pairing: `HMAC-SHA256(proofKey, ...)` over the transcript, standard base64 (04-PROTOCOL.md 4.2). */
+        val qrProof: String? = null,
     ) : PeerMessage
 
     /**
      * The target's answer, carrying the long-lived session secret.
      *
-     * **Always sent sealed**, even though the session is still nominally in plaintext pairing mode.
-     * The secret must not cross the LAN in the clear, and the bootstrap key is available to seal it
-     * with. Invox had to keep a plaintext fallback for older peers; Veyro has no deployed versions,
-     * so sealing is unconditional and there is no downgrade path.
+     * Sealed under the bootstrap keys like every frame; both sides then switch the same connection
+     * to session keys derived from the bootstrap chain key and this secret (04-PROTOCOL.md 4.3).
      */
     @Serializable
     @SerialName("pairOk")

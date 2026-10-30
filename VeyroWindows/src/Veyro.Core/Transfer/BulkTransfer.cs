@@ -23,13 +23,18 @@ public sealed record BulkTransferResult(
     IReadOnlyList<string> CompletedPaths);
 
 /// <summary>
-/// High-throughput VTC1 data-plane implementation. Control-plane consent and endpoint
-/// negotiation remain outside this class; callers provide the one-time transfer credential.
+/// High-throughput VTC3 data-plane implementation (ADR-058): every record is sealed with
+/// ChaCha20-Poly1305 under per-attempt keys from the carrying session's exporter
+/// (<c>deriveKeys</c>, <see cref="Vtc3.KeyDeriver"/>). Control-plane consent and
+/// endpoint negotiation remain outside this class; callers provide the one-time transfer credential.
 /// </summary>
 public static class BulkTransfer
 {
     public const int DefaultChunkSize = 4 * 1024 * 1024;
     private const int SocketBufferSize = 1024 * 1024;
+    // Kernel socket buffers with room for a whole sealed 4 MiB record, so the peer's sealing or
+    // opening overlaps the transfer instead of each record waiting for the last to drain (NFR-3).
+    private const int SocketKernelBufferSize = 8 * 1024 * 1024;
     private const int FlushEveryChunks = 4;
 
     /// <summary>How long the receiver waits for the accepted sender to open the data socket.</summary>
@@ -67,6 +72,7 @@ public static class BulkTransfer
         string authToken,
         string senderDeviceId,
         IReadOnlyList<OutboundTransferItem> items,
+        Func<byte[], byte[], byte[]> deriveKeys,
         int chunkSize = DefaultChunkSize,
         IReadOnlyDictionary<int, IReadOnlyList<int>>? resume = null,
         TransferRoute route = TransferRoute.LanTcp,
@@ -74,19 +80,18 @@ public static class BulkTransfer
         CancellationToken ct = default)
     {
         ValidateChunkSize(chunkSize);
-        using var client = new TcpClient { NoDelay = true, SendBufferSize = SocketBufferSize, ReceiveBufferSize = SocketBufferSize };
+        using var client = new TcpClient { NoDelay = true, SendBufferSize = SocketKernelBufferSize, ReceiveBufferSize = SocketKernelBufferSize };
         await client.ConnectAsync(host, port, ct).ConfigureAwait(false);
         await using NetworkStream stream = client.GetStream();
 
-        long sequence = 1;
-        await TcpFrameCodec.WriteFrameAsync(
-            stream,
-            new TcpFrame.Auth(sequence++, transferId, authToken, senderDeviceId, route),
-            ct: ct).ConfigureAwait(false);
-        var authAck = await TcpFrameCodec.ReadFrameOrNullAsync(stream, ct).ConfigureAwait(false) as TcpFrame.AuthAck
-            ?? throw new InvalidDataException("VTC1 receiver did not return AuthAck.");
+        // Fresh salts both ways, so this attempt's keys are new (04-PROTOCOL.md 7.3).
+        using Vtc3Channel channel = await Vtc3.OpenAsSenderAsync(stream, transferId, deriveKeys, ct).ConfigureAwait(false);
+        Vtc3Writer writer = channel.Writer;
+        await writer.WriteAsync(new TcpFrame.Auth(0, transferId, authToken, senderDeviceId, route), ct: ct).ConfigureAwait(false);
+        var authAck = await channel.Reader.ReadOrNullAsync(ct).ConfigureAwait(false) as TcpFrame.AuthAck
+            ?? throw new InvalidDataException("VTC3 receiver did not return AuthAck.");
         if (!authAck.Ok)
-            throw new UnauthorizedAccessException($"VTC1 authentication rejected: {authAck.Reason ?? "unknown reason"}");
+            throw new UnauthorizedAccessException($"VTC3 authentication rejected: {authAck.Reason ?? "unknown reason"}");
 
         long transferred = 0;
         var completed = new List<string>(items.Count);
@@ -98,55 +103,68 @@ public static class BulkTransfer
             if (!RelativePath.IsValid(item.RelativePath)) throw new ArgumentException($"Invalid transfer path: {item.RelativePath}", nameof(items));
 
             int chunkCount = checked((int)((fileInfo.Length + chunkSize - 1) / chunkSize));
-            await TcpFrameCodec.WriteFrameAsync(
-                stream,
-                new TcpFrame.ItemBegin(sequence++, transferId, item.Index, fileInfo.Length, chunkCount, chunkSize),
+            await writer.WriteAsync(
+                new TcpFrame.ItemBegin(0, transferId, item.Index, fileInfo.Length, chunkCount, chunkSize),
                 ct: ct).ConfigureAwait(false);
 
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             await using var input = new FileStream(
                 item.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, SocketBufferSize,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            byte[] buffer = new byte[chunkSize];
+            // Two read buffers: while chunk N is sealed and written on the pool, chunk N+1 is read
+            // and hashed here (NFR-3). At most one write is in flight, and it is awaited before
+            // the next starts, so records stay in order and a buffer is never reused while sealing.
+            byte[][] buffers = [new byte[chunkSize], new byte[chunkSize]];
+            int current = 0;
+            Task pendingWrite = Task.CompletedTask;
             int chunkIndex = 0;
             int pendingFlushes = 0;
             HashSet<int>? requestedChunks = resume is not null && resume.TryGetValue(item.Index, out var requested)
                 ? requested.ToHashSet()
                 : null;
-            int read;
-            while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false)) > 0)
+            try
             {
-                hash.AppendData(buffer, 0, read);
-                int currentChunk = chunkIndex++;
-                if (requestedChunks is not null && !requestedChunks.Contains(currentChunk))
+                int read;
+                while ((read = await input.ReadAsync(buffers[current].AsMemory(0, chunkSize), ct).ConfigureAwait(false)) > 0)
                 {
+                    byte[] buffer = buffers[current];
+                    hash.AppendData(buffer, 0, read);
+                    int currentChunk = chunkIndex++;
+                    if (requestedChunks is not null && !requestedChunks.Contains(currentChunk))
+                    {
+                        transferred += read;
+                        progress?.Report(transferred);
+                        continue;
+                    }
+                    bool flush = ++pendingFlushes >= FlushEveryChunks;
+                    await pendingWrite.ConfigureAwait(false);
+                    // Sealed straight from the read buffer into the writer's reused record buffer.
+                    int length = read;
+                    pendingWrite = Task.Run(() => writer.WriteChunkAsync(item.Index, currentChunk, buffer.AsMemory(0, length), flush, ct), ct);
+                    current ^= 1;
+                    if (flush) pendingFlushes = 0;
                     transferred += read;
                     progress?.Report(transferred);
-                    continue;
                 }
-                var data = buffer.AsMemory(0, read).ToArray();
-                bool flush = ++pendingFlushes >= FlushEveryChunks;
-                await TcpFrameCodec.WriteFrameAsync(
-                    stream,
-                    new TcpFrame.Chunk(sequence++, transferId, item.Index, currentChunk, data),
-                    autoFlush: flush,
-                    ct: ct).ConfigureAwait(false);
-                if (flush) pendingFlushes = 0;
-                transferred += read;
-                progress?.Report(transferred);
+                await pendingWrite.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Observe the write in flight before the buffers and the channel go away.
+                try { await pendingWrite.ConfigureAwait(false); } catch { }
+                throw;
             }
 
-            await TcpFrameCodec.WriteFrameAsync(
-                stream,
-                new TcpFrame.ItemEnd(sequence++, transferId, item.Index, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()),
+            await writer.WriteAsync(
+                new TcpFrame.ItemEnd(0, transferId, item.Index, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()),
                 ct: ct).ConfigureAwait(false);
-            var result = await TcpFrameCodec.ReadFrameOrNullAsync(stream, ct).ConfigureAwait(false) as TcpFrame.ItemResult
-                ?? throw new InvalidDataException("VTC1 receiver did not return ItemResult.");
-            if (!result.Ok) throw new IOException($"VTC1 receiver rejected item {item.Index}: {result.ErrorMessage ?? "unknown error"}");
+            var result = await channel.Reader.ReadOrNullAsync(ct).ConfigureAwait(false) as TcpFrame.ItemResult
+                ?? throw new InvalidDataException("VTC3 receiver did not return ItemResult.");
+            if (!result.Ok) throw new IOException($"VTC3 receiver rejected item {item.Index}: {result.ErrorMessage ?? "unknown error"}");
             completed.Add(item.RelativePath);
         }
 
-        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.TransferEnd(sequence, transferId, true), ct: ct).ConfigureAwait(false);
+        await writer.WriteAsync(new TcpFrame.TransferEnd(0, transferId, true), ct: ct).ConfigureAwait(false);
         return new BulkTransferResult(transferId, transferred, completed);
     }
 
@@ -157,6 +175,7 @@ public static class BulkTransfer
         string? expectedSenderDeviceId,
         string destinationRoot,
         IReadOnlyList<InboundTransferItem> items,
+        Func<byte[], byte[], byte[]> deriveKeys,
         IProgress<long>? progress = null,
         CancellationToken ct = default,
         Func<int, bool, string?, CancellationToken, Task>? onItemResult = null,
@@ -166,9 +185,22 @@ public static class BulkTransfer
         TimeSpan idleLimit = idleTimeout ?? DefaultIdleTimeout;
         using TcpClient client = await AcceptAsync(listener, acceptTimeout ?? DefaultAcceptTimeout, ct).ConfigureAwait(false);
         client.NoDelay = true;
-        client.SendBufferSize = SocketBufferSize;
-        client.ReceiveBufferSize = SocketBufferSize;
+        client.SendBufferSize = SocketKernelBufferSize;
+        client.ReceiveBufferSize = SocketKernelBufferSize;
         await using NetworkStream stream = client.GetStream();
+
+        Vtc3Channel channel;
+        using (var open = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            open.CancelAfter(idleLimit);
+            try { channel = await Vtc3.OpenAsReceiverAsync(stream, transferId, deriveKeys, open.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
+            {
+                throw new TimeoutException("VTC3 sender did not open the stream.", error);
+            }
+        }
+        using Vtc3Channel ownedChannel = channel;
+        Vtc3Writer writer = channel.Writer;
 
         // Bounded per frame: a sender that goes quiet fails the transfer instead of holding the
         // receiver (and the session's one-transfer slot) forever. Hashing between reads is not counted.
@@ -176,47 +208,56 @@ public static class BulkTransfer
         {
             using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
             idle.CancelAfter(idleLimit);
-            try { return await TcpFrameCodec.ReadFrameOrNullAsync(stream, idle.Token).ConfigureAwait(false); }
+            try { return await channel.Reader.ReadOrNullAsync(idle.Token).ConfigureAwait(false); }
             catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
             {
-                throw new TimeoutException("VTC1 sender stopped sending.", error);
+                throw new TimeoutException("VTC3 sender stopped sending.", error);
             }
         }
 
         var auth = await ReadAsync().ConfigureAwait(false) as TcpFrame.Auth
-            ?? throw new InvalidDataException("VTC1 sender did not send Auth.");
+            ?? throw new InvalidDataException("VTC3 sender did not send Auth.");
+        // authToken stays as defence in depth; the boundary is holding the session's exporter keys.
         if (auth.TransferId != transferId || auth.AuthToken != expectedAuthToken ||
             (expectedSenderDeviceId is not null && auth.SenderDeviceId != expectedSenderDeviceId))
         {
-            await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.AuthAck(1, transferId, false, "UNAUTHORIZED"), ct: ct).ConfigureAwait(false);
-            throw new UnauthorizedAccessException("VTC1 authentication rejected.");
+            await writer.WriteAsync(new TcpFrame.AuthAck(0, transferId, false, "UNAUTHORIZED"), ct: ct).ConfigureAwait(false);
+            throw new UnauthorizedAccessException("VTC3 authentication rejected.");
         }
 
-        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.AuthAck(1, transferId, true), ct: ct).ConfigureAwait(false);
+        await writer.WriteAsync(new TcpFrame.AuthAck(0, transferId, true), ct: ct).ConfigureAwait(false);
         var itemMap = items.ToDictionary(item => item.Index);
         var completed = new List<string>(items.Count);
         var tempFiles = new Dictionary<int, string>();
         var streams = new Dictionary<int, FileStream>();
         var chunkSizes = new Dictionary<int, (int ChunkSize, long SizeBytes)>();
         long transferred = 0;
-        long lastSequence = 1;
+        // The file write of chunk N runs while chunk N+1 is read and opened (NFR-3). At most one
+        // is in flight; every other frame waits for it, so ItemEnd hashes a complete file.
+        Task? pendingWrite = null;
 
         try
         {
             while (true)
             {
+                // The VTC3 reader already rejected (fatally) a record for another transfer, out
+                // of order, replayed or tampered with.
                 var frame = await ReadAsync().ConfigureAwait(false)
-                    ?? throw new EndOfStreamException("VTC1 stream ended before TransferEnd.");
-                if (frame.TransferId != transferId || frame.Seq <= lastSequence)
-                    throw new InvalidDataException("Invalid VTC1 transfer id or sequence.");
-                lastSequence = frame.Seq;
+                    ?? throw new EndOfStreamException("VTC3 stream ended before TransferEnd.");
+
+                if (pendingWrite is not null)
+                {
+                    Task previous = pendingWrite;
+                    pendingWrite = null;
+                    await previous.ConfigureAwait(false);
+                }
 
                 switch (frame)
                 {
                     case TcpFrame.ItemBegin begin:
                     {
                         if (!itemMap.TryGetValue(begin.ItemIndex, out var item) || begin.SizeBytes != item.SizeBytes)
-                            throw new InvalidDataException($"Unexpected VTC1 item {begin.ItemIndex}.");
+                            throw new InvalidDataException($"Unexpected VTC3 item {begin.ItemIndex}.");
                         if (!RelativePath.IsValid(item.RelativePath))
                             throw new InvalidDataException($"Invalid inbound path: {item.RelativePath}");
                         string finalPath = Path.GetFullPath(Path.Combine(destinationRoot, item.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
@@ -237,8 +278,16 @@ public static class BulkTransfer
                         long offset = (long)chunk.ChunkIndex * itemInfo.ChunkSize;
                         if (chunk.ChunkIndex < 0 || offset < 0 || offset + chunk.Data.Length > itemInfo.SizeBytes)
                             throw new InvalidDataException("Chunk exceeds the declared item size.");
-                        output.Position = offset;
-                        await output.WriteAsync(chunk.Data, ct).ConfigureAwait(false);
+                        // On the pool: Windows completes a write that extends a file synchronously,
+                        // even on an overlapped handle, so awaiting it here would block the reader.
+                        // Safe only because chunk.Data is a copy (TcpFrameCodec.DecodePayload), not
+                        // a view of the reader's reused buffer.
+                        byte[] data = chunk.Data;
+                        pendingWrite = Task.Run(async () =>
+                        {
+                            output.Position = offset;
+                            await output.WriteAsync(data, ct).ConfigureAwait(false);
+                        }, ct);
                         transferred += chunk.Data.Length;
                         progress?.Report(transferred);
                         break;
@@ -262,7 +311,7 @@ public static class BulkTransfer
                             completed.Add(item.RelativePath);
                         }
                         string? error = ok ? null : "HASH_MISMATCH";
-                        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemResult(frame.Seq + 1, transferId, end.ItemIndex, ok, error), ct: ct).ConfigureAwait(false);
+                        await writer.WriteAsync(new TcpFrame.ItemResult(0, transferId, end.ItemIndex, ok, error), ct: ct).ConfigureAwait(false);
                         // The control-plane itemResult (04-PROTOCOL.md 6): Android's sender waits for it.
                         if (onItemResult is not null) await onItemResult(end.ItemIndex, ok, error, ct).ConfigureAwait(false);
                         if (!ok) throw new InvalidDataException($"SHA-256 verification failed for item {end.ItemIndex}.");
@@ -273,12 +322,16 @@ public static class BulkTransfer
                     case TcpFrame.Cancel cancel:
                         throw new OperationCanceledException($"Remote cancelled transfer: {cancel.Reason}", ct);
                     default:
-                        throw new InvalidDataException($"Unexpected VTC1 frame: {frame.GetType().Name}");
+                        throw new InvalidDataException($"Unexpected VTC3 frame: {frame.GetType().Name}");
                 }
             }
         }
         finally
         {
+            if (pendingWrite is not null)
+            {
+                try { await pendingWrite.ConfigureAwait(false); } catch { }
+            }
             foreach (var output in streams.Values) await output.DisposeAsync().ConfigureAwait(false);
             foreach (var temp in tempFiles.Values) TryDelete(temp);
         }
@@ -293,14 +346,14 @@ public static class BulkTransfer
         {
             // The sender accepted the decision but never connected (unreachable host, firewall,
             // it failed on its side). Without this bound the session answered "busy" for good.
-            throw new TimeoutException("VTC1 sender did not connect.", error);
+            throw new TimeoutException("VTC3 sender did not connect.", error);
         }
     }
 
     private static void ValidateChunkSize(int chunkSize)
     {
         if (chunkSize < 256 * 1024 || chunkSize > 4 * 1024 * 1024)
-            throw new ArgumentOutOfRangeException(nameof(chunkSize), "VTC1 chunk size must be 256 KiB..4 MiB.");
+            throw new ArgumentOutOfRangeException(nameof(chunkSize), "VTC3 chunk size must be 256 KiB..4 MiB.");
     }
 
     private static void TryDelete(string path)

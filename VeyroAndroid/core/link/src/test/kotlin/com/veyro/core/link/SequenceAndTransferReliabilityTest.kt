@@ -70,8 +70,7 @@ public class SequenceAndTransferReliabilityTest {
         receiverId: String = "receiver-dev",
     ): Pair<PeerConnection, PeerConnection> {
         val secret = ByteArray(32) { 88 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val initToRecv = Channel<Frame>(Channel.UNLIMITED)
         val recvToInit = Channel<Frame>(Channel.UNLIMITED)
 
@@ -97,28 +96,30 @@ public class SequenceAndTransferReliabilityTest {
 
         val initiator = PeerConnection(
             ws = initWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(initiatorId, receiverId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = initiatorId,
             tag = "TestSender",
             dispatcher = testDispatcher,
-            peerDeviceId = receiverId,
             enableHeartbeat = false,
         )
 
         val receiver = PeerConnection(
             ws = recvWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(receiverId, initiatorId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = receiverId,
             tag = "TestReceiver",
             dispatcher = testDispatcher,
-            peerDeviceId = initiatorId,
             enableHeartbeat = false,
         )
 
         initiator.start()
         receiver.start()
+        initiator.admit()
+        receiver.admit()
 
         return Pair(initiator, receiver)
     }
@@ -126,8 +127,7 @@ public class SequenceAndTransferReliabilityTest {
     @Test
     fun `many concurrent outbound sends cannot invert wire sequence order`() = runTest(testDispatcher) {
         val secret = ByteArray(32) { 55 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val wireFrames = Channel<Frame>(Channel.UNLIMITED)
         val dummyIncoming = Channel<Frame>(Channel.UNLIMITED)
 
@@ -138,13 +138,16 @@ public class SequenceAndTransferReliabilityTest {
 
         val connection = PeerConnection(
             ws = wsSession,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal("sender-dev", "test-peer"),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = "sender-dev",
             dispatcher = testDispatcher,
             enableHeartbeat = false,
         )
         connection.start()
+        val peerKeys = sessionKey.forLocal("test-peer", "sender-dev")
+        val peerOpener = SessionOpener(peerKeys.recvKey, "sender-dev", FrameCrypto.DIR_I2R)
 
         val sendCount = 50
         val jobs = (1..sendCount).map { i ->
@@ -160,12 +163,9 @@ public class SequenceAndTransferReliabilityTest {
             val frame = wireFrames.receive()
             assertTrue(frame is Frame.Text)
             val text = (frame as Frame.Text).readText()
-            val wire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), text)
-            val sealed = wire.toSealed()
-            assertNotNull(sealed)
-            val json = FrameCrypto.open(sealed!!, sessionKey)
-            assertNotNull(json)
-            val envelope = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), json!!)
+            // ADR-058: the implicit counter nonce means an out-of-order frame would not even open.
+            val json = peerOpener.open(text)
+            val envelope = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), json)
             receivedSeqs.add(envelope.seq)
         }
 

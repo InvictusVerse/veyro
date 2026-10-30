@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
+using Veyro.Core.Crypto;
 using Veyro.Core.Data;
 using Veyro.Core.Link;
 using Veyro.Core.Models;
@@ -58,13 +59,16 @@ public sealed class RemovalNoticeTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        var preamble = new LinkPreamble(PhoneId, "Phone", "android", Pair: LinkPreamble.PairConfirm,
-            Pk: Convert.ToBase64String(_phonePublicKey));
-        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(preamble)), WebSocketMessageType.Text, true, Ct);
-        byte[] buffer = new byte[4096];
-        WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, Ct);
-        return (socket, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, result.Count))!);
+        _dialer?.Dispose();
+        _dialer = new V3Dialer(PhoneId);
+        LinkPreambleAck ack = await _dialer.SendPreambleAsync(socket, "Phone", Ct, pair: LinkPreamble.PairConfirm, pk: _phonePublicKey);
+        return (socket, ack);
     }
+
+    private V3Dialer? _dialer;
+
+    /// <summary>This connection's v3 session keys, from the last dial and <paramref name="secret"/>.</summary>
+    private LinkKeys Keys(byte[] secret) => _dialer!.SessionKeys(PcId, secret);
 
     private async Task WaitUntilAsync(Func<bool> condition)
     {
@@ -81,7 +85,7 @@ public sealed class RemovalNoticeTests : IAsyncLifetime
 
         (ClientWebSocket socket, LinkPreambleAck ack) = await DialAsync();
         Assert.Equal(LinkPreambleAck.ModeSession, ack.Mode);
-        await using var session = new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId);
+        await using var session = new SecureLinkSession(socket, Keys(_secret));
         await session.SendAsync(new PeerMessage.Hello(PhoneId, "Phone", "android", PeerCapabilities.FileTransfer), Ct);
 
         SecureLinkMessage told = (await session.ReceiveAsync(Ct))!;
@@ -100,7 +104,7 @@ public sealed class RemovalNoticeTests : IAsyncLifetime
 
         (ClientWebSocket socket, LinkPreambleAck ack) = await DialAsync();
         Assert.Equal(LinkPreambleAck.ModeSession, ack.Mode);
-        await using var forger = new SecureLinkSession(socket, PhoneId, RandomNumberGenerator.GetBytes(32), encrypt: true, expectedPeerId: PcId);
+        await using var forger = new SecureLinkSession(socket, Keys(RandomNumberGenerator.GetBytes(32)));
         await forger.SendAsync(new PeerMessage.Hello(PhoneId, "Phone", "android", 0), Ct);
 
         // The PC drops the connection without sending anything that authenticates.
@@ -133,7 +137,7 @@ public sealed class RemovalNoticeTests : IAsyncLifetime
     {
         (ClientWebSocket socket, LinkPreambleAck ack) = await DialAsync();
         Assert.Equal(LinkPreambleAck.ModeSession, ack.Mode);
-        await using var session = new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId);
+        await using var session = new SecureLinkSession(socket, Keys(_secret));
         await session.SendAsync(new PeerMessage.Hello(PhoneId, "Phone", "android", PeerCapabilities.FileTransfer), Ct);
         await WaitUntilAsync(() => _registry.IsConnected(PhoneId));
 

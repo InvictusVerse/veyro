@@ -77,8 +77,7 @@ class TransferTest {
         receiverId: String = "receiver-device-id",
     ): Pair<PeerConnection, PeerConnection> {
         val secret = ByteArray(32) { 42 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val initToRecv = Channel<Frame>(Channel.UNLIMITED)
         val recvToInit = Channel<Frame>(Channel.UNLIMITED)
 
@@ -94,12 +93,12 @@ class TransferTest {
 
         val initiator = PeerConnection(
             ws = initWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(initiatorId, receiverId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = initiatorId,
             tag = "TestSender",
             dispatcher = testDispatcher,
-            peerDeviceId = receiverId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
@@ -107,12 +106,12 @@ class TransferTest {
 
         val receiver = PeerConnection(
             ws = recvWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(receiverId, initiatorId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = receiverId,
             tag = "TestReceiver",
             dispatcher = testDispatcher,
-            peerDeviceId = initiatorId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
@@ -120,6 +119,8 @@ class TransferTest {
 
         initiator.start()
         receiver.start()
+        initiator.admit()
+        receiver.admit()
 
         return Pair(initiator, receiver)
     }
@@ -386,12 +387,12 @@ class TransferTest {
         val ws = TestWebSocketSession()
         val activeConn = PeerConnection(
             ws = ws,
-            initialKey = FrameCrypto.sessionKeyFromBytes(secret),
-            initialEncrypt = true,
+            keys = TestKeyPairing(secret).forLocal(localId, peerId.value),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = localId,
             tag = "ActiveSession",
             dispatcher = testDispatcher,
-            peerDeviceId = peerId.value,
             enableHeartbeat = false,
         )
         activeConn.start()
@@ -610,11 +611,11 @@ class TransferTest {
                 // In background launch receiver session
                 val receiver = PeerConnection(
                     ws = wsReceiver,
-                    initialKey = FrameCrypto.sessionKeyFromBytes(secret),
-                    initialEncrypt = true,
+                    keys = TestKeyPairing(secret).forLocal(peerId.value, localId),
+                    // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+                    firstFrameTimeoutMs = Long.MAX_VALUE,
                     localDeviceId = peerId.value,
                     dispatcher = testDispatcher,
-                    peerDeviceId = localId,
                     enableHeartbeat = false,
                 )
                 receiver.start()
@@ -845,12 +846,12 @@ class TransferTest {
 
         val activeConn = PeerConnection(
             ws = TestWebSocketSession(),
-            initialKey = FrameCrypto.sessionKeyFromBytes(secret),
-            initialEncrypt = true,
+            keys = TestKeyPairing(secret).forLocal(localId, peerId.value),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = localId,
             tag = "Connection(stale-test)",
             dispatcher = testDispatcher,
-            peerDeviceId = peerId.value,
             enableHeartbeat = false,
         )
         activeConn.start()

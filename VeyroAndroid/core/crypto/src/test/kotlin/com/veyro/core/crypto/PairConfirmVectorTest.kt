@@ -88,26 +88,28 @@ class PairConfirmVectorTest {
         assertNotEquals(code, PairConfirm.code(pkB, pkA, nB, nA))
     }
 
+    // ADR-058: the v2 bootstrap key (bootstrapKeyHex in pair-confirm.json) is retired. The static
+    // half of the v3 confirm schedule goes through the same identity call; its value is pinned by
+    // link/pairing-schedule-v3.json (confirm: transcriptHex, staticKeyHex).
+    private val v3TranscriptHex = "96d9e04d4e6853917249a880f153f546ed1369d49887b2bd6d288401bea6b746"
+    private val v3StaticKeyHex = "e5a8fc1b998e73e89405ec843981059b50ba870a982fa854d773ee1bd812ad52"
+
     @Test
-    fun `bootstrap key from the shared secret`() {
-        val key = PairConfirm.bootstrapKey(unhex(sharedHex), nA, nB, idA, idB)
-        assertEquals(bootstrapKeyHex, hex(key))
+    fun `v3 static key from the shared secret`() {
+        val key = Hkdf.deriveKey(unhex(sharedHex), unhex(v3TranscriptHex), ConnectionKeySchedule.staticInfo(idA, idB), 32)
+        assertEquals(v3StaticKeyHex, hex(key))
     }
 
     @Test
-    fun `bootstrap key through the identity matches on both sides`() = runTest {
+    fun `v3 static key through the identity matches on both sides`() = runTest {
         val phone = DefaultIdentityManager(InMemorySeedStore().also { it.write(IdentityRecord(skA.copyOf(), DeviceId(idA), 0L)) })
         val pc = DefaultIdentityManager(InMemorySeedStore().also { it.write(IdentityRecord(skB.copyOf(), DeviceId(idB), 0L)) })
-        val salt = PairConfirm.bootstrapSalt(nA, nB)
-        val info = PairConfirm.bootstrapInfo(idA, idB)
-
-        val kPhone = phone.deriveSharedKey(pkB, salt, info)
-        val kPc = pc.deriveSharedKey(pkA, salt, info)
-
-        assertEquals(bootstrapKeyHex, hex(kPhone))
+        val info = ConnectionKeySchedule.staticInfo(idA, idB)
+        val kPhone = phone.deriveSharedKey(pkB, unhex(v3TranscriptHex), info)
+        val kPc = pc.deriveSharedKey(pkA, unhex(v3TranscriptHex), info)
+        assertEquals(v3StaticKeyHex, hex(kPhone))
         assertArrayEquals(kPhone, kPc)
     }
-
     @Test
     fun `shared vector file carries the pinned values`() {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile

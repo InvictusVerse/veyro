@@ -576,12 +576,11 @@ public sealed class DeviceNameLinkTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Renamed phone", "android"))),
-            WebSocketMessageType.Text, true, Ct);
-        byte[] buffer = new byte[4096];
-        await socket.ReceiveAsync(buffer, Ct);
+        var v3dial = new V3Dialer(PhoneId);
+        LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Renamed phone", Ct);
+        Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
         await using var phone = new SessionTransferTests.FakePhone(socket,
-            new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId));
+            new SecureLinkSession(socket, v3dial.SessionKeys(PcId, _secret)));
 
         // Renamed while away: the hello carries the new name.
         await phone.Session.SendAsync(new PeerMessage.Hello(PhoneId, "Renamed phone", "android",

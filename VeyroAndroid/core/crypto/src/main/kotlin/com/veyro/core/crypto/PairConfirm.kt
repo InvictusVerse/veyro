@@ -8,10 +8,10 @@ import java.security.SecureRandom
 /**
  * Confirm-code pairing (04-PROTOCOL.md section 4.3, ADR-031): the derivations both sides compute.
  *
- * A is the initiator (normally the phone), B the responder (normally the PC). Only fixed primitives
- * are used: SHA-256 for the commitment and the code, HKDF-SHA256 over an X25519 shared secret for
- * the bootstrap key. Nothing here is negotiated, so the two clients agree or the user sees two
- * different codes.
+ * A is the initiator (normally the phone), B the responder (normally the PC). Only SHA-256 is
+ * used here, for the commitment and the code. The bootstrap keys come from the v3 connection
+ * schedule ([ConnectionKeySchedule.pairConfirm], ADR-058). Nothing here is negotiated, so the two
+ * clients agree or the user sees two different codes.
  *
  * The commitment is what makes a 6-digit code sufficient: B fixes nB before it sees nA, and A
  * reveals nA before it sees nB, so a man in the middle cannot grind keys or nonces until the two
@@ -23,7 +23,6 @@ public object PairConfirm {
 
     public const val INFO_COMMIT: String = "veyro-commit-v1"
     public const val INFO_CODE: String = ProtocolConstants.INFO_SAS
-    public const val INFO_BOOTSTRAP: String = "veyro-pair-confirm-v1"
 
     public const val NONCE_SIZE: Int = 32
     public const val KEY_SIZE: Int = 32
@@ -67,36 +66,6 @@ public object PairConfirm {
     /** `123 456`, for display only. */
     public fun formatCode(code: String): String =
         if (code.length == 6) code.substring(0, 3) + " " + code.substring(3) else code
-
-    /** HKDF salt: `nA || nB`. */
-    public fun bootstrapSalt(nA: ByteArray, nB: ByteArray): ByteArray {
-        requireSize(nA, NONCE_SIZE, "nA")
-        requireSize(nB, NONCE_SIZE, "nB")
-        return nA + nB
-    }
-
-    /** HKDF info: `"veyro-pair-confirm-v1" || idA || idB`, US-ASCII DeviceId strings. */
-    public fun bootstrapInfo(idA: String, idB: String): ByteArray =
-        (INFO_BOOTSTRAP + idA + idB).toByteArray(Charsets.US_ASCII)
-
-    /**
-     * `K = HKDF-SHA256(ikm = sharedSecret, salt = nA || nB, info, 32)`.
-     *
-     * Exposed for the vectors and for callers that already hold a shared secret. Production code
-     * goes through [IdentityManager.deriveSharedKey] so the X25519 output never leaves the identity.
-     */
-    public fun bootstrapKey(
-        sharedSecret: ByteArray,
-        nA: ByteArray,
-        nB: ByteArray,
-        idA: String,
-        idB: String,
-    ): ByteArray = Hkdf.deriveKey(
-        ikm = sharedSecret,
-        salt = bootstrapSalt(nA, nB),
-        info = bootstrapInfo(idA, idB),
-        length = KEY_SIZE,
-    )
 
     private fun sha256(vararg parts: ByteArray): ByteArray =
         MessageDigest.getInstance("SHA-256").run {

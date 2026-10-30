@@ -10,21 +10,23 @@ using Xunit;
 
 namespace Veyro.Tests;
 
-/// <summary>QR pairing format and PC pairing window (04-PROTOCOL.md 4.2, ADR-030).</summary>
+/// <summary>QR pairing format 2 and PC pairing window (04-PROTOCOL.md 4.2, ADR-030, ADR-058).</summary>
 public sealed class PairingQrTests
 {
     private static readonly string Id = DeviceId.FromPublicKey(new byte[32]).Value;
+    private static readonly byte[] Secret = Enumerable.Range(0, 16).Select(i => (byte)i).ToArray();
+    private const string SecretText = "AAECAwQFBgcICQoLDA0ODw";
 
-    private static PairingQrPayload Payload(string name = "Test PC", string code = "012345") => new(
+    private static PairingQrPayload Payload(string name = "Test PC", byte[]? secret = null) => new(
         Id, name,
         [new IPEndPoint(IPAddress.Parse("192.168.1.20"), 5150), new IPEndPoint(IPAddress.Parse("10.0.0.5"), 5151)],
-        code, 1_700_000_000);
+        secret ?? Secret, 1_700_000_000);
 
     [Fact]
     public void Build_EmitsExactFormat()
     {
         Assert.Equal(
-            $"veyro:pair?v=1&id={Id}&n=Test%20PC&a=192.168.1.20:5150,10.0.0.5:5151&c=012345&e=1700000000",
+            $"veyro:pair?v=2&id={Id}&n=Test%20PC&a=192.168.1.20:5150,10.0.0.5:5151&s={SecretText}&e=1700000000",
             PairingQr.Build(Payload()));
     }
 
@@ -36,8 +38,22 @@ public sealed class PairingQrTests
         Assert.Equal(Id, parsed.DeviceId);
         Assert.Equal(name, parsed.Name);
         Assert.Equal(new[] { "192.168.1.20:5150", "10.0.0.5:5151" }, parsed.Endpoints.Select(e => e.ToString()));
-        Assert.Equal("012345", parsed.Code);
+        Assert.Equal(Secret, parsed.Secret);
         Assert.Equal(1_700_000_000, parsed.ExpiresAtUnixSeconds);
+    }
+
+    [Fact]
+    public void Secret_IsUnpaddedBase64UrlAndRoundTrips()
+    {
+        Assert.Equal(SecretText, PairingQr.EncodeSecret(Secret));
+        Assert.Equal(Secret, PairingQr.DecodeSecret(SecretText));
+        byte[] high = Enumerable.Repeat((byte)0xFB, 16).ToArray();
+        string encoded = PairingQr.EncodeSecret(high);
+        Assert.Equal(22, encoded.Length);
+        Assert.DoesNotContain('+', encoded);
+        Assert.DoesNotContain('/', encoded);
+        Assert.Equal(high, PairingQr.DecodeSecret(encoded));
+        Assert.Throws<ArgumentException>(() => PairingQr.Build(Payload(secret: new byte[15])));
     }
 
     [Fact]
@@ -85,44 +101,50 @@ public sealed class PairingQrTests
     }
 
     [Theory]
+    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
+    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=123456&e=1")]
+    [InlineData("veyro:pair?v=3&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id=NOTANID&n=x&a=192.168.1.2:5150&s={s}&e=1")]
     [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id=NOTANID&n=x&a=192.168.1.2:5150&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=12345&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=12345a&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=1234567&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=8.8.8.8:5150&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=127.0.0.1:5150&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=10.1:5150&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:0&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=10.0.0.1:1,10.0.0.2:1,10.0.0.3:1,10.0.0.4:1,10.0.0.5:1&c=123456&e=1")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=123456")]
-    [InlineData("veyro:pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=123456&e=-5")]
-    [InlineData("veyro:pair?v=1&v=1&id={id}&n=x&a=192.168.1.2:5150&c=123456&e=1")]
-    [InlineData("sefirah://pair?v=1&id={id}&n=x&a=192.168.1.2:5150&c=123456&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s=AAECAwQFBgcICQoLDA0OD&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s=AAECAwQFBgcICQoLDA0ODww&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s=AAECAwQFBgcICQoLDA0ODx&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s=AAECAwQFBgcICQoLDA0O+w&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s=AAECAwQFBgcICQoLDA0ODw==&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=8.8.8.8:5150&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=127.0.0.1:5150&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=10.1:5150&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:0&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=10.0.0.1:1,10.0.0.2:1,10.0.0.3:1,10.0.0.4:1,10.0.0.5:1&s={s}&e=1")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}")]
+    [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=-5")]
+    [InlineData("veyro:pair?v=2&v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
+    [InlineData("sefirah://pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
     [InlineData("")]
     public void TryParse_RejectsRuleViolations(string template)
     {
-        Assert.Null(PairingQr.TryParse(template.Replace("{id}", Id)));
+        Assert.Null(PairingQr.TryParse(template.Replace("{id}", Id).Replace("{s}", SecretText)));
     }
 
     [Fact]
     public void TryParse_RejectsNameLongerThan64BytesDecoded()
     {
         string tooLong = Uri.EscapeDataString(new string('n', 65));
-        Assert.Null(PairingQr.TryParse($"veyro:pair?v=1&id={Id}&n={tooLong}&a=192.168.1.2:5150&c=123456&e=1"));
+        Assert.Null(PairingQr.TryParse($"veyro:pair?v=2&id={Id}&n={tooLong}&a=192.168.1.2:5150&s={SecretText}&e=1"));
     }
 
     [Fact]
     public void TryParse_AcceptsLinkLocalAndPrivateRangesAndIgnoresUnknownKeys()
     {
         var parsed = PairingQr.TryParse(
-            $"veyro:pair?v=1&id={Id}&a=169.254.3.4:5150,172.16.0.1:5151,172.31.255.255:5152&c=000000&e=10&future=yes");
+            $"veyro:pair?v=2&id={Id}&a=169.254.3.4:5150,172.16.0.1:5151,172.31.255.255:5152&s={SecretText}&e=10&future=yes");
         Assert.NotNull(parsed);
         Assert.Equal(string.Empty, parsed.Name);
         Assert.Equal(3, parsed.Endpoints.Count);
-        Assert.Null(PairingQr.TryParse($"veyro:pair?v=1&id={Id}&a=172.32.0.1:5150&c=000000&e=10"));
+        Assert.Null(PairingQr.TryParse($"veyro:pair?v=2&id={Id}&a=172.32.0.1:5150&s={SecretText}&e=10"));
     }
 
     [Fact]
@@ -134,10 +156,11 @@ public sealed class PairingQrTests
     }
 
     [Fact]
-    public void Payload_ToStringDoesNotContainTheCode()
+    public void ToString_DoesNotContainTheSecret()
     {
-        Assert.DoesNotContain("987654", Payload(code: "987654").ToString());
-        Assert.DoesNotContain("987654", new PairingAttempt("987654", 3).ToString());
+        Assert.DoesNotContain(SecretText, Payload().ToString());
+        Assert.DoesNotContain(Convert.ToHexString(Secret), Payload().ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(SecretText, new PairingAttempt(Secret, 3).ToString());
     }
 }
 
@@ -150,7 +173,7 @@ public sealed class PairingWindowTests
         => new(Id, () => "Test PC", () => endpoints ?? Endpoints, time);
 
     [Fact]
-    public void Open_IssuesSixDigitCodeForFiveMinutesAndAQr()
+    public void Open_IssuesA128BitSecretForFiveMinutesAndAQr()
     {
         var time = new ManualTimeProvider();
         using var window = NewWindow(time);
@@ -160,16 +183,27 @@ public sealed class PairingWindowTests
 
         window.Open();
         Assert.True(window.IsOpen);
-        Assert.True(PairingQr.IsValidCode(window.Code));
         Assert.Equal(time.GetUtcNow() + TimeSpan.FromMinutes(5), window.ExpiresAt);
         Assert.Equal(TimeSpan.FromMinutes(5), window.Remaining);
 
         PairingQrPayload qr = PairingQr.TryParse(window.QrContent)!;
         Assert.Equal(Id, qr.DeviceId);
         Assert.Equal("Test PC", qr.Name);
-        Assert.Equal(window.Code, qr.Code);
+        Assert.Equal(PairingQr.SecretSize, qr.Secret.Length);
+        Assert.Equal(qr.Secret, window.TryBeginAttempt()!.Secret);
         Assert.Equal(window.ExpiresAt!.Value.ToUnixTimeSeconds(), qr.ExpiresAtUnixSeconds);
         Assert.Equal("192.168.1.20:5150", Assert.Single(qr.Endpoints).ToString());
+    }
+
+    [Fact]
+    public void Attempt_IsACopyTheCallerMayZero()
+    {
+        using var window = NewWindow(new ManualTimeProvider());
+        window.Open();
+        PairingAttempt attempt = window.TryBeginAttempt()!;
+        byte[] before = (byte[])attempt.Secret.Clone();
+        CryptographicOperations.ZeroMemory(attempt.Secret);
+        Assert.Equal(before, window.TryBeginAttempt()!.Secret);
     }
 
     [Fact]
@@ -198,13 +232,12 @@ public sealed class PairingWindowTests
         time.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(2, changes); // raised by the expiry timer, not by a read
         Assert.False(window.IsOpen);
-        Assert.Null(window.Code);
         Assert.Null(window.QrContent);
         Assert.Null(window.TryBeginAttempt());
     }
 
     [Fact]
-    public void FiveFailures_ReplaceTheCodeAndRestartTheClock()
+    public void FiveFailures_ReplaceTheSecretAndRestartTheClock()
     {
         var time = new ManualTimeProvider();
         using var window = NewWindow(time);
@@ -216,17 +249,18 @@ public sealed class PairingWindowTests
         {
             Assert.False(window.RecordFailure(first));
             Assert.Equal(i, window.Failures);
-            Assert.Equal(first, window.TryBeginAttempt());
+            Assert.Equal(first.Generation, window.TryBeginAttempt()!.Generation);
         }
 
         Assert.True(window.RecordFailure(first));
         PairingAttempt second = window.TryBeginAttempt()!;
         Assert.True(window.IsOpen);
         Assert.NotEqual(first.Generation, second.Generation);
+        Assert.NotEqual(first.Secret, second.Secret);
         Assert.Equal(0, window.Failures);
         Assert.Equal(TimeSpan.FromMinutes(5), window.Remaining);
 
-        // A late failure against the replaced code does not count against the new one.
+        // A late failure against the replaced secret does not count against the new one.
         Assert.False(window.RecordFailure(first));
         Assert.Equal(0, window.Failures);
         Assert.False(window.RecordFailure());
@@ -250,15 +284,17 @@ public sealed class PairingWindowTests
     }
 
     [Fact]
-    public void OpenAgain_IssuesANewCodeAndClose_EndsIt()
+    public void OpenAgain_IssuesANewSecretAndClose_EndsIt()
     {
         var time = new ManualTimeProvider();
         using var window = NewWindow(time);
         window.Open();
-        long first = window.TryBeginAttempt()!.Generation;
+        PairingAttempt first = window.TryBeginAttempt()!;
         time.Advance(TimeSpan.FromMinutes(3));
         window.Open();
-        Assert.NotEqual(first, window.TryBeginAttempt()!.Generation);
+        PairingAttempt second = window.TryBeginAttempt()!;
+        Assert.NotEqual(first.Generation, second.Generation);
+        Assert.NotEqual(first.Secret, second.Secret);
         Assert.Equal(TimeSpan.FromMinutes(5), window.Remaining);
 
         window.Close();
@@ -267,26 +303,35 @@ public sealed class PairingWindowTests
     }
 }
 
-/// <summary>The server side: an open window pairs without the prompt; a closed one still prompts.</summary>
+/// <summary>
+/// The server side of QR pairing (04-PROTOCOL.md 4.2, ADR-058): an open window pairs without a
+/// prompt when the phone proves the QR secret; a closed window refuses.
+/// </summary>
 [Collection(LinkServerCollection.Name)]
 public sealed class LinkServerPairingWindowTests
 {
     private sealed class Fixture : IAsyncDisposable
     {
         public string Root { get; } = Path.Combine(AppContext.BaseDirectory, "veyro-pairwin-" + Guid.NewGuid().ToString("N"));
-        public byte[] PcPublicKey { get; } = RandomNumberGenerator.GetBytes(32);
-        public byte[] PhonePublicKey { get; } = RandomNumberGenerator.GetBytes(32);
-        public string PcId => DeviceId.FromPublicKey(PcPublicKey).Value;
+        public DefaultIdentityManager Pc { get; } = new(new MemorySeedStore());
+        public byte[] PhoneSeed { get; } = RandomNumberGenerator.GetBytes(32);
+        public byte[] PhonePublicKey { get; }
+        public string PcId => Pc.DeviceId.Value;
         public string PhoneId => DeviceId.FromPublicKey(PhonePublicKey).Value;
         public FileTrustStore TrustStore { get; }
+        public HookedTrustStore Hooks { get; }
         public LinkServer Server { get; }
         public List<InboundPairingRequest> Prompts { get; } = [];
 
         public Fixture()
         {
+            PhonePublicKey = X25519Crypto.FromSeed(PhoneSeed).PublicKey;
             Directory.CreateDirectory(Root);
             TrustStore = new FileTrustStore(Root, new byte[32]);
-            Server = new LinkServer(PcId, "Test PC", TrustStore, Path.Combine(Root, "received"), PcPublicKey, _ => Task.FromResult(false));
+            Hooks = new HookedTrustStore(TrustStore);
+            Server = new LinkServer(PcId, "Test PC", Hooks, Path.Combine(Root, "received"), Pc.PublicKey.Span,
+                _ => Task.FromResult(false),
+                deriveSharedKey: (peerKey, salt, info) => Pc.DeriveSharedKey(peerKey, salt, info));
             Server.PairingAuthorizer = request =>
             {
                 lock (Prompts) Prompts.Add(request);
@@ -294,42 +339,36 @@ public sealed class LinkServerPairingWindowTests
             };
         }
 
-        public async Task<(ClientWebSocket Socket, LinkPreambleAck? Ack)> ConnectAsync(CancellationToken ct)
+        public async Task<(ClientWebSocket Socket, V3Dialer Dialer, LinkPreambleAck Ack)> ConnectQrAsync(CancellationToken ct)
         {
             var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{Server.Port}/veyro"), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Phone", "android"))),
-                WebSocketMessageType.Text, true, ct);
-            byte[] buffer = new byte[4096];
-            WebSocketReceiveResult frame = await socket.ReceiveAsync(buffer, ct);
-            return (socket, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, frame.Count)));
+            var dialer = new V3Dialer(PhoneId);
+            LinkPreambleAck ack = await dialer.SendPreambleAsync(socket, "Phone", ct, pair: LinkPreamble.PairQr, pk: PhonePublicKey);
+            return (socket, dialer, ack);
         }
 
         /// <summary>
-        /// The phone's PairHello as Android frames it: pairing-mode body carried as the raw UTF-8
-        /// JSON in <c>p</c>, authenticated by the bootstrap key.
+        /// The phone side of the QR schedule as Android runs it: <c>ikm = dh || staticKey || qrMix</c>,
+        /// and the pairHello proof over the transcript, both from <paramref name="qrSecret"/>.
         /// </summary>
-        public async Task SendPairHelloAsync(ClientWebSocket socket, byte[] bootstrap, CancellationToken ct)
+        public (LinkKeys Keys, string Proof) PhoneQrKeys(V3Dialer dialer, byte[] qrSecret)
         {
-            string envelope = PeerMessageJson.Encode(new LinkEnvelope
-            {
-                MsgId = Guid.NewGuid().ToString(),
-                From = PhoneId,
-                Seq = 1,
-                Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Payload = new PeerMessage.PairHello(PhoneId, "Phone", "android", "1.0",
-                    PublicKeyB64: Convert.ToBase64String(PhonePublicKey))
-            });
-            SealedFrame frame = FrameCrypto.Seal(envelope, bootstrap, encrypt: false, PhoneId);
-            string wire = PeerMessageJson.Encode(new LinkWireFrame
-            {
-                From = frame.FromDeviceId,
-                Nonce = Convert.ToBase64String(frame.Nonce),
-                Plaintext = Encoding.UTF8.GetString(frame.Body),
-                Mac = Convert.ToBase64String(frame.Mac)
-            });
-            await socket.SendAsync(Encoding.UTF8.GetBytes(wire), WebSocketMessageType.Text, true, ct);
+            byte[] pcKey = Convert.FromBase64String(dialer.Ack!.Pk!);
+            byte[] transcript = dialer.Transcript;
+            byte[] prk = Hkdf.Extract(transcript, X25519Crypto.SharedSecret(PhoneSeed, pcKey));
+            byte[] staticKey = Hkdf.Expand(prk, ConnectionKeySchedule.StaticInfo(PhoneId, PcId), 32);
+            LinkKeys keys = ConnectionKeySchedule.PairQr(LinkRole.Initiator, PhoneId, PcId, transcript,
+                dialer.Dh(), staticKey, ConnectionKeySchedule.QrMix(qrSecret));
+            byte[] proof = ConnectionKeySchedule.QrProof(ConnectionKeySchedule.QrProofKey(qrSecret), PhoneId, PcId, transcript);
+            return (keys, Convert.ToBase64String(proof));
         }
+
+        public PeerMessage.PairHello Hello(string? proof) => new(PhoneId, "Phone", "android", "1.0",
+            PublicKeyB64: Convert.ToBase64String(PhonePublicKey), QrProof: proof);
+
+        public byte[] WindowSecret()
+            => PairingQr.TryParse(Server.PairingWindow.QrContent)?.Secret ?? Server.PairingWindow.TryBeginAttempt()!.Secret;
 
         public async ValueTask DisposeAsync()
         {
@@ -344,7 +383,7 @@ public sealed class LinkServerPairingWindowTests
     }
 
     [Fact]
-    public async Task OpenWindow_PairsWithTheWindowCodeWithoutPrompting()
+    public async Task OpenWindow_PairsWithTheQrSecretWithoutPrompting()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         CancellationToken ct = timeout.Token;
@@ -353,29 +392,29 @@ public sealed class LinkServerPairingWindowTests
         f.Server.PairingCompleted += peer => completed.TrySetResult(peer);
         await f.Server.StartAsync();
         f.Server.PairingWindow.Open();
-        string code = f.Server.PairingWindow.Code!;
+        byte[] qrSecret = f.WindowSecret();
 
-        var (socket, ack) = await f.ConnectAsync(ct);
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
         using (socket)
+        using (dialer)
         {
-            Assert.Equal(LinkPreambleAck.ModePairing, ack?.Mode);
-
-            // The phone side of the bootstrap, keyed by the code it scanned.
-            byte[] bootstrap = FrameCrypto.DeriveBootstrapKey(code, f.PhoneId, f.PcId);
-            await using var phone = new SecureLinkSession(socket, f.PhoneId, bootstrap, encrypt: false, expectedPeerId: f.PcId);
-            await f.SendPairHelloAsync(socket, bootstrap, ct);
-            var pairOk = Assert.IsType<PeerMessage.PairOk>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
-
+            Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
             // Phone rule from 4.2: the answering key must be the one the QR's id commits to.
-            Assert.True(DeviceId.Matches(new DeviceId(f.PcId), Convert.FromBase64String(pairOk.PublicKeyB64!)));
+            Assert.True(DeviceId.Matches(new DeviceId(f.PcId), Convert.FromBase64String(ack.Pk!)));
 
-            phone.Rekey(Convert.FromBase64String(pairOk.SessionSecretB64));
+            var (keys, proof) = f.PhoneQrKeys(dialer, qrSecret);
+            await using var phone = new SecureLinkSession(socket, keys);
+            await phone.SendAsync(f.Hello(proof), ct);
+            var pairOk = Assert.IsType<PeerMessage.PairOk>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
+            Assert.Equal(f.PcId, pairOk.DeviceId);
+
+            await phone.SwitchToSessionAsync(Convert.FromBase64String(pairOk.SessionSecretB64), ct);
             await phone.SendAsync(new PeerMessage.Hello(f.PhoneId, "Phone", "android"), ct);
             Assert.IsType<PeerMessage.HelloAck>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
 
             TrustedPeer peer = await completed.Task.WaitAsync(ct);
             Assert.Equal(f.PhoneId, peer.DeviceId);
-            Assert.NotNull(f.TrustStore.GetPeer(f.PhoneId));
+            Assert.Equal(pairOk.SessionSecretB64, f.TrustStore.GetPeer(f.PhoneId)!.PairingSecretBase64);
             Assert.False(f.Server.PairingWindow.IsOpen);
             Assert.Empty(f.Prompts);
 
@@ -383,21 +422,65 @@ public sealed class LinkServerPairingWindowTests
         }
     }
 
+    /// <summary>
+    /// Review issue 2 (ADR-058): when pairOk cannot be sent after the trust write (here the
+    /// listener stops at that moment), the record is deleted again, nothing is reported paired,
+    /// and the attempt counts as a window failure.
+    /// </summary>
     [Fact]
-    public async Task OpenWindow_WrongCodeCountsAsAFailure()
+    public async Task OpenWindow_PairOkThatCannotBeSent_LeavesNoTrustAndCountsAsAFailure()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        await using var f = new Fixture();
+        bool completed = false;
+        f.Server.PairingCompleted += _ => completed = true;
+        await f.Server.StartAsync();
+        f.Server.PairingWindow.Open();
+        byte[] qrSecret = f.WindowSecret();
+        Task? stopping = null;
+        f.Hooks.AfterUpsert = _ =>
+        {
+            stopping = f.Server.StopAsync();
+            return Task.CompletedTask;
+        };
+
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
+        using (socket)
+        using (dialer)
+        {
+            Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
+            var (keys, proof) = f.PhoneQrKeys(dialer, qrSecret);
+            await using var phone = new SecureLinkSession(socket, keys);
+            await phone.SendAsync(f.Hello(proof), ct);
+            await Assert.ThrowsAnyAsync<Exception>(() => phone.ReceiveAsync(ct));
+            await WaitUntilAsync(() => stopping is not null, ct);
+            await stopping!.WaitAsync(ct);
+            Assert.Null(f.TrustStore.GetPeer(f.PhoneId));
+            Assert.Equal(1, f.Server.PairingWindow.Failures);
+            Assert.False(completed);
+        }
+    }
+
+    [Fact]
+    public async Task OpenWindow_WrongSecretCountsAsAFailure()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         CancellationToken ct = timeout.Token;
         await using var f = new Fixture();
         await f.Server.StartAsync();
         f.Server.PairingWindow.Open();
-        string wrong = f.Server.PairingWindow.Code == "000000" ? "111111" : "000000";
+        byte[] wrong = f.WindowSecret();
+        wrong[0] ^= 0x01;
 
-        var (socket, ack) = await f.ConnectAsync(ct);
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
         using (socket)
+        using (dialer)
         {
-            Assert.Equal(LinkPreambleAck.ModePairing, ack?.Mode);
-            await f.SendPairHelloAsync(socket, FrameCrypto.DeriveBootstrapKey(wrong, f.PhoneId, f.PcId), ct);
+            Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
+            var (keys, proof) = f.PhoneQrKeys(dialer, wrong);
+            await using var phone = new SecureLinkSession(socket, keys);
+            await phone.SendAsync(f.Hello(proof), ct);
 
             await WaitUntilAsync(() => f.Server.PairingWindow.Failures == 1, ct);
             Assert.True(f.Server.PairingWindow.IsOpen);
@@ -407,50 +490,68 @@ public sealed class LinkServerPairingWindowTests
     }
 
     [Fact]
-    public async Task OpenWindow_MissingPairHelloTimesOutAsAFailure()
+    public async Task OpenWindow_RightKeysButBadProofCountsAsAFailure()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         CancellationToken ct = timeout.Token;
         await using var f = new Fixture();
-        f.Server.WindowPairHelloTimeout = TimeSpan.FromMilliseconds(300);
         await f.Server.StartAsync();
         f.Server.PairingWindow.Open();
+        byte[] qrSecret = f.WindowSecret();
 
-        var (socket, ack) = await f.ConnectAsync(ct);
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
         using (socket)
+        using (dialer)
         {
-            Assert.Equal(LinkPreambleAck.ModePairing, ack?.Mode);
+            Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
+            var (keys, _) = f.PhoneQrKeys(dialer, qrSecret);
+            await using var phone = new SecureLinkSession(socket, keys);
+            await phone.SendAsync(f.Hello(Convert.ToBase64String(new byte[32])), ct);
+
             await WaitUntilAsync(() => f.Server.PairingWindow.Failures == 1, ct);
             Assert.Null(f.TrustStore.GetPeer(f.PhoneId));
         }
     }
 
     [Fact]
-    public async Task ClosedWindow_KeepsTheLegacyPrompt()
+    public async Task OpenWindow_MissingPairHelloTimesOutAsAFailure()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        await using var f = new Fixture();
+        f.Server.FirstFrameTimeout = TimeSpan.FromMilliseconds(300);
+        await f.Server.StartAsync();
+        f.Server.PairingWindow.Open();
+
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
+        using (socket)
+        using (dialer)
+        {
+            Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
+            await WaitUntilAsync(() => f.Server.PairingWindow.Failures == 1, ct);
+            Assert.Null(f.TrustStore.GetPeer(f.PhoneId));
+        }
+    }
+
+    [Fact]
+    public async Task ClosedWindow_RefusesWithoutPrompting()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         CancellationToken ct = timeout.Token;
         await using var f = new Fixture();
         await f.Server.StartAsync();
 
-        var (socket, ack) = await f.ConnectAsync(ct);
-        using (socket)
-        {
-            Assert.Equal(LinkPreambleAck.ModeRefused, ack?.Mode);
-            Assert.Equal("declined", ack?.Reason);
-            InboundPairingRequest prompt = Assert.Single(f.Prompts);
-            Assert.Equal(f.PhoneId, prompt.PeerDeviceId);
-            Assert.True(PairingQr.IsValidCode(prompt.Code));
-        }
-
-        // Opening and closing a window leaves the prompt path unchanged.
+        // Opening and closing a window leaves nothing behind.
         f.Server.PairingWindow.Open();
         f.Server.PairingWindow.Close();
-        var (again, againAck) = await f.ConnectAsync(ct);
-        using (again)
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
+        using (socket)
+        using (dialer)
         {
-            Assert.Equal(LinkPreambleAck.ModeRefused, againAck?.Mode);
-            Assert.Equal(2, f.Prompts.Count);
+            Assert.Equal(LinkPreambleAck.ModeRefused, ack.Mode);
+            Assert.Equal("no-pairing-window", ack.Reason);
+            Assert.Null(ack.Epk);
+            Assert.Empty(f.Prompts);
         }
     }
 }

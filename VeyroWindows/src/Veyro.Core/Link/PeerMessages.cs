@@ -4,12 +4,13 @@ using System.Text.Json.Serialization;
 namespace Veyro.Core.Link;
 
 /// <summary>
-/// Bumped on any change to bytes on the wire. 2 = confirm-code pairing (04-PROTOCOL.md 4.3,
-/// ADR-031); version 1 peers are refused.
+/// Bumped on any change to bytes on the wire. 3 = per-connection keys, ChaCha20-Poly1305 frames,
+/// QR secret and the sealed VTC3 data plane (ADR-058). Every other version is refused with
+/// unsupported-protocol-version; there is no v2 support.
 /// </summary>
 public static class LinkProtocol
 {
-    public const int Version = 2;
+    public const int Version = 3;
 }
 
 /// <summary>
@@ -24,10 +25,14 @@ public sealed record LinkPreamble(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("platform")] string Platform = "windows",
     [property: JsonPropertyName("protocolVersion")] int ProtocolVersion = LinkProtocol.Version,
-    /// <summary>How to pair if the receiver does not know us: confirm | qr | absent (legacy PIN).</summary>
+    /// <summary>How to pair if the receiver does not know us: confirm | qr | absent (session only; ADR-058 removed the PIN flow).</summary>
     [property: JsonPropertyName("pair")] string? Pair = null,
-    /// <summary>Sender's static X25519 public key, base64. Sent with pair = confirm.</summary>
-    [property: JsonPropertyName("pk")] string? Pk = null)
+    /// <summary>Sender's static X25519 public key, base64. Sent with pair = confirm and pair = qr.</summary>
+    [property: JsonPropertyName("pk")] string? Pk = null,
+    /// <summary>32 fresh random bytes, standard base64 (44 characters). Required (ADR-058).</summary>
+    [property: JsonPropertyName("cn")] string? Cn = null,
+    /// <summary>This connection's ephemeral X25519 public key, standard base64. Required.</summary>
+    [property: JsonPropertyName("epk")] string? Epk = null)
 {
     /// <summary>Compare a code on both screens and accept on the receiver (04-PROTOCOL.md 4.3).</summary>
     public const string PairConfirm = "confirm";
@@ -43,7 +48,11 @@ public sealed record LinkPreambleAck(
     /// <summary>Receiver's static X25519 public key, base64. Only with pairing-confirm.</summary>
     [property: JsonPropertyName("pk")] string? Pk = null,
     /// <summary>SHA-256("veyro-commit-v1" || pkB || pkA || nB), base64. Only with pairing-confirm.</summary>
-    [property: JsonPropertyName("commit")] string? Commit = null)
+    [property: JsonPropertyName("commit")] string? Commit = null,
+    /// <summary>The responder's 32 fresh bytes; with session, pairing-confirm and pairing (ADR-058).</summary>
+    [property: JsonPropertyName("cn")] string? Cn = null,
+    /// <summary>The responder's ephemeral X25519 public key; same modes as cn.</summary>
+    [property: JsonPropertyName("epk")] string? Epk = null)
 {
     public const string ModeSession = "session";
     public const string ModePairing = "pairing";
@@ -70,23 +79,17 @@ public sealed record LinkPairNonce(
 }
 
 /// <summary>
-/// The outer wire frame. Either <c>c</c> (session mode) or <c>p</c> (pairing mode) is set.
+/// The outer wire frame (04-PROTOCOL.md 5.1, ADR-058): <c>{"f": fromDeviceId, "c": base64(ciphertext || tag)}</c>.
 ///
-/// <c>f</c> travels in the clear because the receiver needs it to pick a key before it can verify
-/// anything. It is therefore untrusted — but it is also inside the MAC, so a frame cannot be
-/// re-attributed to a different sender without breaking the tag.
-///
-/// Declared with init properties rather than positionally so the emitted member order matches the
-/// Kotlin declaration order. JSON objects are unordered and the MAC covers the bytes as received,
-/// so order is not a correctness requirement — it just keeps packet captures comparable.
+/// Every frame after the ack is sealed with ChaCha20-Poly1305; the nonce is a counter each side
+/// tracks itself, so it is not on the wire. <c>f</c> is untrusted: the receiver requires it to
+/// equal the expected peer id and binds that id into the AAD. Declared with init properties so
+/// the member order matches the Kotlin declaration order.
 /// </summary>
 public sealed record LinkWireFrame
 {
     [JsonPropertyName("f")] public required string From { get; init; }
-    [JsonPropertyName("n")] public required string Nonce { get; init; }
-    [JsonPropertyName("c")] public string? Ciphertext { get; init; }
-    [JsonPropertyName("p")] public string? Plaintext { get; init; }
-    [JsonPropertyName("m")] public required string Mac { get; init; }
+    [JsonPropertyName("c")] public required string Ciphertext { get; init; }
 }
 
 /// <summary>
@@ -547,14 +550,16 @@ public abstract record PeerMessage
         [property: JsonPropertyName("brightness")] int? Brightness = null,
         [property: JsonPropertyName("autoBrightness")] bool? AutoBrightness = null) : PeerMessage;
 
-    /// <summary>Sent by the pairing initiator, under the PIN-derived bootstrap key.</summary>
+    /// <summary>Sent by the pairing initiator, sealed under the bootstrap keys (ADR-058).</summary>
     public sealed record PairHello(
         [property: JsonPropertyName("deviceId")] string DeviceId,
         [property: JsonPropertyName("deviceName")] string DeviceName,
         [property: JsonPropertyName("platform")] string Platform,
         [property: JsonPropertyName("appVersion")] string AppVersion,
         [property: JsonPropertyName("protocolVersion")] int ProtocolVersion = LinkProtocol.Version,
-        [property: JsonPropertyName("publicKeyB64")] string? PublicKeyB64 = null) : PeerMessage;
+        [property: JsonPropertyName("publicKeyB64")] string? PublicKeyB64 = null,
+        /// <summary>QR pairing: HMAC-SHA256(proofKey, ...) over the transcript, standard base64 (04-PROTOCOL.md 4.2).</summary>
+        [property: JsonPropertyName("qrProof")] string? QrProof = null) : PeerMessage;
 
     /// <summary>
     /// The target's answer, carrying the long-lived session secret.

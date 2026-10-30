@@ -126,7 +126,7 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         Registration? registration;
         lock (_gate) _sessions.TryGetValue(peerId, out registration);
         if (registration is null) throw new InvalidOperationException("The peer has no live session.");
-        return registration.Transfers.Register(transferId, registration.Send);
+        return registration.Transfers.Register(transferId, registration.Send, registration.ExportKey);
     }
 
     /// <summary>
@@ -137,9 +137,13 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     /// <paramref name="onReplaced"/> asks its loop to close the socket cleanly. Its later
     /// <see cref="Registration.Dispose"/> raises nothing.
     /// </summary>
-    internal Registration Open(string peerId, Func<PeerMessage, CancellationToken, Task> send, Action? onReplaced = null)
+    internal Registration Open(
+        string peerId,
+        Func<PeerMessage, CancellationToken, Task> send,
+        Func<string, byte[], int, byte[]>? exportKey = null,
+        Action? onReplaced = null)
     {
-        var registration = new Registration(this, peerId, send, onReplaced);
+        var registration = new Registration(this, peerId, send, onReplaced, exportKey);
         Registration? replaced;
         lock (_gate)
         {
@@ -248,16 +252,25 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         private int _disposed;
         private int _replaced;
 
-        public Registration(PeerSessionRegistry owner, string peerId, Func<PeerMessage, CancellationToken, Task> send, Action? onReplaced = null)
+        public Registration(
+            PeerSessionRegistry owner,
+            string peerId,
+            Func<PeerMessage, CancellationToken, Task> send,
+            Action? onReplaced = null,
+            Func<string, byte[], int, byte[]>? exportKey = null)
         {
             _owner = owner;
             PeerId = peerId;
             Send = send;
+            ExportKey = exportKey ?? ((_, _, _) => throw new InvalidOperationException("This session exports no keys."));
             _onReplaced = onReplaced;
         }
 
         public string PeerId { get; }
         public Func<PeerMessage, CancellationToken, Task> Send { get; }
+
+        /// <summary>The session's key exporter (04-PROTOCOL.md 5.4); data sockets derive their keys from it.</summary>
+        public Func<string, byte[], int, byte[]> ExportKey { get; }
 
         /// <summary>
         /// A newer session from the same peer took over. The loop stops publishing companion

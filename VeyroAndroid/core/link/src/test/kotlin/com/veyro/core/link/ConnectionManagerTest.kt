@@ -1,6 +1,7 @@
 package com.veyro.core.link
 
 import com.veyro.core.common.AppDispatchers
+import com.veyro.core.crypto.X25519
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
 import com.veyro.core.model.TrustedPeer
@@ -39,6 +40,7 @@ class ConnectionManagerTest {
 
     private val localPk = ByteArray(32) { 1 }
     private val localId = DeviceId.fromPublicKey(localPk).value
+    private val peer1 = DeviceId.fromPublicKey(ByteArray(32) { 3 }).value
 
     private fun testManager(
         client: ConnectionClient,
@@ -60,7 +62,7 @@ class ConnectionManagerTest {
     @Test
     fun `connect returns false and sets event when endpoints are empty`() = runTest(testDispatcher) {
         val manager = testManager(ConnectionClient())
-        val ok = manager.connect("peer-1", "Peer Device", emptyList())
+        val ok = manager.connect(peer1, "Peer Device", emptyList())
         assertFalse(ok)
         val event = manager.events.value
         assertTrue(event is ConnectionManager.ConnectionEvent.Failed)
@@ -76,7 +78,7 @@ class ConnectionManagerTest {
         }
         val manager = testManager(failingClient)
         val endpoints = listOf(Endpoint("192.168.31.47", 36737))
-        val ok = manager.connect("peer-1", "Remote Device", endpoints)
+        val ok = manager.connect(peer1, "Remote Device", endpoints)
 
         assertFalse(ok)
         val event = manager.events.value
@@ -96,7 +98,7 @@ class ConnectionManagerTest {
 
         var thrown = false
         try {
-            manager.connect("peer-1", "Remote Device", endpoints)
+            manager.connect(peer1, "Remote Device", endpoints)
         } catch (e: CancellationException) {
             thrown = true
         }
@@ -113,7 +115,7 @@ class ConnectionManagerTest {
         }
         val manager = testManager(client)
         val endpoints = listOf(Endpoint("192.168.31.47", 36737))
-        val ok = manager.connect("peer-1", "Remote Device", endpoints)
+        val ok = manager.connect(peer1, "Remote Device", endpoints)
 
         assertFalse(ok)
         val event = manager.events.value
@@ -131,7 +133,7 @@ class ConnectionManagerTest {
         }
         val manager = testManager(client)
         val endpoints = listOf(Endpoint("192.168.31.47", 36737))
-        val ok = manager.connect("peer-1", "Remote Device", endpoints)
+        val ok = manager.connect(peer1, "Remote Device", endpoints)
 
         assertFalse(ok)
         val event = manager.events.value
@@ -149,7 +151,7 @@ class ConnectionManagerTest {
         }
         val manager = testManager(client)
         val endpoints = listOf(Endpoint("192.168.31.47", 36737))
-        val ok = manager.connect("peer-1", "Remote Device", endpoints)
+        val ok = manager.connect(peer1, "Remote Device", endpoints)
 
         assertFalse(ok)
         val event = manager.events.value
@@ -169,7 +171,7 @@ class ConnectionManagerTest {
         }
         val manager = testManager(client)
         val endpoints = listOf(Endpoint("192.168.31.47", 36737))
-        val ok = manager.connect("peer-1", "Remote Device", endpoints)
+        val ok = manager.connect(peer1, "Remote Device", endpoints)
 
         assertFalse(ok)
         val event = manager.events.value
@@ -180,7 +182,8 @@ class ConnectionManagerTest {
     @Test
     fun `connect succeeds in session mode when peer is trusted`() = runTest(testDispatcher) {
         val fakeSession = FakeDefaultWebSocketSession()
-        fakeSession.incomingChannel.send(Frame.Text("""{"mode":"session"}"""))
+        val peer = V3TestPeer("00000000000000000000000000")
+        launch { fakeSession.incomingChannel.send(peer.answerSession(fakeSession.outgoingChannel.receive(), ByteArray(32))) }
 
         val client = object : ConnectionClient() {
             override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
@@ -219,11 +222,31 @@ class ConnectionManagerTest {
         )
     }
 
-    private suspend fun dialIn(manager: ConnectionManager, ws: FakeDefaultWebSocketSession, id: String) {
-        ws.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(id, "Office PC", platform = "windows"))),
-        )
-        manager.handleInbound(ws)
+    /** The first ack each fake dialler read, so tests can check it after the handshake consumed it. */
+    private val acks = java.util.concurrent.ConcurrentHashMap<FakeDefaultWebSocketSession, LinkPreambleAck>()
+
+    /**
+     * A v3 dialler on [ws] (ADR-058): preamble with fresh cn/epk, then, on a session ack, its first
+     * frame (hello) sealed under this connection's keys, built from [secret].
+     */
+    private suspend fun dialIn(
+        manager: ConnectionManager,
+        ws: FakeDefaultWebSocketSession,
+        id: String,
+        secret: ByteArray? = listOf(officePc, homePc).firstOrNull { it.deviceId.value == id }?.pairingSecret,
+    ) {
+        val peer = V3TestPeer(id)
+        ws.incomingChannel.send(peer.preamble())
+        kotlinx.coroutines.coroutineScope {
+            launch {
+                val ack = peer.readAck(ws.outgoingChannel.receive(), localId, secret)
+                acks[ws] = ack
+                if (ack.mode == LinkPreambleAck.MODE_SESSION && secret != null) {
+                    ws.incomingChannel.send(peer.seal(PeerMessage.Hello(id, "Office PC", "windows")))
+                }
+            }
+            manager.handleInbound(ws)
+        }
     }
 
     @Test
@@ -240,10 +263,7 @@ class ConnectionManagerTest {
         val transferWs = FakeDefaultWebSocketSession()
         val transferJob = launch { dialIn(manager, transferWs, officePc.deviceId.value) }
 
-        val ack = PeerMessageJson.codec.decodeFromString(
-            LinkPreambleAck.serializer(),
-            (transferWs.outgoingChannel.receive() as Frame.Text).readText(),
-        )
+        val ack = firstAck(transferWs)
         assertEquals("the transfer connection is admitted as a session", LinkPreambleAck.MODE_SESSION, ack.mode)
         assertTrue("the companion session must not be closed by the second one", companion!!.isConnected)
         assertSame("companion features stay on the first session", companion, manager.activeConnection.value)
@@ -277,10 +297,7 @@ class ConnectionManagerTest {
             client = ConnectionClient(),
             disconnectedByUser = { disconnected },
         )
-        fun ackOf(ws: FakeDefaultWebSocketSession) = PeerMessageJson.codec.decodeFromString(
-            LinkPreambleAck.serializer(),
-            (ws.outgoingChannel.tryReceive().getOrNull() as Frame.Text).readText(),
-        )
+        fun ackOf(ws: FakeDefaultWebSocketSession) = firstAck(ws)
 
         // ADR-053: the PC dialling back after a Disconnect gets "refused", so it stops retrying.
         val refused = FakeDefaultWebSocketSession()
@@ -380,7 +397,7 @@ class ConnectionManagerTest {
         client = client,
     )
 
-    private fun firstAck(ws: FakeDefaultWebSocketSession): LinkPreambleAck = PeerMessageJson.codec.decodeFromString(
+    private fun firstAck(ws: FakeDefaultWebSocketSession): LinkPreambleAck = acks[ws] ?: PeerMessageJson.codec.decodeFromString(
         LinkPreambleAck.serializer(),
         (ws.outgoingChannel.tryReceive().getOrNull() as Frame.Text).readText(),
     )
@@ -427,7 +444,11 @@ class ConnectionManagerTest {
     @Test
     fun `dialling a second PC while another is connected opens a second session`() = runTest(testDispatcher) {
         val homeWs = FakeDefaultWebSocketSession()
-        homeWs.incomingChannel.send(Frame.Text("""{"mode":"session"}"""))
+        val homeSide = V3TestPeer(homePc.deviceId.value)
+        launch {
+            homeWs.incomingChannel.send(homeSide.answerSession(homeWs.outgoingChannel.receive(), homePc.pairingSecret))
+            homeWs.incomingChannel.send(homeSide.seal(PeerMessage.HelloAck(homePc.deviceId.value, "Home PC", "windows")))
+        }
         val client = object : ConnectionClient() {
             override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = homeWs
         }
@@ -451,11 +472,14 @@ class ConnectionManagerTest {
     }
 
     @Test
-    fun `a paired PC opens its session while another device's pairing prompt is up`() = runTest(testDispatcher) {
+    fun `a paired PC opens its session while another device's pairing is in progress`() = runTest(testDispatcher) {
         val manager = twoPcManager()
         val strangerWs = FakeDefaultWebSocketSession()
-        val strangerJob = launch { dialIn(manager, strangerWs, "unknown-peer") }
-        assertNotNull("the stranger's pairing prompt is showing", manager.pendingInbound.value)
+        val strangerPk = X25519.publicKeyOf(X25519.generatePrivateKey())
+        val stranger = V3TestPeer(DeviceId.fromPublicKey(strangerPk).value)
+        strangerWs.incomingChannel.send(stranger.preamble("Phone B", "android", LinkPreamble.PAIR_CONFIRM, strangerPk))
+        val strangerJob = launch { manager.handleInbound(strangerWs) }
+        assertEquals("the stranger's confirm pairing is under way", LinkPreambleAck.MODE_PAIRING_CONFIRM, firstAck(strangerWs).mode)
 
         val officeWs = FakeDefaultWebSocketSession()
         val officeJob = launch { dialIn(manager, officeWs, officePc.deviceId.value) }
@@ -468,757 +492,96 @@ class ConnectionManagerTest {
         strangerJob.cancel()
     }
 
+    // ── Link protocol v3 (ADR-058) ────────────────────────────────────────────────────────
+
     @Test
-    fun `inbound pairing request prompts for consent with placeholder pin and peer details`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
+    fun `a dialled session is reported only after the peer's first frame opens (FR-C)`() = runTest(testDispatcher) {
+        val homeWs = FakeDefaultWebSocketSession()
+        val peer = V3TestPeer(homePc.deviceId.value)
+        val responder = launch { homeWs.incomingChannel.send(peer.answerSession(homeWs.outgoingChannel.receive(), homePc.pairingSecret)) }
+        val client = object : ConnectionClient() {
+            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = homeWs
+        }
+        val manager = twoPcManager(client)
+        assertTrue(manager.connect(homePc.deviceId.value, "Home PC", listOf(Endpoint("192.168.1.30", 5150))))
+        responder.join()
+        assertNull("nothing is claimed before the PC's first frame", manager.connectionFor(homePc.deviceId.value))
+        // The phone's own hello is sealed under this connection's keys and opens on the PC side.
+        assertTrue(peer.open(homeWs.outgoingChannel.receive()).payload is PeerMessage.Hello)
+        homeWs.incomingChannel.send(peer.seal(PeerMessage.HelloAck(homePc.deviceId.value, "Home PC", "windows")))
+        assertNotNull(manager.connectionFor(homePc.deviceId.value))
+        assertTrue(manager.events.value is ConnectionManager.ConnectionEvent.Connected)
+        homeWs.incomingChannel.close()
+    }
+
+    @Test
+    fun `an inbound session whose first frame fails is never claimed and does not replace the live one`() = runTest(testDispatcher) {
+        val manager = testManager(ConnectionClient(), trusted = officePc)
+        val liveWs = FakeDefaultWebSocketSession()
+        val liveJob = launch { dialIn(manager, liveWs, officePc.deviceId.value) }
+        val live = manager.activeConnection.value
+        assertNotNull(live)
+
+        // A replayed preamble: the attacker cannot build this connection's keys (wrong secret).
+        val attackerWs = FakeDefaultWebSocketSession()
+        val attackJob = launch { dialIn(manager, attackerWs, officePc.deviceId.value, secret = ByteArray(32) { 1 }) }
+        attackJob.join()
+        assertSame("the live session is untouched", live, manager.activeConnection.value)
+        assertTrue(live!!.isConnected)
+        assertEquals(1, manager.connections.value.size)
+        liveWs.incomingChannel.close()
+        liveJob.join()
+    }
+
+    @Test
+    fun `a dial whose ack lacks cn and epk fails without a session`() = runTest(testDispatcher) {
         val fakeSession = FakeDefaultWebSocketSession()
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-
-        val job = launch { manager.handleInbound(fakeSession) }
-
-        val pending = manager.pendingInbound.value
-        assertNotNull(pending)
-        assertEquals("peer-456", pending?.peerDeviceId)
-        assertEquals("Phone B", pending?.peerDeviceName)
-        assertEquals("...", pending?.pin)
-
-        // Clean up
-        manager.respondToInbound(false)
-        job.join()
-    }
-
-    @Test
-    fun `inbound pairing request approved by user mints PIN and sends pairing ack`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
-        val fakeSession = FakeDefaultWebSocketSession()
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-
-        val job = launch { manager.handleInbound(fakeSession) }
-
-        // User approves
-        manager.respondToInbound(true)
-
-        // State transitions to real 6-digit PIN
-        val pending = manager.pendingInbound.value
-        assertNotNull(pending)
-        assertEquals(6, pending?.pin?.length)
-        assertTrue(pending?.pin?.all(Char::isDigit) == true)
-
-        // Receiver must have sent LinkPreambleAck with mode="pairing"
-        val outFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
-        assertEquals(LinkPreambleAck.MODE_PAIRING, ack.mode)
-
-        // Cancel to finish job
-        manager.cancelInboundPairing()
-        job.join()
-    }
-
-    @Test
-    fun `inbound pairing request rejected by user sends declined ack and clears pending state`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
-        val fakeSession = FakeDefaultWebSocketSession()
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-
-        val job = launch { manager.handleInbound(fakeSession) }
-
-        assertNotNull(manager.pendingInbound.value)
-
-        // User rejects
-        manager.respondToInbound(false)
-        job.join()
-
-        // Pending state must be cleared immediately
-        assertNull(manager.pendingInbound.value)
-
-        // Receiver sent declined ack
-        val outFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
-        assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
-        assertEquals("declined", ack.reason)
-    }
-
-    @Test
-    fun `remote peer disconnect while awaiting consent immediately clears pending state`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
-        val fakeSession = FakeDefaultWebSocketSession()
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-
-        val job = launch { manager.handleInbound(fakeSession) }
-        assertNotNull(manager.pendingInbound.value)
-
-        // Remote peer drops connection (e.g. initiator cancelled or timed out)
-        fakeSession.incomingChannel.close()
-        job.join()
-
-        // Receiver must not hang in pending state
-        assertNull(manager.pendingInbound.value)
-    }
-
-    @Test
-    fun `same peer retrying pairing cancels stale request without busy lock`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
-        val session1 = FakeDefaultWebSocketSession()
-        session1.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-        val job1 = launch { manager.handleInbound(session1) }
-        assertEquals("...", manager.pendingInbound.value?.pin)
-
-        // Peer retries with new session
-        val session2 = FakeDefaultWebSocketSession()
-        session2.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-        val job2 = launch { manager.handleInbound(session2) }
-
-        // First job must finish and second becomes active
-        job1.join()
-        assertNotNull(manager.pendingInbound.value)
-        assertEquals("peer-456", manager.pendingInbound.value?.peerDeviceId)
-
-        // Approve second session
-        manager.respondToInbound(true)
-        val outFrame = session2.outgoingChannel.receive() as Frame.Text
-        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame.readText())
-        assertEquals(LinkPreambleAck.MODE_PAIRING, ack.mode)
-
-        manager.cancelInboundPairing()
-        job2.join()
-    }
-
-    @Test
-    fun `different peer connecting while pairing is in progress receives busy ack`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
-        val session1 = FakeDefaultWebSocketSession()
-        session1.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-1", "Phone 1")))
-        )
-        val job1 = launch { manager.handleInbound(session1) }
-
-        val session2 = FakeDefaultWebSocketSession()
-        session2.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-2", "Phone 2")))
-        )
-        val job2 = launch { manager.handleInbound(session2) }
-        job2.join()
-
-        val outFrame2 = session2.outgoingChannel.receive() as Frame.Text
-        val ack2 = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), outFrame2.readText())
-        assertEquals(LinkPreambleAck.MODE_BUSY, ack2.mode)
-        assertEquals("pairing-in-progress", ack2.reason)
-
-        manager.respondToInbound(false)
-        job1.join()
-    }
-
-    @Test
-    fun `cancelInboundPairing during PIN display closes session and clears state`() = runTest(testDispatcher) {
-        val manager = testManager(ConnectionClient())
-        val fakeSession = FakeDefaultWebSocketSession()
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble("peer-456", "Phone B")))
-        )
-
-        val job = launch { manager.handleInbound(fakeSession) }
-        manager.respondToInbound(true)
-        assertNotNull(manager.pendingInbound.value?.pin)
-
-        // User hits cancel during PIN display
-        manager.cancelInboundPairing()
-        job.join()
-
-        assertNull(manager.pendingInbound.value)
-    }
-
-    @Test
-    fun `inbound pairing with valid identity and public key persists trusted peer and succeeds`() = runTest(testDispatcher) {
-        var persistedPeer: TrustedPeer? = null
-        val manager = testManager(
-            client = ConnectionClient(),
-            saveTrustedPeer = { persistedPeer = it },
-        )
-
-        val peerPk = ByteArray(32) { 2 }
-        val peerId = DeviceId.fromPublicKey(peerPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
-
-        // 1. Send preamble from initiator
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Initiator Phone")))
-        )
-        val job = launch { manager.handleInbound(fakeSession) }
-
-        // 2. User consents
-        manager.respondToInbound(true)
-        val ackFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), ackFrame.readText())
-        assertEquals(LinkPreambleAck.MODE_PAIRING, ack.mode)
-
-        val pin = manager.pendingInbound.value?.pin
-        assertNotNull(pin)
-
-        // 3. Initiator sends PairHello with matching public key
-        val bootstrapKey = PairingRegistry().deriveInitiatorKey(pin!!, peerId, localId)
-        val hello = PeerMessage.PairHello(
-            deviceId = peerId,
-            deviceName = "Initiator Phone",
-            platform = "android",
-            appVersion = "0.1.0",
-            publicKeyB64 = Base64.getEncoder().encodeToString(peerPk),
-        )
-        val helloEnv = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = peerId,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = hello,
-        )
-        val sealedHello = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
-            bootstrapKey,
-            encrypt = false,
-            peerId,
-        )
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
-        )
-
-        // 4. Target sends sealed PairOk
-        val pairOkFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val pairOkWire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), pairOkFrame.readText())
-        val openedOkJson = FrameCrypto.open(pairOkWire.toSealed()!!, bootstrapKey)
-        assertNotNull(openedOkJson)
-        val okEnv = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), openedOkJson!!)
-        assertTrue(okEnv.payload is PeerMessage.PairOk)
-        val pairOk = okEnv.payload as PeerMessage.PairOk
-        assertEquals(localId, pairOk.deviceId)
-        assertNotNull(pairOk.publicKeyB64)
-
-        // 5. Verify persistence and success event
-        assertNotNull(persistedPeer)
-        assertEquals(peerId, persistedPeer!!.deviceId.value)
-        assertTrue(persistedPeer!!.staticPublicKey.contentEquals(peerPk))
-        assertTrue("Persisted peer must be self-consistent", persistedPeer!!.isSelfConsistent())
-
-        val event = manager.events.value
-        assertTrue(event is ConnectionManager.ConnectionEvent.Paired)
-        assertEquals(peerId, (event as ConnectionManager.ConnectionEvent.Paired).peer.deviceId.value)
-
-        manager.disconnect()
-        job.join()
-    }
-
-    @Test
-    fun `inbound pairing with mismatched identity is rejected without persisting`() = runTest(testDispatcher) {
-        var persistedPeer: TrustedPeer? = null
-        val manager = testManager(
-            client = ConnectionClient(),
-            saveTrustedPeer = { persistedPeer = it },
-        )
-
-        val peerPk = ByteArray(32) { 2 }
-        val peerId = DeviceId.fromPublicKey(peerPk).value
-        val mismatchedPk = ByteArray(32) { 9 } // does not match peerId
-        val fakeSession = FakeDefaultWebSocketSession()
-
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Attacker Phone")))
-        )
-        val job = launch { manager.handleInbound(fakeSession) }
-
-        manager.respondToInbound(true)
-        fakeSession.outgoingChannel.receive() // Ack
-        val pin = manager.pendingInbound.value?.pin
-        assertNotNull(pin)
-
-        val bootstrapKey = PairingRegistry().deriveInitiatorKey(pin!!, peerId, localId)
-        val hello = PeerMessage.PairHello(
-            deviceId = peerId,
-            deviceName = "Attacker Phone",
-            platform = "android",
-            appVersion = "0.1.0",
-            publicKeyB64 = Base64.getEncoder().encodeToString(mismatchedPk),
-        )
-        val helloEnv = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = peerId,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = hello,
-        )
-        val sealedHello = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
-            bootstrapKey,
-            encrypt = false,
-            peerId,
-        )
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
-        )
-
-        job.join()
-
-        assertNull("Mismatched identity must never be persisted", persistedPeer)
-        val event = manager.events.value
-        assertTrue(event is ConnectionManager.ConnectionEvent.Failed)
-        assertEquals("Peer identity does not match public key", (event as ConnectionManager.ConnectionEvent.Failed).reason)
-    }
-
-    @Test
-    fun `inbound pairing where saveTrustedPeer throws closes session and does not report Paired`() = runTest(testDispatcher) {
-        val manager = testManager(
-            client = ConnectionClient(),
-            saveTrustedPeer = { throw IllegalArgumentException("Disk write failed") },
-        )
-
-        val peerPk = ByteArray(32) { 2 }
-        val peerId = DeviceId.fromPublicKey(peerPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
-
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(peerId, "Initiator Phone")))
-        )
-        val job = launch { manager.handleInbound(fakeSession) }
-
-        manager.respondToInbound(true)
-        fakeSession.outgoingChannel.receive()
-        val pin = manager.pendingInbound.value?.pin
-        assertNotNull(pin)
-
-        val bootstrapKey = PairingRegistry().deriveInitiatorKey(pin!!, peerId, localId)
-        val hello = PeerMessage.PairHello(
-            deviceId = peerId,
-            deviceName = "Initiator Phone",
-            platform = "android",
-            appVersion = "0.1.0",
-            publicKeyB64 = Base64.getEncoder().encodeToString(peerPk),
-        )
-        val helloEnv = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = peerId,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = hello,
-        )
-        val sealedHello = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), helloEnv),
-            bootstrapKey,
-            encrypt = false,
-            peerId,
-        )
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedHello.toWire()))
-        )
-
-        job.join()
-
-        val event = manager.events.value
-        assertTrue("Must report Failed when persistence throws", event is ConnectionManager.ConnectionEvent.Failed)
-        assertEquals("Could not save pairing on this device", (event as ConnectionManager.ConnectionEvent.Failed).reason)
-        assertFalse("Must never emit Paired state if persistence failed", event is ConnectionManager.ConnectionEvent.Paired)
-    }
-
-    @Test
-    fun `outbound pairing with valid identity and public key persists trusted peer and succeeds`() = runTest(testDispatcher) {
-        var persistedPeer: TrustedPeer? = null
-        val targetPk = ByteArray(32) { 3 }
-        val targetId = DeviceId.fromPublicKey(targetPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
+        fakeSession.incomingChannel.send(Frame.Text("""{"mode":"session"}"""))
         val client = object : ConnectionClient() {
             override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
         }
-        val manager = testManager(
-            client = client,
-            saveTrustedPeer = { persistedPeer = it },
-        )
-
-        val pin = "654321"
-        val bootstrapKey = FrameCrypto.deriveBootstrapKey(pin, localId, targetId)
-
-        val connectJob = launch {
-            manager.connect(targetId, "Target Phone", listOf(Endpoint("192.168.1.10", 3000)))
-        }
-
-        // Preamble sent from initiator
-        val preambleFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val preamble = PeerMessageJson.codec.decodeFromString(LinkPreamble.serializer(), preambleFrame.readText())
-        assertEquals(localId, preamble.id)
-
-        // Remote target replies with MODE_PAIRING ack
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
-        )
-
-        // Initiator user submits PIN
-        manager.submitPin(pin)
-
-        // Initiator sends PairHello
-        val pairHelloFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val helloWire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), pairHelloFrame.readText())
-        val openedHelloJson = FrameCrypto.open(helloWire.toSealed()!!, bootstrapKey)
-        assertNotNull(openedHelloJson)
-        val helloEnv = PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), openedHelloJson!!)
-        val helloMsg = helloEnv.payload as PeerMessage.PairHello
-        assertEquals(localId, helloMsg.deviceId)
-        assertNotNull(helloMsg.publicKeyB64)
-
-        // Target responds with sealed PairOk
-        val secret = ByteArray(32) { 7 }
-        val pairOk = PeerMessage.PairOk(
-            deviceId = targetId,
-            deviceName = "Target Phone",
-            platform = "android",
-            sessionSecretB64 = Base64.getEncoder().encodeToString(secret),
-            publicKeyB64 = Base64.getEncoder().encodeToString(targetPk),
-        )
-        val okEnv = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = targetId,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = pairOk,
-        )
-        val sealedOk = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
-            bootstrapKey,
-            encrypt = true,
-            targetId,
-        )
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
-        )
-
-        connectJob.join()
-
-        assertNotNull(persistedPeer)
-        assertEquals(targetId, persistedPeer!!.deviceId.value)
-        assertTrue(persistedPeer!!.staticPublicKey.contentEquals(targetPk))
-        assertTrue("Persisted peer must be self-consistent", persistedPeer!!.isSelfConsistent())
-
-        val event = manager.events.value
-        assertTrue(event is ConnectionManager.ConnectionEvent.Paired)
-        assertEquals(targetId, (event as ConnectionManager.ConnectionEvent.Paired).peer.deviceId.value)
-
-        manager.disconnect()
-    }
-
-    @Test
-    fun `outbound pairing with mismatched target identity in PairOk fails without persisting`() = runTest(testDispatcher) {
-        var persistedPeer: TrustedPeer? = null
-        val targetPk = ByteArray(32) { 3 }
-        val targetId = DeviceId.fromPublicKey(targetPk).value
-        val mismatchedPk = ByteArray(32) { 8 } // does not match targetId
-        val fakeSession = FakeDefaultWebSocketSession()
-        val client = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
-        }
-        val manager = testManager(
-            client = client,
-            saveTrustedPeer = { persistedPeer = it },
-        )
-
-        val pin = "654321"
-        val bootstrapKey = FrameCrypto.deriveBootstrapKey(pin, localId, targetId)
-
-        val connectJob = launch {
-            manager.connect(targetId, "Target Phone", listOf(Endpoint("192.168.1.10", 3000)))
-        }
-
-        fakeSession.outgoingChannel.receive() // preamble
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
-        )
-        manager.submitPin(pin)
-        fakeSession.outgoingChannel.receive() // PairHello
-
-        // Target responds with mismatched publicKeyB64
-        val secret = ByteArray(32) { 7 }
-        val pairOk = PeerMessage.PairOk(
-            deviceId = targetId,
-            deviceName = "Target Phone",
-            platform = "android",
-            sessionSecretB64 = Base64.getEncoder().encodeToString(secret),
-            publicKeyB64 = Base64.getEncoder().encodeToString(mismatchedPk),
-        )
-        val okEnv = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = targetId,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = pairOk,
-        )
-        val sealedOk = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
-            bootstrapKey,
-            encrypt = true,
-            targetId,
-        )
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
-        )
-
-        connectJob.join()
-
-        assertNull("Mismatched target identity must never be persisted", persistedPeer)
-        val event = manager.events.value
-        assertTrue(event is ConnectionManager.ConnectionEvent.Failed)
-        assertEquals("Peer identity does not match public key", (event as ConnectionManager.ConnectionEvent.Failed).reason)
-    }
-
-    @Test
-    fun `outbound pairing where saveTrustedPeer throws fails and does not report Paired`() = runTest(testDispatcher) {
-        val targetPk = ByteArray(32) { 3 }
-        val targetId = DeviceId.fromPublicKey(targetPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
-        val client = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
-        }
-        val manager = testManager(
-            client = client,
-            saveTrustedPeer = { throw IllegalStateException("Database locked") },
-        )
-
-        val pin = "654321"
-        val bootstrapKey = FrameCrypto.deriveBootstrapKey(pin, localId, targetId)
-
-        val connectJob = launch {
-            manager.connect(targetId, "Target Phone", listOf(Endpoint("192.168.1.10", 3000)))
-        }
-
-        fakeSession.outgoingChannel.receive()
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)))
-        )
-        manager.submitPin(pin)
-        fakeSession.outgoingChannel.receive()
-
-        val secret = ByteArray(32) { 7 }
-        val pairOk = PeerMessage.PairOk(
-            deviceId = targetId,
-            deviceName = "Target Phone",
-            platform = "android",
-            sessionSecretB64 = Base64.getEncoder().encodeToString(secret),
-            publicKeyB64 = Base64.getEncoder().encodeToString(targetPk),
-        )
-        val okEnv = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = targetId,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = pairOk,
-        )
-        val sealedOk = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), okEnv),
-            bootstrapKey,
-            encrypt = true,
-            targetId,
-        )
-        fakeSession.incomingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealedOk.toWire()))
-        )
-
-        connectJob.join()
-
-        val event = manager.events.value
-        assertTrue("Must report Failed when persistence throws", event is ConnectionManager.ConnectionEvent.Failed)
-        assertEquals("Could not save pairing on this device", (event as ConnectionManager.ConnectionEvent.Failed).reason)
-        assertFalse("Must never emit Paired state if persistence failed", event is ConnectionManager.ConnectionEvent.Paired)
-    }
-
-    // ── QR code pairing (ADR-030, 04-PROTOCOL.md section 4.2) ──────────────────────────────
-
-    private fun sealedPairOk(
-        key: javax.crypto.SecretKey,
-        deviceId: String,
-        publicKey: ByteArray,
-        name: String = "Office PC",
-        /** The id the frame is bound to; the dialled id, since that is who the phone expects. */
-        sender: String = deviceId,
-    ): Frame.Text {
-        val pairOk = PeerMessage.PairOk(
-            deviceId = deviceId,
-            deviceName = name,
-            platform = "windows",
-            sessionSecretB64 = Base64.getEncoder().encodeToString(ByteArray(32) { 7 }),
-            publicKeyB64 = Base64.getEncoder().encodeToString(publicKey),
-        )
-        val env = LinkEnvelope(
-            msgId = UUID.randomUUID().toString(),
-            from = sender,
-            seq = 1L,
-            ts = System.currentTimeMillis(),
-            payload = pairOk,
-        )
-        val sealed = FrameCrypto.seal(
-            PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), env),
-            key,
-            encrypt = true,
-            sender,
-        )
-        return Frame.Text(PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire()))
-    }
-
-    private val pairingAck: Frame.Text
-        get() = Frame.Text(
-            PeerMessageJson.codec.encodeToString(LinkPreambleAck.serializer(), LinkPreambleAck(LinkPreambleAck.MODE_PAIRING)),
-        )
-
-    @Test
-    fun `pairWithCode uses the scanned code without prompting and persists the scanned PC`() = runTest(testDispatcher) {
-        var persistedPeer: TrustedPeer? = null
-        val pcPk = ByteArray(32) { 4 }
-        val pcId = DeviceId.fromPublicKey(pcPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
-        val client = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
-        }
-        val manager = testManager(client = client, saveTrustedPeer = { persistedPeer = it })
-        val code = "246810"
-        val key = FrameCrypto.deriveBootstrapKey(code, localId, pcId)
-
-        val progress = mutableListOf<ConnectionManager.CodePairingProgress>()
-        val job = launch {
-            manager.pairWithCode(pcId, "Office PC", listOf(Endpoint("192.168.1.20", 5150)), code)
-                .collect { progress += it }
-        }
-
-        fakeSession.outgoingChannel.receive() // preamble
-        fakeSession.incomingChannel.send(pairingAck)
-        assertNull("A scanned code must not prompt for a PIN", manager.pendingOutbound.value)
-
-        // PairHello must be sealed under the key derived from the scanned code.
-        val helloFrame = fakeSession.outgoingChannel.receive() as Frame.Text
-        val helloWire = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), helloFrame.readText())
-        assertNotNull(FrameCrypto.open(helloWire.toSealed()!!, key))
-
-        fakeSession.incomingChannel.send(sealedPairOk(key, pcId, pcPk))
-        job.join()
-
-        assertEquals(ConnectionManager.CodePairingProgress.Connecting, progress[0])
-        assertEquals(ConnectionManager.CodePairingProgress.Securing, progress[1])
-        val last = progress.last()
-        assertTrue("expected Paired, got $last", last is ConnectionManager.CodePairingProgress.Paired)
-        assertEquals(pcId, persistedPeer?.deviceId?.value)
-        assertEquals(3, progress.size)
-
-        manager.disconnect()
-    }
-
-    @Test
-    fun `pairWithCode aborts without persisting when a different identity answers`() = runTest(testDispatcher) {
-        var persistedPeer: TrustedPeer? = null
-        val pcId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
-        // Someone else at the scanned address who also learned the code: their PairOk is
-        // self-consistent (id matches their own key) and sealed correctly, but it is not the PC.
-        val impostorPk = ByteArray(32) { 6 }
-        val impostorId = DeviceId.fromPublicKey(impostorPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
-        val client = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
-        }
-        val manager = testManager(client = client, saveTrustedPeer = { persistedPeer = it })
-        val code = "135790"
-        val key = FrameCrypto.deriveBootstrapKey(code, localId, pcId)
-
-        val progress = mutableListOf<ConnectionManager.CodePairingProgress>()
-        val job = launch {
-            manager.pairWithCode(pcId, "Office PC", listOf(Endpoint("192.168.1.20", 5150)), code)
-                .collect { progress += it }
-        }
-        fakeSession.outgoingChannel.receive() // preamble
-        fakeSession.incomingChannel.send(pairingAck)
-        fakeSession.outgoingChannel.receive() // PairHello
-        fakeSession.incomingChannel.send(sealedPairOk(key, impostorId, impostorPk, sender = pcId))
-        job.join()
-
-        assertNull("An identity mismatch must never be persisted", persistedPeer)
+        val manager = testManager(client, trusted = officePc)
+        assertFalse(manager.connect(officePc.deviceId.value, "Office PC", listOf(Endpoint("192.168.1.20", 5150))))
         assertNull(manager.activeConnection.value)
-        val last = progress.last()
-        assertTrue("expected Failed, got $last", last is ConnectionManager.CodePairingProgress.Failed)
-        assertEquals(
-            ConnectionManager.CodePairingFailure.IDENTITY_MISMATCH,
-            (last as ConnectionManager.CodePairingProgress.Failed).failure,
-        )
-        assertFalse(manager.events.value is ConnectionManager.ConnectionEvent.Paired)
     }
 
     @Test
-    fun `plain connect still accepts a self-consistent identity that differs from the dialled id`() = runTest(testDispatcher) {
-        // The scanned-id check applies only when an expected id is supplied; the typed-PIN path
-        // is unchanged by ADR-030.
-        var persistedPeer: TrustedPeer? = null
-        val dialledId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
-        val otherPk = ByteArray(32) { 6 }
-        val otherId = DeviceId.fromPublicKey(otherPk).value
-        val fakeSession = FakeDefaultWebSocketSession()
-        val client = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession = fakeSession
-        }
-        val manager = testManager(client = client, saveTrustedPeer = { persistedPeer = it })
-        val pin = "111222"
-        val key = FrameCrypto.deriveBootstrapKey(pin, localId, dialledId)
-
-        val job = launch { manager.connect(dialledId, "PC", listOf(Endpoint("192.168.1.20", 5150))) }
-        fakeSession.outgoingChannel.receive()
-        fakeSession.incomingChannel.send(pairingAck)
-        manager.submitPin(pin)
-        fakeSession.outgoingChannel.receive()
-        fakeSession.incomingChannel.send(sealedPairOk(key, otherId, otherPk, sender = dialledId))
-        job.join()
-
-        assertEquals(otherId, persistedPeer?.deviceId?.value)
-        manager.disconnect()
+    fun `an unknown device without a pairing mode is refused not-paired`() = runTest(testDispatcher) {
+        val manager = testManager(ConnectionClient())
+        val ws = FakeDefaultWebSocketSession()
+        val stranger = DeviceId.fromPublicKey(ByteArray(32) { 77 }).value
+        ws.incomingChannel.send(V3TestPeer(stranger).preamble("Phone B", "android"))
+        manager.handleInbound(ws)
+        val ack = firstAck(ws)
+        assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
+        assertEquals("not-paired", ack.reason)
+        assertNull("no consent prompt any more", manager.pendingInbound.value)
     }
 
     @Test
-    fun `pairWithCode reports unreachable when no endpoint answers`() = runTest(testDispatcher) {
-        val failingClient = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession {
-                throw ConnectException("Connection refused")
-            }
-        }
-        val manager = testManager(failingClient)
-        val pcId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
-        val progress = manager.pairWithCode(
-            pcId,
-            "Office PC",
-            listOf(Endpoint("192.168.1.20", 5150), Endpoint("10.0.0.5", 5150)),
-            "123456",
-        ).toList()
-
-        assertEquals(ConnectionManager.CodePairingProgress.Connecting, progress.first())
-        val last = progress.last() as ConnectionManager.CodePairingProgress.Failed
-        assertEquals(ConnectionManager.CodePairingFailure.UNREACHABLE, last.failure)
-        assertEquals(2, progress.size)
+    fun `a v2 preamble is refused unsupported-protocol-version`() = runTest(testDispatcher) {
+        val manager = testManager(ConnectionClient(), trusted = officePc)
+        val ws = FakeDefaultWebSocketSession()
+        ws.incomingChannel.send(V3TestPeer(officePc.deviceId.value).preamble(protocolVersion = 2))
+        manager.handleInbound(ws)
+        assertEquals("unsupported-protocol-version", firstAck(ws).reason)
+        assertNull(manager.activeConnection.value)
     }
 
     @Test
-    fun `pairWithCode rejects a malformed code before dialling`() = runTest(testDispatcher) {
-        var dialled = false
-        val client = object : ConnectionClient() {
-            override suspend fun connect(host: String, port: Int, path: String): DefaultWebSocketSession {
-                dialled = true
-                throw ConnectException("unexpected")
-            }
-        }
-        val manager = testManager(client)
-        val pcId = DeviceId.fromPublicKey(ByteArray(32) { 4 }).value
-        val last = manager.pairWithCode(pcId, "PC", listOf(Endpoint("192.168.1.20", 5150)), "12a456")
-            .toList().last() as ConnectionManager.CodePairingProgress.Failed
-        assertEquals(ConnectionManager.CodePairingFailure.CODE_REJECTED, last.failure)
-        assertFalse(dialled)
+    fun `an unparsable preamble id is refused invalid-identity, our own id closes`() = runTest(testDispatcher) {
+        val manager = testManager(ConnectionClient())
+        val bad = FakeDefaultWebSocketSession()
+        bad.incomingChannel.send(V3TestPeer("not a device id").preamble())
+        manager.handleInbound(bad)
+        assertEquals("invalid-identity", firstAck(bad).reason)
+
+        val self = FakeDefaultWebSocketSession()
+        self.incomingChannel.send(V3TestPeer(localId).preamble())
+        manager.handleInbound(self)
+        assertNull("our own id gets no ack, only a close", self.outgoingChannel.tryReceive().getOrNull()?.takeIf { it is Frame.Text })
     }
 }
-
 @OptIn(io.ktor.utils.io.InternalAPI::class)
 private class FakeDefaultWebSocketSession(
     override val coroutineContext: kotlin.coroutines.CoroutineContext = kotlinx.coroutines.Job(),

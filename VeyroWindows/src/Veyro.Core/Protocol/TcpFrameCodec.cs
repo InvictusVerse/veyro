@@ -5,21 +5,23 @@ using Veyro.Core.Models;
 namespace Veyro.Core.Protocol;
 
 /// <summary>
-/// Binary encoder/decoder for the VTC1 raw TCP transport stream.
-/// Mirrors com.veyro.core.protocol.tcp.TcpFrameCodec byte-for-byte.
+/// Payload encoder/decoder for the raw TCP data plane (VTC3, ADR-058, 04-PROTOCOL.md 7.3).
+/// Mirrors com.veyro.core.protocol.tcp.TcpFrameCodec byte-for-byte. Record framing, sealing and
+/// counters live in <see cref="Vtc3Writer"/> and <see cref="Vtc3Reader"/>; the per-type payload
+/// encodings are unchanged from VTC1 and are the VTC3 plaintexts.
 ///
-/// Wire header layout:
-///   4 bytes  magic "VTC1" (0x56 0x54 0x43 0x31)
+/// Record header layout:
+///   4 bytes  magic "VTC3" (0x56 0x54 0x43 0x33)
 ///   1 byte   frame type (u8)
 ///   2 bytes  transferId length in bytes (u16 BE)
 ///   N bytes  transferId (UTF-8)
-///   8 bytes  monotonic sequence number (u64 BE)
-///   4 bytes  payload length in bytes (u32 BE)
-///   M bytes  payload
+///   8 bytes  sequence number = the AEAD counter (u64 BE)
+///   4 bytes  ciphertext length, tag included (u32 BE)
+///   M bytes  ciphertext || 16-byte tag
 /// </summary>
 public static class TcpFrameCodec
 {
-    public static ReadOnlySpan<byte> Magic => "VTC1"u8;
+    public static ReadOnlySpan<byte> Magic => "VTC3"u8;
 
     public const int MaxPayloadSize = 16 * 1024 * 1024;
     public const int MaxTransferIdLength = 256;
@@ -33,7 +35,10 @@ public static class TcpFrameCodec
     public const byte TypeTransferEnd = 0x07;
     public const byte TypeCancel = 0x08;
 
-    private static byte FrameType(TcpFrame frame) => frame switch
+    /// <summary>The cleartext stream-open record that carries one side's 16-byte salt.</summary>
+    public const byte TypeStreamOpen = 0x09;
+
+    internal static byte FrameType(TcpFrame frame) => frame switch
     {
         TcpFrame.Auth => TypeAuth,
         TcpFrame.AuthAck => TypeAuthAck,
@@ -45,93 +50,7 @@ public static class TcpFrameCodec
         TcpFrame.Cancel => TypeCancel,
         _ => throw new NotSupportedException($"Unsupported frame: {frame.GetType().Name}")
     };
-
-    /// <summary>
-    /// Writes one frame. Chunk frames do NOT auto-flush by default, matching the Kotlin
-    /// default of <c>autoFlush = (frame !is TcpFrame.Chunk)</c>; the caller controls the
-    /// flush cadence for bulk data.
-    /// </summary>
-    public static async Task WriteFrameAsync(
-        Stream output, TcpFrame frame, bool? autoFlush = null, CancellationToken ct = default)
-    {
-        byte[] transferIdBytes = Encoding.UTF8.GetBytes(frame.TransferId);
-        if (transferIdBytes.Length is 0 or > MaxTransferIdLength)
-            throw new ArgumentException(
-                $"Transfer ID must be 1..{MaxTransferIdLength} UTF-8 bytes.", nameof(frame));
-
-        bool flush = autoFlush ?? frame is not TcpFrame.Chunk;
-        byte type = FrameType(frame);
-        byte[] payload = EncodePayload(frame);
-
-        if (payload.Length > MaxPayloadSize)
-            throw new InvalidOperationException($"Payload {payload.Length} exceeds {MaxPayloadSize}.");
-
-        int headerLen = 4 + 1 + 2 + transferIdBytes.Length + 8 + 4;
-        byte[] header = new byte[headerLen];
-        Magic.CopyTo(header.AsSpan(0, 4));
-        header[4] = type;
-        BinaryPrimitives.WriteUInt16BigEndian(header.AsSpan(5, 2), (ushort)transferIdBytes.Length);
-        transferIdBytes.CopyTo(header.AsSpan(7));
-
-        int off = 7 + transferIdBytes.Length;
-        BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(off, 8), frame.Seq);
-        BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(off + 8, 4), payload.Length);
-
-        await output.WriteAsync(header, ct).ConfigureAwait(false);
-        if (payload.Length > 0)
-            await output.WriteAsync(payload, ct).ConfigureAwait(false);
-        if (flush)
-            await output.FlushAsync(ct).ConfigureAwait(false);
-    }
-
-    public static async Task<byte[]> EncodeAsync(TcpFrame frame, CancellationToken ct = default)
-    {
-        using var ms = new MemoryStream();
-        await WriteFrameAsync(ms, frame, autoFlush: false, ct).ConfigureAwait(false);
-        return ms.ToArray();
-    }
-
-    /// <summary>
-    /// Reads the next frame, or null on a clean EOF at a frame boundary (0 bytes read).
-    /// Throws <see cref="EndOfStreamException"/> if the stream closes mid-frame.
-    /// </summary>
-    public static async Task<TcpFrame?> ReadFrameOrNullAsync(Stream input, CancellationToken ct = default)
-    {
-        byte[] prefix = new byte[7];
-        int first = await input.ReadAsync(prefix.AsMemory(0, 1), ct).ConfigureAwait(false);
-        if (first == 0)
-            return null; // clean EOF at frame boundary
-
-        await ReadExactAsync(input, prefix.AsMemory(1, 6), ct).ConfigureAwait(false);
-
-        if (!prefix.AsSpan(0, 4).SequenceEqual(Magic))
-            throw new InvalidDataException("Invalid TCP frame magic header: expected 'VTC1'");
-
-        byte type = prefix[4];
-        int transferIdLen = BinaryPrimitives.ReadUInt16BigEndian(prefix.AsSpan(5, 2));
-        if (transferIdLen <= 0 || transferIdLen > MaxTransferIdLength)
-            throw new InvalidDataException($"Invalid transfer ID length: {transferIdLen}");
-
-        byte[] transferIdBytes = new byte[transferIdLen];
-        await ReadExactAsync(input, transferIdBytes, ct).ConfigureAwait(false);
-        string transferId = Encoding.UTF8.GetString(transferIdBytes);
-
-        byte[] suffix = new byte[12];
-        await ReadExactAsync(input, suffix, ct).ConfigureAwait(false);
-        long seq = BinaryPrimitives.ReadInt64BigEndian(suffix.AsSpan(0, 8));
-        int payloadLen = BinaryPrimitives.ReadInt32BigEndian(suffix.AsSpan(8, 4));
-
-        if (payloadLen < 0 || payloadLen > MaxPayloadSize)
-            throw new InvalidDataException($"Invalid payload length: {payloadLen} (bounds: 0..{MaxPayloadSize})");
-
-        byte[] payload = new byte[payloadLen];
-        if (payloadLen > 0)
-            await ReadExactAsync(input, payload, ct).ConfigureAwait(false);
-
-        return DecodePayload(type, seq, transferId, payload);
-    }
-
-    private static byte[] EncodePayload(TcpFrame frame)
+    internal static byte[] EncodePayload(TcpFrame frame)
     {
         switch (frame)
         {
@@ -211,21 +130,22 @@ public static class TcpFrameCodec
         }
     }
 
-    private static TcpFrame DecodePayload(byte type, long seq, string transferId, byte[] p)
+    internal static TcpFrame DecodePayload(byte type, long seq, string transferId, byte[] buffer, int length)
     {
+        ReadOnlySpan<byte> p = buffer.AsSpan(0, length);
         switch (type)
         {
             case TypeAuth:
             {
                 if (p.Length < 5) throw new InvalidDataException($"Truncated Auth payload: {p.Length} bytes");
-                int tokenLen = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(0, 2));
+                int tokenLen = BinaryPrimitives.ReadUInt16BigEndian(p.Slice(0, 2));
                 if (p.Length < 2 + tokenLen + 3) throw new InvalidDataException("Truncated Auth token payload");
-                string token = Encoding.UTF8.GetString(p, 2, tokenLen);
+                string token = Encoding.UTF8.GetString(p.Slice(2, tokenLen));
                 int off = 2 + tokenLen;
-                int devIdLen = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(off, 2));
+                int devIdLen = BinaryPrimitives.ReadUInt16BigEndian(p.Slice(off, 2));
                 off += 2;
                 if (p.Length < off + devIdLen + 1) throw new InvalidDataException("Truncated Auth devId payload");
-                string devId = Encoding.UTF8.GetString(p, off, devIdLen);
+                string devId = Encoding.UTF8.GetString(p.Slice(off, devIdLen));
                 off += devIdLen;
                 var route = p[off] == 0x01 ? TransferRoute.WifiDirect : TransferRoute.LanTcp;
                 return new TcpFrame.Auth(seq, transferId, token, devId, route);
@@ -234,9 +154,9 @@ public static class TcpFrameCodec
             {
                 if (p.Length < 3) throw new InvalidDataException($"Truncated AuthAck payload: {p.Length} bytes");
                 bool ok = p[0] == 0x01;
-                int reasonLen = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(1, 2));
+                int reasonLen = BinaryPrimitives.ReadUInt16BigEndian(p.Slice(1, 2));
                 string? reason = reasonLen > 0 && p.Length >= 3 + reasonLen
-                    ? Encoding.UTF8.GetString(p, 3, reasonLen)
+                    ? Encoding.UTF8.GetString(p.Slice(3, reasonLen))
                     : null;
                 return new TcpFrame.AuthAck(seq, transferId, ok, reason);
             }
@@ -245,38 +165,40 @@ public static class TcpFrameCodec
                 if (p.Length < 20) throw new InvalidDataException($"Truncated ItemBegin payload: {p.Length} bytes");
                 return new TcpFrame.ItemBegin(
                     seq, transferId,
-                    BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(0, 4)),
-                    BinaryPrimitives.ReadInt64BigEndian(p.AsSpan(4, 8)),
-                    BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(12, 4)),
-                    BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(16, 4)));
+                    BinaryPrimitives.ReadInt32BigEndian(p.Slice(0, 4)),
+                    BinaryPrimitives.ReadInt64BigEndian(p.Slice(4, 8)),
+                    BinaryPrimitives.ReadInt32BigEndian(p.Slice(12, 4)),
+                    BinaryPrimitives.ReadInt32BigEndian(p.Slice(16, 4)));
             }
             case TypeChunk:
             {
                 if (p.Length < 12) throw new InvalidDataException($"Truncated Chunk payload: {p.Length} bytes");
-                int itemIndex = BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(0, 4));
-                int chunkIndex = BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(4, 4));
-                int dataLen = BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(8, 4));
+                int itemIndex = BinaryPrimitives.ReadInt32BigEndian(p.Slice(0, 4));
+                int chunkIndex = BinaryPrimitives.ReadInt32BigEndian(p.Slice(4, 4));
+                int dataLen = BinaryPrimitives.ReadInt32BigEndian(p.Slice(8, 4));
                 if (dataLen < 0 || p.Length < 12 + dataLen)
                     throw new InvalidDataException($"Corrupted chunk data length: {dataLen} vs payload size {p.Length}");
-                byte[] data = p.AsSpan(12, dataLen).ToArray();
+                // Must stay a copy: the VTC3 reader reuses its record buffer for the next record
+                // while BulkTransfer still writes this chunk on the pool (write-behind, review issue 16).
+                byte[] data = p.Slice(12, dataLen).ToArray();
                 return new TcpFrame.Chunk(seq, transferId, itemIndex, chunkIndex, data);
             }
             case TypeItemEnd:
             {
                 if (p.Length < 6) throw new InvalidDataException($"Truncated ItemEnd payload: {p.Length} bytes");
-                int itemIndex = BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(0, 4));
-                int hashLen = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(4, 2));
+                int itemIndex = BinaryPrimitives.ReadInt32BigEndian(p.Slice(0, 4));
+                int hashLen = BinaryPrimitives.ReadUInt16BigEndian(p.Slice(4, 2));
                 if (p.Length < 6 + hashLen) throw new InvalidDataException("Truncated ItemEnd hash payload");
-                return new TcpFrame.ItemEnd(seq, transferId, itemIndex, Encoding.UTF8.GetString(p, 6, hashLen));
+                return new TcpFrame.ItemEnd(seq, transferId, itemIndex, Encoding.UTF8.GetString(p.Slice(6, hashLen)));
             }
             case TypeItemResult:
             {
                 if (p.Length < 7) throw new InvalidDataException($"Truncated ItemResult payload: {p.Length} bytes");
-                int itemIndex = BinaryPrimitives.ReadInt32BigEndian(p.AsSpan(0, 4));
+                int itemIndex = BinaryPrimitives.ReadInt32BigEndian(p.Slice(0, 4));
                 bool ok = p[4] == 0x01;
-                int errLen = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(5, 2));
+                int errLen = BinaryPrimitives.ReadUInt16BigEndian(p.Slice(5, 2));
                 string? err = errLen > 0 && p.Length >= 7 + errLen
-                    ? Encoding.UTF8.GetString(p, 7, errLen)
+                    ? Encoding.UTF8.GetString(p.Slice(7, errLen))
                     : null;
                 return new TcpFrame.ItemResult(seq, transferId, itemIndex, ok, err);
             }
@@ -288,27 +210,14 @@ public static class TcpFrameCodec
             case TypeCancel:
             {
                 if (p.Length < 2) throw new InvalidDataException("Truncated Cancel payload");
-                int reasonLen = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(0, 2));
+                int reasonLen = BinaryPrimitives.ReadUInt16BigEndian(p.Slice(0, 2));
                 string reason = reasonLen > 0 && p.Length >= 2 + reasonLen
-                    ? Encoding.UTF8.GetString(p, 2, reasonLen)
+                    ? Encoding.UTF8.GetString(p.Slice(2, reasonLen))
                     : string.Empty;
                 return new TcpFrame.Cancel(seq, transferId, reason);
             }
             default:
                 throw new InvalidDataException($"Unknown TCP frame type: {type}");
-        }
-    }
-
-    private static async Task ReadExactAsync(Stream input, Memory<byte> buffer, CancellationToken ct)
-    {
-        int total = 0;
-        while (total < buffer.Length)
-        {
-            int r = await input.ReadAsync(buffer[total..], ct).ConfigureAwait(false);
-            if (r == 0)
-                throw new EndOfStreamException(
-                    $"Stream closed prematurely: read {total} of {buffer.Length} expected bytes");
-            total += r;
         }
     }
 }

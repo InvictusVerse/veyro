@@ -1,7 +1,10 @@
 package com.veyro.core.link
 
 import com.veyro.core.common.AppDispatchers
+import com.veyro.core.crypto.ConnectionKeySchedule
+import com.veyro.core.crypto.EphemeralKey
 import com.veyro.core.crypto.Hkdf
+import com.veyro.core.crypto.LinkRole
 import com.veyro.core.crypto.PairConfirm
 import com.veyro.core.crypto.X25519
 import com.veyro.core.model.DeviceId
@@ -69,6 +72,7 @@ class ConfirmPairingTest {
             },
             localPublicKey = { self.pk },
             deriveSharedKey = { peerPk, salt, info -> Hkdf.deriveKey(X25519.agree(self.sk, peerPk), salt, info, 32) },
+            forgetTrustedPeer = { id -> self.saved.removeAll { it.deviceId.value == id } },
         )
 
     private suspend fun <T : Any> awaitValue(what: String, read: () -> T?): T {
@@ -135,6 +139,27 @@ class ConfirmPairingTest {
         phoneManager.disconnect()
         pcManager.disconnect()
         inbound.cancel()
+    }
+
+    @Test
+    fun `Accept when pairOk cannot be sent keeps no trust record and reports no pairing (review issue 2)`() = runTest(testDispatcher) {
+        val (phoneEnd, pcEnd) = PipeSession.pair()
+        val phoneManager = manager(phone, "Phone", phoneEnd)
+        val pcManager = manager(pc, "Office PC")
+        val inbound = launch { pcManager.handleInbound(pcEnd) }
+        val outbound = launch { phoneManager.pairWithConfirm(pc.id, "Office PC", endpoints).collect {} }
+
+        awaitValue("the PC prompt") { pcManager.pendingInbound.value?.confirmCode }
+        // The way back to the phone breaks while the user decides: pairOk cannot be written.
+        pcEnd.outgoingChannel.close()
+        pcManager.respondToInbound(true)
+        inbound.join()
+
+        assertTrue("no trust is kept for a peer that never got the secret: ${pc.saved}", pc.saved.isEmpty())
+        assertTrue("not reported Paired: ${pcManager.events.value}", pcManager.events.value is ConnectionManager.ConnectionEvent.Failed)
+        assertNull(pcManager.connectionFor(phone.id))
+        phoneManager.cancelOutboundPairing()
+        outbound.join()
     }
 
     @Test
@@ -220,7 +245,10 @@ class ConfirmPairingTest {
     private fun ackFrame(pk: ByteArray, commit: ByteArray): Frame.Text = Frame.Text(
         PeerMessageJson.codec.encodeToString(
             LinkPreambleAck.serializer(),
-            LinkPreambleAck(LinkPreambleAck.MODE_PAIRING_CONFIRM, pk = b64(pk), commit = b64(commit)),
+            LinkPreambleAck(
+                LinkPreambleAck.MODE_PAIRING_CONFIRM, pk = b64(pk), commit = b64(commit),
+                cn = b64(PairConfirm.newNonce()), epk = b64(EphemeralKey.generate().publicKey),
+            ),
         ),
     )
 
@@ -228,12 +256,14 @@ class ConfirmPairingTest {
         Frame.Text(PeerMessageJson.codec.encodeToString(LinkPairNonce.serializer(), LinkPairNonce(n = b64(n))))
 
     @Test
-    fun `preamble carries pair confirm, the key and version 2`() = runTest(testDispatcher) {
+    fun `preamble carries pair confirm, the key, cn, epk and version 3`() = runTest(testDispatcher) {
         runAgainstScriptedPc { fromPhone, toPhone ->
             val preamble = readPreamble(fromPhone)
             assertEquals(LinkPreamble.PAIR_CONFIRM, preamble.pair)
             assertEquals(b64(phone.pk), preamble.pk)
-            assertEquals(2, preamble.protocolVersion)
+            assertEquals(3, preamble.protocolVersion)
+            assertEquals(32, FrameCrypto.decodeKey32(preamble.cn)?.size)
+            assertEquals(32, FrameCrypto.decodeKey32(preamble.epk)?.size)
             assertEquals(phone.id, preamble.id)
             toPhone.send(Frame.Text("""{"mode":"refused","reason":"declined"}"""))
         }
@@ -280,14 +310,7 @@ class ConfirmPairingTest {
         val (initiatorEnd, pcEnd) = PipeSession.pair()
         val pcManager = manager(pc, "Office PC")
         val other = Device()
-        initiatorEnd.outgoingChannel.send(
-            Frame.Text(
-                PeerMessageJson.codec.encodeToString(
-                    LinkPreamble.serializer(),
-                    LinkPreamble(phone.id, "Phone", pair = LinkPreamble.PAIR_CONFIRM, pk = b64(other.pk)),
-                ),
-            ),
-        )
+        initiatorEnd.outgoingChannel.send(V3TestPeer(phone.id).preamble("Phone", "android", LinkPreamble.PAIR_CONFIRM, other.pk))
         pcManager.handleInbound(pcEnd)
 
         val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
@@ -299,14 +322,14 @@ class ConfirmPairingTest {
     }
 
     @Test
-    fun `receiver refuses protocol version 1`() = runTest(testDispatcher) {
+    fun `receiver refuses protocol version 2 (no v2 support)`() = runTest(testDispatcher) {
         val (initiatorEnd, pcEnd) = PipeSession.pair()
         val pcManager = manager(pc, "Office PC")
         initiatorEnd.outgoingChannel.send(
             Frame.Text(
                 PeerMessageJson.codec.encodeToString(
                     LinkPreamble.serializer(),
-                    LinkPreamble(phone.id, "Phone", protocolVersion = 1, pair = LinkPreamble.PAIR_CONFIRM, pk = b64(phone.pk)),
+                    LinkPreamble(phone.id, "Phone", protocolVersion = 2, pair = LinkPreamble.PAIR_CONFIRM, pk = b64(phone.pk)),
                 ),
             ),
         )
@@ -317,19 +340,193 @@ class ConfirmPairingTest {
         assertEquals("unsupported-protocol-version", ack.reason)
     }
 
-    @Test
-    fun `QR pairing sends pair qr and no key`() = runTest(testDispatcher) {
+    // ── QR pairing, phone side (04-PROTOCOL.md 4.2, ADR-058) ─────────────────────────────
+
+    private val qrSecret = ByteArray(16) { (it * 7).toByte() }
+
+    /** A scripted PC with an open QR window: answers `pairing`, checks the proof, sends [pairOk]. */
+    private suspend fun scriptedQrPc(
+        fromPhone: Channel<Frame>,
+        toPhone: Channel<Frame>,
+        answerPk: ByteArray = pc.pk,
+        pairOk: (LinkPreamble) -> PeerMessage = { PeerMessage.PairOk(pc.id, "Office PC", "windows", b64(ByteArray(32) { 5 }), b64(pc.pk)) },
+    ): Pair<PeerMessage.PairHello?, Frame?> {
+        val pFrame = fromPhone.receive() as Frame.Text
+        val p = pFrame.data.copyOf()
+        val preamble = PeerMessageJson.codec.decodeFromString(LinkPreamble.serializer(), String(p))
+        val eph = EphemeralKey.generate()
+        val ackBytes = PeerMessageJson.codec.encodeToString(
+            LinkPreambleAck.serializer(),
+            LinkPreambleAck(LinkPreambleAck.MODE_PAIRING, pk = b64(answerPk), cn = b64(PairConfirm.newNonce()), epk = b64(eph.publicKey)),
+        ).toByteArray()
+        toPhone.send(Frame.Text(true, ackBytes))
+        val transcript = ConnectionKeySchedule.transcript(p, ackBytes)
+        if (!answerPk.contentEquals(pc.pk)) return null to fromPhone.receive()
+        val pkPhone = FrameCrypto.decodeKey32(preamble.pk)!!
+        val staticKey = Hkdf.deriveKey(X25519.agree(pc.sk, pkPhone), transcript, ConnectionKeySchedule.staticInfo(preamble.id, pc.id), 32)
+        val keys = ConnectionKeySchedule.pairQr(
+            LinkRole.RESPONDER, preamble.id, pc.id, transcript,
+            eph.agree(FrameCrypto.decodeKey32(preamble.epk)!!), staticKey, ConnectionKeySchedule.qrMix(qrSecret),
+        )
+        val side = V3TestPeer(pc.id).apply { install(keys) }
+        val hello = side.open(fromPhone.receive()).payload as PeerMessage.PairHello
+        val expected = ConnectionKeySchedule.qrProof(ConnectionKeySchedule.qrProofKey(qrSecret), preamble.id, pc.id, transcript)
+        assertArrayEquals("the phone proves it read the QR secret", expected, FrameCrypto.decodeKey32(hello.qrProof))
+        val ok = pairOk(preamble)
+        toPhone.send(side.seal(ok))
+        if (ok is PeerMessage.PairOk && ok.deviceId == pc.id && ok.publicKeyB64 == b64(pc.pk)) {
+            // Switch to session keys and read the phone's first session frame.
+            val session = ConnectionKeySchedule.afterPairing(keys, FrameCrypto.decodeStrictBase64(ok.sessionSecretB64)!!)
+            val sessionSide = V3TestPeer(pc.id).apply { install(session) }
+            assertTrue("the phone's first session frame is its hello", sessionSide.open(fromPhone.receive()).payload is PeerMessage.Hello)
+            toPhone.send(sessionSide.seal(PeerMessage.HelloAck(pc.id, "Office PC", "windows")))
+        }
+        return hello to null
+    }
+
+    private suspend fun runQr(script: suspend (Channel<Frame>, Channel<Frame>) -> Unit): Pair<List<CodePairingProgress>, ConnectionManager> {
         val (phoneEnd, pcEnd) = PipeSession.pair()
         val phoneManager = manager(phone, "Phone", phoneEnd)
-        val job = launch { phoneManager.pairWithCode(pc.id, "Office PC", endpoints, "123456").collect {} }
-        val preamble = readPreamble(pcEnd.incomingChannel)
-        assertEquals(LinkPreamble.PAIR_QR, preamble.pair)
-        assertNull(preamble.pk)
-        pcEnd.outgoingChannel.send(Frame.Text("""{"mode":"refused","reason":"no-pairing-window"}"""))
-        job.join()
+        val progress = mutableListOf<CodePairingProgress>()
+        kotlinx.coroutines.coroutineScope {
+            val outbound = launch { phoneManager.pairWithQr(pc.id, "Office PC", endpoints, qrSecret.copyOf()).collect { progress += it } }
+            script(pcEnd.incomingChannel, pcEnd.outgoingChannel)
+            outbound.join()
+        }
+        return progress to phoneManager
+    }
+
+    @Test
+    fun `QR pairing sends pair qr with the key and proves the QR secret`() = runTest(testDispatcher) {
+        val (progress, phoneManager) = runQr { fromPhone, toPhone -> scriptedQrPc(fromPhone, toPhone) }
+        assertTrue("expected Paired, got ${progress.last()}", progress.last() is CodePairingProgress.Paired)
+        val record = phone.saved.single()
+        assertEquals(pc.id, record.deviceId.value)
+        assertArrayEquals("the key that took part in the DH is stored", pc.pk, record.staticPublicKey)
+        assertArrayEquals(ByteArray(32) { 5 }, record.pairingSecret)
+        awaitValue("the claimed session") { phoneManager.activeConnection.value }
+        phoneManager.disconnect()
+    }
+
+    @Test
+    fun `QR pairing stops before anything sealed when the answering key is not the scanned PC`() = runTest(testDispatcher) {
+        val impostor = Device()
+        var next: Frame? = null
+        val (progress, _) = runQr { fromPhone, toPhone -> next = scriptedQrPc(fromPhone, toPhone, answerPk = impostor.pk).second }
+        assertEquals(CodePairingFailure.IDENTITY_MISMATCH, (progress.last() as CodePairingProgress.Failed).failure)
+        assertTrue("no pairHello may go to an impostor, got $next", next is Frame.Close)
+        assertTrue(phone.saved.isEmpty())
+    }
+
+    @Test
+    fun `QR pairing refuses a pairOk naming another identity and stores nothing`() = runTest(testDispatcher) {
+        val other = Device()
+        val (progress, _) = runQr { fromPhone, toPhone ->
+            scriptedQrPc(fromPhone, toPhone) { PeerMessage.PairOk(other.id, "Office PC", "windows", b64(ByteArray(32) { 5 }), b64(other.pk)) }
+        }
+        assertEquals(CodePairingFailure.IDENTITY_MISMATCH, (progress.last() as CodePairingProgress.Failed).failure)
+        assertTrue(phone.saved.isEmpty())
+    }
+
+    @Test
+    fun `QR pairing with a malformed secret fails before dialling`() = runTest(testDispatcher) {
+        val (phoneEnd, _) = PipeSession.pair()
+        val phoneManager = manager(phone, "Phone", phoneEnd)
+        val progress = mutableListOf<CodePairingProgress>()
+        phoneManager.pairWithQr(pc.id, "Office PC", endpoints, ByteArray(6)).collect { progress += it }
+        assertEquals(CodePairingFailure.CODE_REJECTED, (progress.last() as CodePairingProgress.Failed).failure)
+    }
+
+    @Test
+    fun `an unknown device without a pairing mode is refused not-paired (legacy PIN removed)`() = runTest(testDispatcher) {
+        val (initiatorEnd, pcEnd) = PipeSession.pair()
+        val pcManager = manager(pc, "Office PC")
+        initiatorEnd.outgoingChannel.send(V3TestPeer(phone.id).preamble("Phone", "android"))
+        pcManager.handleInbound(pcEnd)
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
+        assertEquals(LinkPreambleAck.MODE_REFUSED, ack.mode)
+        assertEquals("not-paired", ack.reason)
+        assertNull("no prompt", pcManager.pendingInbound.value)
+    }
+
+    @Test
+    fun `a non-canonical preamble id is refused invalid-identity`() = runTest(testDispatcher) {
+        val (initiatorEnd, pcEnd) = PipeSession.pair()
+        val pcManager = manager(pc, "Office PC")
+        initiatorEnd.outgoingChannel.send(V3TestPeer(phone.id.lowercase()).preamble("Phone", "android", LinkPreamble.PAIR_CONFIRM, phone.pk))
+        pcManager.handleInbound(pcEnd)
+        val ack = PeerMessageJson.codec.decodeFromString(LinkPreambleAck.serializer(), text(initiatorEnd.incomingChannel.receive()))
+        assertEquals("invalid-identity", ack.reason)
+    }
+
+    @Test
+    fun `a preamble without cn and epk is closed with no ack detail`() = runTest(testDispatcher) {
+        val (initiatorEnd, pcEnd) = PipeSession.pair()
+        val pcManager = manager(pc, "Office PC")
+        initiatorEnd.outgoingChannel.send(
+            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(phone.id, "Phone", pair = LinkPreamble.PAIR_CONFIRM, pk = b64(phone.pk)))),
+        )
+        pcManager.handleInbound(pcEnd)
+        assertTrue("no ack, only a close", initiatorEnd.incomingChannel.tryReceive().getOrNull().let { it == null || it is Frame.Close })
+    }
+
+    @Test
+    fun `the confirm responder sends no ping while its user decides (35 s)`() = runTest(testDispatcher) {
+        val phoneIn = Channel<Frame>(Channel.UNLIMITED)
+        val pcIn = Channel<Frame>(Channel.UNLIMITED)
+        val pcOut = Channel<Frame>(Channel.UNLIMITED)
+        val phoneEnd = PipeSession(incomingChannel = phoneIn, outgoingChannel = pcIn)
+        val pcEnd = PipeSession(incomingChannel = pcIn, outgoingChannel = pcOut)
+        val seen = java.util.Collections.synchronizedList(mutableListOf<Frame>())
+        val relay = launch {
+            for (frame in pcOut) {
+                seen += frame
+                phoneIn.send(frame)
+            }
+        }
+        val phoneManager = manager(phone, "Phone", phoneEnd)
+        val pcManager = manager(pc, "Office PC")
+        val inbound = launch { pcManager.handleInbound(pcEnd) }
+        val outbound = launch { phoneManager.pairWithConfirm(pc.id, "Office PC", endpoints).collect {} }
+        awaitValue("the PC prompt") { pcManager.pendingInbound.value?.confirmCode }
+        val atPrompt = seen.size
+        delay(35_000)
+        assertEquals("the responder sends nothing while its user decides", atPrompt, seen.size)
+        phoneManager.cancelOutboundPairing()
+        outbound.join()
+        inbound.join()
+        relay.cancel()
+    }
+    @Test
+    fun `pairing that never establishes still reports Paired and claims nothing (finding 29)`() = runTest(testDispatcher) {
+        val (phoneEnd, pcEnd) = PipeSession.pair()
+        // The PC side drops every phone frame after pairOk: the phone's session hello never arrives.
+        val pcManager = manager(pc, "Office PC")
+        val filtered = PipeSession(incomingChannel = Channel(Channel.UNLIMITED), outgoingChannel = pcEnd.outgoingChannel)
+        var drop = false
+        val relay = launch {
+            for (frame in pcEnd.incomingChannel) {
+                if (!drop) filtered.incomingChannel.send(frame)
+            }
+        }
+        val inbound = launch { pcManager.handleInbound(filtered) }
+        val phoneManager = manager(phone, "Phone", phoneEnd)
+        val progress = mutableListOf<CodePairingProgress>()
+        val outbound = launch { phoneManager.pairWithConfirm(pc.id, "Office PC", endpoints).collect { progress += it } }
+        awaitValue("the PC prompt") { pcManager.pendingInbound.value?.confirmCode }
+        drop = true
+        pcManager.respondToInbound(true)
+        outbound.join()
+        assertTrue("the initiator still reports Paired: ${progress.last()}", progress.last() is CodePairingProgress.Paired)
+        assertEquals(phone.id, pc.saved.single().deviceId.value)
+        assertTrue(pcManager.events.value is ConnectionManager.ConnectionEvent.Paired)
+        delay(15_000)
+        assertNull("the PC never claimed the session", pcManager.connectionFor(phone.id))
+        relay.cancel()
+        inbound.cancel()
+        phoneManager.disconnect()
     }
 }
-
 /** One end of an in-memory WebSocket: what one side sends, the other receives. */
 @OptIn(io.ktor.utils.io.InternalAPI::class)
 internal class PipeSession(

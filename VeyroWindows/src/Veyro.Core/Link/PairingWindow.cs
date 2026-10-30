@@ -1,24 +1,29 @@
 using System.Net;
-using Veyro.Core.Crypto;
+using System.Security.Cryptography;
 using Veyro.Core.Diagnostics;
 using Veyro.Core.Models;
 
 namespace Veyro.Core.Link;
 
-/// <summary>One use of the open window's code by an inbound connection.</summary>
-public sealed record PairingAttempt(string Code, long Generation)
+/// <summary>
+/// One use of the open window's secret by an inbound connection. <see cref="Secret"/> is a copy
+/// of the 16-byte QR secret; the caller zeroes it once the pairing keys exist. Never logged.
+/// </summary>
+public sealed record PairingAttempt(byte[] Secret, long Generation)
 {
     public override string ToString() => $"PairingAttempt(generation={Generation})";
 }
 
 /// <summary>
 /// The PC's user-initiated pairing window (04-PROTOCOL.md 4.2, ADR-030). While it is open, an
-/// unknown device that connects pairs with the window's one-time code instead of a fresh PIN and
-/// without a consent prompt: showing the screen is the consent.
+/// unknown device that scans the QR code pairs without a consent prompt: showing the screen is
+/// the consent. The QR code carries a fresh 128-bit secret (format 2, ADR-058); the phone proves
+/// it holds it and the secret enters the pairing keys.
 ///
-/// Rules: a fresh random 6-digit code per window; at most 5 minutes; closed by the UI or a
-/// successful pairing; after 5 failed bootstrap attempts the code is replaced. UI-free and
-/// thread-safe. The code and the QR content are never logged.
+/// Rules: a fresh random 16-byte secret per window open, per "New code" and per replacement; at
+/// most 5 minutes; closed by the UI or a successful pairing; after 5 failed attempts the secret
+/// is replaced. The old secret is zeroed on replacement and on close. UI-free and thread-safe.
+/// The secret and the QR content are never logged.
 /// </summary>
 public sealed class PairingWindow : IDisposable
 {
@@ -30,7 +35,7 @@ public sealed class PairingWindow : IDisposable
     private readonly Func<IReadOnlyList<IPEndPoint>> _endpoints;
     private readonly TimeProvider _time;
     private readonly Lock _gate = new();
-    private string? _code;
+    private byte[]? _secret;
     private DateTimeOffset _expiresAt;
     private int _failures;
     private long _generation;
@@ -59,17 +64,7 @@ public sealed class PairingWindow : IDisposable
         get
         {
             ExpireIfDue();
-            lock (_gate) return _code is not null;
-        }
-    }
-
-    /// <summary>The current code, or null when closed. For display only; never log it.</summary>
-    public string? Code
-    {
-        get
-        {
-            ExpireIfDue();
-            lock (_gate) return _code;
+            lock (_gate) return _secret is not null;
         }
     }
 
@@ -78,7 +73,7 @@ public sealed class PairingWindow : IDisposable
         get
         {
             ExpireIfDue();
-            lock (_gate) return _code is null ? null : _expiresAt;
+            lock (_gate) return _secret is null ? null : _expiresAt;
         }
     }
 
@@ -89,21 +84,21 @@ public sealed class PairingWindow : IDisposable
             ExpireIfDue();
             lock (_gate)
             {
-                if (_code is null) return TimeSpan.Zero;
+                if (_secret is null) return TimeSpan.Zero;
                 TimeSpan left = _expiresAt - _time.GetUtcNow();
                 return left > TimeSpan.Zero ? left : TimeSpan.Zero;
             }
         }
     }
 
-    /// <summary>Failed bootstrap attempts against the current code.</summary>
+    /// <summary>Failed attempts against the current secret.</summary>
     public int Failures
     {
         get { lock (_gate) return _failures; }
     }
 
     /// <summary>
-    /// The QR string for the current code, or null when closed or when the listener has no
+    /// The QR string for the current secret, or null when closed or when the listener has no
     /// advertisable IPv4 endpoint. Recomputed on each read so network changes are picked up.
     /// </summary>
     public string? QrContent
@@ -111,22 +106,29 @@ public sealed class PairingWindow : IDisposable
         get
         {
             ExpireIfDue();
-            string code;
+            byte[] secret;
             DateTimeOffset expiresAt;
             lock (_gate)
             {
-                if (_code is null) return null;
-                code = _code;
+                if (_secret is null) return null;
+                secret = (byte[])_secret.Clone();
                 expiresAt = _expiresAt;
             }
-            IReadOnlyList<IPEndPoint> endpoints = _endpoints();
-            if (endpoints.Count == 0) return null;
-            return PairingQr.Build(new PairingQrPayload(
-                _localDeviceId, _localName(), endpoints, code, expiresAt.ToUnixTimeSeconds()));
+            try
+            {
+                IReadOnlyList<IPEndPoint> endpoints = _endpoints();
+                if (endpoints.Count == 0) return null;
+                return PairingQr.Build(new PairingQrPayload(
+                    _localDeviceId, _localName(), endpoints, secret, expiresAt.ToUnixTimeSeconds()));
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(secret);
+            }
         }
     }
 
-    /// <summary>Opens the window, or replaces the code and restarts the clock if already open.</summary>
+    /// <summary>Opens the window, or replaces the secret and restarts the clock if already open.</summary>
     public void Open()
     {
         lock (_gate) OpenLocked();
@@ -143,23 +145,27 @@ public sealed class PairingWindow : IDisposable
         Raise(Changed);
     }
 
-    /// <summary>The code an inbound unknown device must use, or null when no window is open.</summary>
+    /// <summary>A copy of the secret an inbound unknown device must prove, or null when no window is open.</summary>
     public PairingAttempt? TryBeginAttempt()
     {
         ExpireIfDue();
-        lock (_gate) return _code is null ? null : new PairingAttempt(_code, _generation);
+        lock (_gate) return _secret is null ? null : new PairingAttempt((byte[])_secret.Clone(), _generation);
     }
 
-    /// <summary>Counts a failed bootstrap against the current code.</summary>
+    /// <summary>Counts a failed attempt against the current secret.</summary>
     public bool RecordFailure()
     {
-        PairingAttempt? current;
-        lock (_gate) current = _code is null ? null : new PairingAttempt(_code, _generation);
-        return current is not null && RecordFailure(current);
+        long generation;
+        lock (_gate)
+        {
+            if (_secret is null) return false;
+            generation = _generation;
+        }
+        return RecordFailure(new PairingAttempt([], generation));
     }
 
     /// <summary>
-    /// Counts a failed bootstrap. A failure against a code that has since been replaced is
+    /// Counts a failed attempt. A failure against a secret that has since been replaced is
     /// ignored. Returns true when this failure used up the limit and a new code was issued.
     /// </summary>
     public bool RecordFailure(PairingAttempt attempt)
@@ -167,18 +173,18 @@ public sealed class PairingWindow : IDisposable
         int failures;
         lock (_gate)
         {
-            if (_code is null || attempt.Generation != _generation) return false;
+            if (_secret is null || attempt.Generation != _generation) return false;
             failures = ++_failures;
             if (failures < MaxFailures) return false;
             CloseLocked();
             OpenLocked();
         }
-        VeyroTrace.Warn($"Pairing window: {MaxFailures} failed attempts; code replaced");
+        VeyroTrace.Warn($"Pairing window: {MaxFailures} failed attempts; secret replaced");
         Raise(Changed);
         return true;
     }
 
-    /// <summary>A device paired with the window's code: the window closes.</summary>
+    /// <summary>A device paired through the window: the window closes.</summary>
     public void Complete(TrustedPeer peer)
     {
         lock (_gate) CloseLocked();
@@ -194,7 +200,7 @@ public sealed class PairingWindow : IDisposable
         bool expired = false;
         lock (_gate)
         {
-            if (_code is not null && _time.GetUtcNow() >= _expiresAt)
+            if (_secret is not null && _time.GetUtcNow() >= _expiresAt)
                 expired = CloseLocked();
         }
         if (!expired) return;
@@ -210,7 +216,8 @@ public sealed class PairingWindow : IDisposable
     private void OpenLocked()
     {
         _expiryTimer?.Dispose();
-        _code = FrameCrypto.NewPin();
+        if (_secret is not null) CryptographicOperations.ZeroMemory(_secret);
+        _secret = RandomNumberGenerator.GetBytes(PairingQr.SecretSize);
         _expiresAt = _time.GetUtcNow() + Lifetime;
         _failures = 0;
         _generation++;
@@ -221,8 +228,9 @@ public sealed class PairingWindow : IDisposable
     {
         _expiryTimer?.Dispose();
         _expiryTimer = null;
-        bool wasOpen = _code is not null;
-        _code = null;
+        bool wasOpen = _secret is not null;
+        if (_secret is not null) CryptographicOperations.ZeroMemory(_secret);
+        _secret = null;
         _failures = 0;
         if (wasOpen) _generation++;
         return wasOpen;

@@ -59,8 +59,7 @@ public class TransferP0P1RegressionTest {
         receiverId: String = "receiver-dev",
     ): Pair<PeerConnection, PeerConnection> {
         val secret = ByteArray(32) { 42 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val initToRecv = Channel<Frame>(Channel.UNLIMITED)
         val recvToInit = Channel<Frame>(Channel.UNLIMITED)
 
@@ -76,12 +75,12 @@ public class TransferP0P1RegressionTest {
 
         val initiator = PeerConnection(
             ws = initWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(initiatorId, receiverId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = initiatorId,
             tag = "TestSender",
             dispatcher = testDispatcher,
-            peerDeviceId = receiverId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
@@ -89,12 +88,12 @@ public class TransferP0P1RegressionTest {
 
         val receiver = PeerConnection(
             ws = recvWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(receiverId, initiatorId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = receiverId,
             tag = "TestReceiver",
             dispatcher = testDispatcher,
-            peerDeviceId = initiatorId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
@@ -102,6 +101,8 @@ public class TransferP0P1RegressionTest {
 
         initiator.start()
         receiver.start()
+        initiator.admit()
+        receiver.admit()
 
         return Pair(initiator, receiver)
     }
@@ -302,6 +303,7 @@ public class TransferP0P1RegressionTest {
                 transferId = tid,
                 expectedAuthToken = authToken,
                 expectedPeerDeviceId = "sender-peer",
+                deriveKeys = TestLinkKeys.deriver(tid),
                 offerItems = listOf(item),
                 destinationDir = tempDir.newFolder("truncated_dest"),
                 chunkSize = 256 * 1024,
@@ -317,32 +319,23 @@ public class TransferP0P1RegressionTest {
         val out = BufferedOutputStream(socket.getOutputStream())
         val input = BufferedInputStream(socket.getInputStream())
 
-        TcpFrameCodec.writeFrame(
-            out,
+        val channel = com.veyro.core.protocol.tcp.Vtc3.openAsSender(input, out, tid, TestLinkKeys.deriver(tid))
+        channel.writer.write(
             TcpFrame.Auth(
-                seq = 1L,
+                seq = 0L,
                 transferId = tid,
                 authToken = authToken,
                 senderDeviceId = "sender-peer",
                 route = TransferRoute.LAN_TCP,
             ),
         )
-        out.flush()
-        val ack = TcpFrameCodec.readFrame(input) as TcpFrame.AuthAck
+        val ack = channel.reader.readOrNull() as TcpFrame.AuthAck
         assertTrue(ack.ok)
 
-        TcpFrameCodec.writeFrame(
-            out,
-            TcpFrame.ItemBegin(2L, tid, 0, 1024 * 1024, 4, 256 * 1024),
-        )
-        out.flush()
+        channel.writer.write(TcpFrame.ItemBegin(0L, tid, 0, 1024 * 1024, 4, 256 * 1024))
 
         // Write only 1 chunk
-        TcpFrameCodec.writeFrame(
-            out,
-            TcpFrame.Chunk(3L, tid, 0, 0, ByteArray(256 * 1024) { 1 }),
-        )
-        out.flush()
+        channel.writer.write(TcpFrame.Chunk(0L, tid, 0, 0, ByteArray(256 * 1024) { 1 }), flush = true)
 
         // Forcibly close socket without TransferEnd or remaining chunks
         socket.close()
@@ -415,6 +408,7 @@ public class TransferP0P1RegressionTest {
                     transferId = tid,
                     expectedAuthToken = "token-xyz",
                     expectedPeerDeviceId = "dev-1",
+                    deriveKeys = TestLinkKeys.deriver(tid),
                     offerItems = emptyList(),
                     destinationDir = tempDir.newFolder("unblock_dest"),
                     chunkSize = 256 * 1024,
@@ -616,6 +610,53 @@ public class TransferP0P1RegressionTest {
 
         senderSession.close()
         receiverSession.close()
+    }
+
+    /**
+     * NFR-3 (ADR-058): a timed 64 MiB loopback transfer through TransferRunner at the default chunk
+     * size, best of three, printed as a `VEYRO-BENCH` line. The same test ran on the v2 base for
+     * the before number. No pass/fail threshold; JVM numbers do not represent Conscrypt on a phone.
+     */
+    @Test
+    fun `timed loopback transfer at the default chunk size`() = runTest(testDispatcher) {
+        val size = 64 * 1024 * 1024
+        val data = ByteArray(size) { (it * 13).toByte() }
+        val srcFile = tempDir.newFile("timed.bin").apply { writeBytes(data) }
+        var best = Long.MAX_VALUE
+        for (run in 0 until 4) {
+            val (senderSession, receiverSession) = createConnectedPair()
+            val runner = TransferRunner(dispatchers)
+            val destDir = tempDir.newFolder("timed_dest_$run")
+            val item = TransferItem(
+                index = 0,
+                relativePath = "timed.bin",
+                sizeBytes = srcFile.length(),
+                lastModifiedEpochMillis = System.currentTimeMillis(),
+                isDirectory = false,
+            )
+            val started = System.nanoTime()
+            val rxJob = launch {
+                val res = runner.receive(session = receiverSession, destinationDir = destDir, authorize = { true })
+                assertEquals(VerificationResult.VERIFIED, res.single().verification)
+            }
+            val outcome = runner.send(
+                session = senderSession,
+                items = listOf(item),
+                senderName = "TimedSender",
+                transferId = "tid-timed-$run",
+                resolveFile = { srcFile },
+            )
+            rxJob.join()
+            val elapsed = System.nanoTime() - started
+            assertTrue(outcome is TransferRunner.SendOutcome.Done)
+            assertEquals(size.toLong(), File(destDir, "timed.bin").length())
+            // Run 0 warms the JIT and is not counted.
+            if (run > 0) best = minOf(best, elapsed)
+            senderSession.close()
+            receiverSession.close()
+        }
+        val mbPerSec = size / (1024.0 * 1024.0) / (best / 1e9)
+        println(String.format(java.util.Locale.US, "VEYRO-BENCH jvm transfer 64MiB default-chunk %.1f MB/s", mbPerSec))
     }
 
     @Test

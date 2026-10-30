@@ -1,0 +1,89 @@
+{
+  "description": "Link protocol v3 pairing key schedules (ProjectInfo/04-PROTOCOL.md sections 4.2-4.5, ADR-058): confirm-code pairing and QR pairing, then the switch to session keys after pairOk. A = phone = initiator, B = PC = responder; static keys are the RFC 7748 6.1 pair (pair-confirm.json).",
+  "algorithm": {
+    "staticKey": "HKDF-SHA256(ikm = X25519(staticPrivate_self, pk_peer), salt = transcript, info = utf8(\"veyro-static-v3\") || 0x00 || utf8(idI) || 0x00 || utf8(idR), 32)",
+    "confirm": "salt = SHA-256(transcript || nA || nB); ikm = dh || staticKey; label veyro-pair-confirm-v3",
+    "qr": "salt = transcript; ikm = dh || staticKey || qrMix; label veyro-pair-qr-v3",
+    "keys": "prk = HKDF-Extract(salt, ikm); kI2r, kR2i, chainKey = HKDF-Expand(prk, info(label, i2r | r2i | chain), 32)",
+    "afterPairOk": "prkSession = HKDF-Extract(salt = transcript, ikm = chainKey || newPairingSecret); session kI2r, kR2i, expSecret with label veyro-link-v3",
+    "qrSecret": "qrPrk = HKDF-Extract(utf8(\"veyro-qr-v3\"), qrSecret); proofKey = HKDF-Expand(qrPrk, \"veyro-qr-proof-v3\", 32); qrMix = HKDF-Expand(qrPrk, \"veyro-qr-mix-v3\", 32)",
+    "qrProof": "HMAC-SHA256(proofKey, utf8(\"veyro-qr-proof-v3\") || 0x00 || utf8(idPhone) || 0x00 || utf8(idPc) || 0x00 || transcript)"
+  },
+  "confirm": {
+    "input": {
+      "idI": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "idR": "9NHR2CYTZRWMJXWSNTWVRKQW6R",
+      "staticPrivateIHex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+      "staticPrivateRHex": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+      "ephemeralPrivateIHex": "4d6674b99ec6c354c672a8e8ca0db8a39071c8084f46ccef5ce7ae34f78040cc",
+      "ephemeralPrivateRHex": "53d6342bd46c3c152f4ff7ad4ad2261affd81a3b3405123e5b6cba94a7a628ba",
+      "cnIHex": "7bb67116815fd4a366e41448da0908900c02f4287ee1cdaf8e6ccfa644c57fba",
+      "cnRHex": "fe34a8eda09bd77a38a6854dfa95bedf22bfc3526e9b33b1e790f20ef28786f5",
+      "nAHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "nBHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "newPairingSecretHex": "7bbf66d9093310747f14ccc5887e2311131cc14317937ee5f61712a441f2b656",
+      "preamble": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"pair\":\"confirm\",\"pk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\",\"cn\":\"e7ZxFoFf1KNm5BRI2gkIkAwC9Ch+4c2vjmzPpkTFf7o=\",\"epk\":\"gA2L8fylZwodSawJ6Y7DkztUSmC+r5AGNYjmd66EXWc=\"}",
+      "ack": "{\"mode\":\"pairing-confirm\",\"pk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\",\"commit\":\"SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=\",\"cn\":\"/jSo7aCb13o4poVN+pW+3yK/w1JumzOx55DyDvKHhvU=\",\"epk\":\"Gf1BJUSSbliZXgj1CDv7bAVN3DH813x5sSYjLphJXjw=\"}"
+    },
+    "expected": {
+      "staticPublicIHex": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+      "staticPublicRHex": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+      "ephemeralPublicIHex": "800d8bf1fca5670a1d49ac09e98ec3933b544a60beaf90063588e677ae845d67",
+      "ephemeralPublicRHex": "19fd412544926e58995e08f5083bfb6c054ddc31fcd77c79b126232e98495e3c",
+      "commitHex": "483ae04cfe9ae4f218fa2eea12f6e871a634955f36e609a9472b56a552cba4c3",
+      "transcriptHex": "96d9e04d4e6853917249a880f153f546ed1369d49887b2bd6d288401bea6b746",
+      "dhHex": "eb7ee4793808598d71dd1645fa8aec3eb73956954f9bcebe3d2d36cb0eaec34b",
+      "staticDhHex": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+      "staticInfoHex": "766579726f2d7374617469632d7633003243395656373244465346314132534330544e3651424150454300394e4852324359545a52574d4a5857534e545756524b51573652",
+      "staticKeyHex": "e5a8fc1b998e73e89405ec843981059b50ba870a982fa854d773ee1bd812ad52",
+      "saltHex": "7b53362a26f4d97beebc65516d2277ef7a7cb4156e1e2f0442c88d463f0ca696",
+      "prkHex": "ec4e1e84af1ab9becb0077c206db5510e308aa3c9d6cc794941f5bde96678bdd",
+      "kI2rHex": "bcf8f56bb7ba7df28c98f60648127ef1fc811fa52ad893c6842536a8bbb8147f",
+      "kR2iHex": "4a570fbe4740a3868491aaba2db075948446d91071a812fa4ae83ef59b6e847b",
+      "chainKeyHex": "23ce2e0e129990b283c17ac16aa911d4e05efa967320e3a95c4fdecd7fd57d79",
+      "sessionPrkHex": "42769b60f5a8f78f10d9a80c22c2d36fede6101011e4bc0655c77ba0a389503a",
+      "sessionKI2rHex": "47347199913417ce838305541ed53ff216984e3639e70fda6aba0479c00bb8e0",
+      "sessionKR2iHex": "6b59d3034ab75521200ea2066785672c8afb86f8e5634dfe5871aba9edba3a46",
+      "sessionExpSecretHex": "91d35d68e5abf3275e0f95f3480ef1122e4aae5bad77e2be3c6b4898a394ea89"
+    }
+  },
+  "qr": {
+    "input": {
+      "idI": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+      "idR": "9NHR2CYTZRWMJXWSNTWVRKQW6R",
+      "staticPrivateIHex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+      "staticPrivateRHex": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+      "ephemeralPrivateIHex": "7079f2dc639dccc3896aeb6adf4bab69eea255184bdaef8958540b024ecbf111",
+      "ephemeralPrivateRHex": "bf1fd8d4af0f66aa5e6f6fe06f2a55a869046ca12286332cdd11d8dcd737632c",
+      "cnIHex": "c15a7b9d82857701ac27f117a66ab44b15bc3b18d8aa21e8cc8864ece5c63bb4",
+      "cnRHex": "2f08ca24499ca21cf5255abb075efc4772a113c12b6abe8a1b1d80a217e705cf",
+      "qrSecretHex": "7ec0a5cc7129072672750fcef1d7ffd7",
+      "qrString": "veyro:pair?v=2&id=9NHR2CYTZRWMJXWSNTWVRKQW6R&n=Test+PC&a=192.168.1.20:47654&s=fsClzHEpByZydQ_O8df_1w&e=1700000000",
+      "qrNowEpochSeconds": 1700000000,
+      "newPairingSecretHex": "7bbf66d9093310747f14ccc5887e2311131cc14317937ee5f61712a441f2b656",
+      "preamble": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"pair\":\"qr\",\"pk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\",\"cn\":\"wVp7nYKFdwGsJ/EXpmq0SxW8OxjYqiHozIhk7OXGO7Q=\",\"epk\":\"M2gFXHZgThwrVdujWX0CEi5XAE1oNWk6AQxMzzutNCg=\"}",
+      "ack": "{\"mode\":\"pairing\",\"pk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\",\"cn\":\"LwjKJEmcohz1JVq7B178R3KhE8Erar6KGx2AohfnBc8=\",\"epk\":\"FhG3NaK1nbfYMZDePEYs7ARK46+x4lOLRdY1TX5yvU4=\"}"
+    },
+    "expected": {
+      "qrSecretBase64Url": "fsClzHEpByZydQ_O8df_1w",
+      "ephemeralPublicIHex": "3368055c76604e1c2b55dba3597d02122e57004d6835693a010c4ccf3bad3428",
+      "ephemeralPublicRHex": "1611b735a2b59db7d83190de3c462cec044ae3afb1e2538b45d6354d7e72bd4e",
+      "transcriptHex": "5b3134fa0d288aceb5b91a7a70f4d584016d0104e14e7a0c607288d57012f07f",
+      "dhHex": "805984eb5a7037c7cfc1d75b80cadf3474850e137eea2b7824c9da5c770df534",
+      "staticKeyHex": "693db9d3e380537fe0151be636963f948027309b6004e73e27f5177922be21f8",
+      "qrPrkHex": "b5f9e1127c3e5bf94e7f00882f755fa111eb9a3008bb0d34aae6166a1d2b58f0",
+      "proofKeyHex": "39ec11de473ee1a7e29d5d04d17b0f3a0ceffe59b852aa5c4797231f32a80e41",
+      "qrMixHex": "ae05f8191b5e56387accdc6d0c191a35b915ef2c0c8d2122701b901547086e30",
+      "qrProofHex": "e3e09cbb8e25031bddd0cdf7663dd72d7d370e1f49a65da8cdbe4589f825b99b",
+      "qrProofBase64": "4+Ccu44lAxvd0M33Zj3XLX03Dh9Jpl2ozb5FifgluZs=",
+      "prkHex": "f4a052ea447ac30c39fb8d0c5b9aed6700269138e3247b7c2871bccb4d0a3c7b",
+      "kI2rHex": "942ff53f9b8651b98455d89f8ee90209ed3dcf9e53d5e2067d0b8f8c3bcace7d",
+      "kR2iHex": "6ce0ea5d4a8c93368c2fe8467da30a1b8fae5b54cb28f0b6391ca61612d05c28",
+      "chainKeyHex": "e691cc1675e99d571799b73ab8531118030925b65ad1fecb30e0932b734934a6",
+      "sessionPrkHex": "f239097a885f024b77658e5f506acb4507e4bbcfde71119049ab6898cfb9a839",
+      "sessionKI2rHex": "36c7c1acda230bea1a9443e6791152c95c954180232cfdb3f589da8887b61ed8",
+      "sessionKR2iHex": "c46d430ec898912f133f1f76925cc3770b9a08dbe40b8a686bdf038675713b50",
+      "sessionExpSecretHex": "224fdea997a1f63f7e9e2ea652c86f58f9a6ea75db41fe9ca880910ecf950ec3"
+    }
+  }
+}

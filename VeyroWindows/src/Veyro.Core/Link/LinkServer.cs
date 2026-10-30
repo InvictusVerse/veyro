@@ -63,11 +63,14 @@ public interface ILinkSessionRunner
     bool IsRunning { get; }
 
     /// <summary>
-    /// Registers <paramref name="secure"/> in the session registry before the returned task first
-    /// yields, then runs it until the peer closes, a newer session replaces it, the listener stops
-    /// or <paramref name="ct"/> is cancelled. Never faults; the caller disposes the session after.
+    /// Registers <paramref name="secure"/> in the session registry after the peer's first frame
+    /// opens under its keys (ADR-058), then runs it until the peer closes, a newer session
+    /// replaces it, the listener stops or <paramref name="ct"/> is cancelled.
+    /// <paramref name="registered"/> completes true on registration and false when the session
+    /// ends without it. Never faults; the caller disposes the session after.
     /// </summary>
-    Task RunOutboundSessionAsync(SecureLinkSession secure, TrustedPeer peer, SessionAddresses addresses, CancellationToken ct = default);
+    Task RunOutboundSessionAsync(SecureLinkSession secure, TrustedPeer peer, SessionAddresses addresses, CancellationToken ct = default,
+        TaskCompletionSource<bool>? registered = null);
 }
 
 /// <summary>
@@ -90,6 +93,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     private readonly string _destinationRoot;
     private readonly byte[] _localPublicKey;
     private readonly Func<byte[], byte[], byte[], byte[]>? _deriveSharedKey;
+    private readonly Func<bool> _aeadSupported;
     private CancellationTokenSource _stop = new();
     private readonly PeerSessionRegistry _sessions;
     private WebApplication? _app;
@@ -116,15 +120,15 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     public IRequestedOfferHandler? RequestedOffers { get; set; }
 
     /// <summary>
-    /// The Accept / Decline prompt. Confirm pairing always asks (with the code both screens show);
-    /// the legacy PIN flow asks only when no <see cref="PairingWindow"/> is open.
+    /// The Accept / Decline prompt for confirm pairing, with the code both screens show. QR
+    /// pairing through the open <see cref="PairingWindow"/> needs no prompt.
     /// </summary>
     public Func<InboundPairingRequest, Task<bool>> PairingAuthorizer { get; set; } = _ => Task.FromResult(false);
 
     /// <summary>How long the user has to compare and accept a confirm code (04-PROTOCOL.md 4.3).</summary>
     public TimeSpan ConfirmTimeout { get; set; } = TimeSpan.FromSeconds(120);
 
-    /// <summary>Bounds each step of the confirm exchange before the prompt (nonce, pairHello).</summary>
+    /// <summary>Bounds the cleartext pairNonce step of the confirm exchange; pairHello uses <see cref="FirstFrameTimeout"/>.</summary>
     public TimeSpan ConfirmHandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<InboundOfferRequest, Task<bool>> OfferAuthorizer { get; set; } = _ => Task.FromResult(false);
 
@@ -141,11 +145,11 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     public TimeSpan DataIdleTimeout { get; set; } = BulkTransfer.DefaultIdleTimeout;
 
     /// <summary>
-    /// How long a device pairing through the open window has to send a PairHello that verifies.
-    /// The user may still be typing the code on the phone, so this is generous. Exceeding it
-    /// counts as a failed attempt (04-PROTOCOL.md 4.2).
+    /// FR-C3 (ADR-058): whenever the peer's next frame is its first under keys it has not used
+    /// yet (the session start, the pairing pairHello, the first frame after the pairing switch),
+    /// it must open within this or the connection closes. A QR window timeout counts one failure.
     /// </summary>
-    public TimeSpan WindowPairHelloTimeout { get; set; } = TimeSpan.FromMinutes(2);
+    public TimeSpan FirstFrameTimeout { get; set; } = TimeSpan.FromMilliseconds(ProtocolConstants.HandshakeTimeoutMillis);
 
     public LinkServer(
         string localDeviceId,
@@ -157,8 +161,11 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         int port = 0,
         PeerSessionRegistry? sessions = null,
         TimeProvider? timeProvider = null,
-        Func<byte[], byte[], byte[], byte[]>? deriveSharedKey = null)
+        Func<byte[], byte[], byte[], byte[]>? deriveSharedKey = null,
+        Func<bool>? aeadSupported = null)
     {
+        // ADR-058: Windows 11 provides ChaCha20-Poly1305; without it the link refuses to start.
+        _aeadSupported = aeadSupported ?? (() => ChaCha20Poly1305.IsSupported);
         // (peerPublicKey, salt, info) -> HKDF(X25519(identity, peer)); IIdentityManager.DeriveSharedKey
         // in the app. Without it confirm pairing is refused.
         _deriveSharedKey = deriveSharedKey;
@@ -219,6 +226,11 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     public async Task StartAsync()
     {
         if (_app is not null) return;
+        if (!_aeadSupported())
+        {
+            VeyroTrace.Error("ChaCha20-Poly1305 is not available on this version of Windows; the link will not start");
+            throw new PlatformNotSupportedException("ChaCha20-Poly1305 is not available on this version of Windows.");
+        }
         // Restartable: "Pause sync" stops the listener and "Resume" starts it again.
         if (_stop.IsCancellationRequested)
         {
@@ -295,19 +307,30 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         await using var sessionOwner = new WebSocketOwner(socket);
         try
         {
-            LinkPreamble? preamble = PeerMessageJson.Decode<LinkPreamble>(await ReceiveTextAsync(socket, ct).ConfigureAwait(false));
+            // The raw payload, never a re-encoding: the transcript covers exactly these bytes.
+            byte[] preambleBytes = await ReceiveFrameAsync(socket, ct).ConfigureAwait(false);
+            LinkPreamble? preamble = PeerMessageJson.Decode<LinkPreamble>(Encoding.UTF8.GetString(preambleBytes));
             VeyroTrace.Info($"Received preamble: id={preamble?.Id ?? "<null>"}, platform={preamble?.Platform ?? "<null>"}, version={preamble?.ProtocolVersion.ToString() ?? "<null>"}");
             if (preamble is not null && preamble.ProtocolVersion != LinkProtocol.Version)
             {
-                // Version 1 predates confirm pairing (ADR-031); refuse rather than guess.
+                // ADR-058: v3 only, no negotiation; refuse rather than guess.
                 await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "unsupported-protocol-version")), ct).ConfigureAwait(false);
                 return;
             }
+            // Both sides hash the ids into the keys: only the canonical form, compared byte for byte.
             if (preamble is null ||
-                DeviceId.ParseOrNull(preamble.Id) is null ||
+                DeviceId.ParseOrNull(preamble.Id)?.Value is not { } canonical ||
+                !string.Equals(canonical, preamble.Id, StringComparison.Ordinal) ||
                 string.Equals(preamble.Id, _localDeviceId, StringComparison.OrdinalIgnoreCase))
             {
                 await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "invalid-identity")), ct).ConfigureAwait(false);
+                return;
+            }
+            // No detail to the peer for a malformed key field (FR-K5).
+            byte[]? peerEpk = FrameCrypto.DecodeKey32(preamble.Epk);
+            if (peerEpk is null || FrameCrypto.DecodeKey32(preamble.Cn) is null)
+            {
+                VeyroTrace.Warn("Preamble without a valid cn/epk; closing");
                 return;
             }
 
@@ -317,102 +340,45 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             if (trusted is null && (preamble.Pair is null or LinkPreamble.PairConfirm) &&
                 _trustStore.GetPendingUnpairSecret(preamble.Id) is { } owed)
             {
-                await TellRemovedPeerAsync(socket, preamble.Id, owed, ct).ConfigureAwait(false);
+                await TellRemovedPeerAsync(socket, preambleBytes, peerEpk, preamble.Id, owed, ct).ConfigureAwait(false);
                 return;
             }
             if (trusted is null && preamble.Pair == LinkPreamble.PairConfirm)
             {
                 // ADR-031: compare a code on both screens, accept here. Nothing is typed.
-                await RunConfirmPairingAsync(socket, preamble, addresses, ct).ConfigureAwait(false);
+                await RunConfirmPairingAsync(socket, preambleBytes, peerEpk, preamble, addresses, ct).ConfigureAwait(false);
                 return;
             }
-            if (trusted is null && preamble.Pair is not null and not LinkPreamble.PairQr)
+            if (trusted is null && preamble.Pair == LinkPreamble.PairQr)
             {
-                await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "unsupported-pairing")), ct).ConfigureAwait(false);
+                await RunQrPairingAsync(socket, preambleBytes, peerEpk, preamble, addresses, ct).ConfigureAwait(false);
                 return;
             }
-            bool pairing = trusted is null;
-            string? pairingPin = null;
-            PairingAttempt? windowAttempt = null;
             if (trusted is null)
             {
-                windowAttempt = PairingWindow.TryBeginAttempt();
-                if (windowAttempt is not null)
-                {
-                    // ADR-030: the user opened the pairing screen, so scanning or typing its code
-                    // is the consent. No prompt; the code is never logged.
-                    pairingPin = windowAttempt.Code;
-                    VeyroTrace.Info($"Unknown peer {preamble.Id} pairing through the open pairing window");
-                }
-                else if (preamble.Pair == LinkPreamble.PairQr)
-                {
-                    // A scanned code is only valid while its window is open (04-PROTOCOL.md 4.2).
-                    VeyroTrace.Info($"QR pairing from {preamble.Id} refused: no pairing window is open");
-                    await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "no-pairing-window")), ct).ConfigureAwait(false);
-                    return;
-                }
-                else
-                {
-                    // Legacy PIN flow (pair absent), kept for tests: the prompt shows the PIN.
-                    pairingPin = FrameCrypto.NewPin();
-                    bool approved = await PairingAuthorizer(new InboundPairingRequest(
-                        preamble.Id, preamble.Name, pairingPin, DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60), ct)).ConfigureAwait(false);
-                    if (!approved)
-                    {
-                        await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "declined")), ct).ConfigureAwait(false);
-                        return;
-                    }
-                }
+                // ADR-058: the legacy PIN flow is gone. An unknown device must ask to pair.
+                string reason = preamble.Pair is null ? "not-paired" : "unsupported-pairing";
+                await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, reason)), ct).ConfigureAwait(false);
+                return;
             }
 
-            byte[] secret = pairing
-                ? FrameCrypto.DeriveBootstrapKey(pairingPin!, preamble.Id, _localDeviceId)
-                : DecodeBase64(trusted!.PairingSecretBase64, "stored pairing secret");
+            byte[] secret = DecodeBase64(trusted.PairingSecretBase64, "stored pairing secret");
             if (secret.Length != 32)
             {
                 await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "invalid-trust-record")), ct).ConfigureAwait(false);
                 return;
             }
-
-            await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(
-                pairing ? LinkPreambleAck.ModePairing : LinkPreambleAck.ModeSession)), ct).ConfigureAwait(false);
-            await using var secure = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: !pairing, preamble.Id);
-            if (pairing)
+            LinkKeys keys;
+            try
             {
-                SecureLinkMessage pairMessage = (windowAttempt is null
-                    ? await secure.ReceiveAsync(ct).ConfigureAwait(false)
-                    : await ReceiveWindowPairHelloAsync(secure, windowAttempt, ct).ConfigureAwait(false))
-                    ?? throw new InvalidDataException("Peer closed before PairHello.");
-                if (pairMessage.Envelope.Payload is not PeerMessage.PairHello pairHello ||
-                    !string.Equals(pairHello.DeviceId, preamble.Id, StringComparison.OrdinalIgnoreCase))
-                    throw new UnauthorizedAccessException("PairHello identity mismatch.");
-                byte[] peerPublicKey = DecodeBase64(pairHello.PublicKeyB64, "PairHello public key");
-                var peerId = DeviceId.ParseOrNull(pairHello.DeviceId);
-                if (peerId is null || peerPublicKey.Length != 32 || !DeviceId.Matches(peerId.Value, peerPublicKey))
-                    throw new UnauthorizedAccessException("PairHello public-key binding failed.");
-                byte[] sessionSecret = FrameCrypto.NewSessionSecret();
-                trusted = new TrustedPeer(
-                    peerId.Value.Value,
-                    pairHello.DeviceName,
-                    PlatformType.Android,
-                    Convert.ToBase64String(peerPublicKey),
-                    Convert.ToBase64String(sessionSecret),
-                    false,
-                    DateTimeOffset.UtcNow);
-                await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
-                await secure.SendSealedAsync(new PeerMessage.PairOk(
-                    _localDeviceId,
-                    _localName,
-                    "windows",
-                    Convert.ToBase64String(sessionSecret),
-                    Convert.ToBase64String(_localPublicKey)), ct).ConfigureAwait(false);
-                secure.Rekey(sessionSecret);
-                if (windowAttempt is not null) PairingWindow.Complete(trusted);
-                try { PairingCompleted?.Invoke(trusted); }
-                catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
+                keys = await RespondSessionAsync(socket, preambleBytes, peerEpk, preamble.Id, secret, ct).ConfigureAwait(false);
             }
-            TrustedPeer pairedPeer = trusted ?? throw new UnauthorizedAccessException("Pairing did not establish trust.");
-            await RunSessionAsync(secure, pairedPeer, addresses, ct).ConfigureAwait(false);
+            finally
+            {
+                CryptographicOperations.ZeroMemory(secret);
+            }
+            await using var secure = new SecureLinkSession(socket, keys);
+            await RunSessionAsync(secure, trusted, addresses, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception error)
@@ -424,17 +390,180 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         }
     }
 
+    /// <summary>
+    /// Sends a keyed ack (<c>cn</c>, <c>epk</c> added) as one complete text frame and returns the
+    /// transcript over the exact preamble and ack bytes (04-PROTOCOL.md 4.1).
+    /// </summary>
+    private static async Task<byte[]> SendKeyedAckAsync(WebSocket socket, byte[] preambleBytes, LinkPreambleAck ack, EphemeralKey eph, CancellationToken ct)
+    {
+        LinkPreambleAck keyed = ack with
+        {
+            Cn = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            Epk = Convert.ToBase64String(eph.PublicKey)
+        };
+        byte[] ackBytes = Encoding.UTF8.GetBytes(PeerMessageJson.Encode(keyed));
+        await socket.SendAsync(ackBytes, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+        return ConnectionKeySchedule.Transcript(preambleBytes, ackBytes);
+    }
+
+    /// <summary>
+    /// Session-mode answer and keys (04-PROTOCOL.md 4.2): <c>ikm = X25519(e_R, epk_I) || pairingSecret</c>,
+    /// salt = transcript. Every ephemeral value is wiped once the keys exist.
+    /// </summary>
+    private async Task<LinkKeys> RespondSessionAsync(WebSocket socket, byte[] preambleBytes, byte[] peerEpk, string peerId, byte[] secret, CancellationToken ct)
+    {
+        using EphemeralKey eph = EphemeralKey.Generate();
+        byte[] transcript = await SendKeyedAckAsync(socket, preambleBytes, new LinkPreambleAck(LinkPreambleAck.ModeSession), eph, ct).ConfigureAwait(false);
+        byte[] dh = eph.Agree(peerEpk);
+        try { return ConnectionKeySchedule.Session(LinkRole.Responder, peerId, _localDeviceId, transcript, dh, secret); }
+        finally { CryptographicOperations.ZeroMemory(dh); }
+    }
+
+    /// <summary>
+    /// QR pairing through the open window (04-PROTOCOL.md 4.2, ADR-030, ADR-058). The preamble key
+    /// must hash to its id before the ack; the phone's first frame must open under the QR pairing
+    /// keys, be its <c>pairHello</c>, match the preamble identity and carry a valid <c>qrProof</c>.
+    /// Any failure there counts one window failure and closes before anything sealed is sent.
+    /// </summary>
+    private async Task RunQrPairingAsync(WebSocket socket, byte[] preambleBytes, byte[] peerEpk, LinkPreamble preamble, SessionAddresses addresses, CancellationToken ct)
+    {
+        PairingAttempt? attempt = PairingWindow.TryBeginAttempt();
+        if (attempt is null)
+        {
+            // A scanned code is only valid while its window is open (04-PROTOCOL.md 4.2).
+            VeyroTrace.Info($"QR pairing from {preamble.Id} refused: no pairing window is open");
+            await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "no-pairing-window")), ct).ConfigureAwait(false);
+            return;
+        }
+        try
+        {
+            if (_deriveSharedKey is null)
+            {
+                await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "pairing-unavailable")), ct).ConfigureAwait(false);
+                return;
+            }
+            byte[]? pkPhone = FrameCrypto.DecodeKey32(preamble.Pk);
+            if (pkPhone is null || DeviceId.ParseOrNull(preamble.Id) is not { } claimed || !DeviceId.Matches(claimed, pkPhone))
+            {
+                VeyroTrace.Warn($"QR pairing from {preamble.Id} refused: identity-mismatch");
+                await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeRefused, "identity-mismatch")), ct).ConfigureAwait(false);
+                return;
+            }
+            string phoneId = preamble.Id;
+            VeyroTrace.Info($"Unknown peer {phoneId} pairing through the open pairing window");
+
+            LinkKeys keys;
+            byte[] expectedProof;
+            using (EphemeralKey eph = EphemeralKey.Generate())
+            {
+                byte[] transcript = await SendKeyedAckAsync(socket, preambleBytes,
+                    new LinkPreambleAck(LinkPreambleAck.ModePairing, Pk: Convert.ToBase64String(_localPublicKey)), eph, ct).ConfigureAwait(false);
+                byte[] dh = eph.Agree(peerEpk);
+                byte[] staticKey = _deriveSharedKey(pkPhone, transcript, ConnectionKeySchedule.StaticInfo(phoneId, _localDeviceId));
+                byte[] qrMix = ConnectionKeySchedule.QrMix(attempt.Secret);
+                byte[] proofKey = ConnectionKeySchedule.QrProofKey(attempt.Secret);
+                try
+                {
+                    keys = ConnectionKeySchedule.PairQr(LinkRole.Responder, phoneId, _localDeviceId, transcript, dh, staticKey, qrMix);
+                    expectedProof = ConnectionKeySchedule.QrProof(proofKey, phoneId, _localDeviceId, transcript);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(dh);
+                    CryptographicOperations.ZeroMemory(staticKey);
+                    CryptographicOperations.ZeroMemory(qrMix);
+                    CryptographicOperations.ZeroMemory(proofKey);
+                    CryptographicOperations.ZeroMemory(attempt.Secret);
+                }
+            }
+
+            await using var secure = new SecureLinkSession(socket, keys);
+            PeerMessage.PairHello hello;
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(FirstFrameTimeout);
+                SecureLinkMessage message = await secure.ReceiveAsync(timeout.Token).ConfigureAwait(false)
+                    ?? throw new InvalidDataException("Peer closed before PairHello.");
+                hello = message.Envelope.Payload as PeerMessage.PairHello
+                    ?? throw new InvalidDataException("Expected PairHello.");
+                byte[]? helloKey = FrameCrypto.DecodeKey32(hello.PublicKeyB64);
+                byte[]? proof = FrameCrypto.DecodeKey32(hello.QrProof);
+                if (!string.Equals(hello.DeviceId, phoneId, StringComparison.Ordinal) ||
+                    helloKey is null || !CryptographicOperations.FixedTimeEquals(helloKey, pkPhone) ||
+                    proof is null || !CryptographicOperations.FixedTimeEquals(proof, expectedProof))
+                    throw new UnauthorizedAccessException("PairHello does not prove the QR secret.");
+            }
+            catch (Exception error) when (!ct.IsCancellationRequested &&
+                                          error is UnauthorizedAccessException or InvalidDataException or OperationCanceledException or WebSocketException or IOException)
+            {
+                VeyroTrace.Warn($"Pairing window: PairHello failed ({error.GetType().Name})");
+                PairingWindow.RecordFailure(attempt);
+                return;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(expectedProof);
+            }
+
+            byte[] sessionSecret = FrameCrypto.NewSessionSecret();
+            var trusted = new TrustedPeer(
+                phoneId,
+                hello.DeviceName,
+                PlatformType.Android,
+                Convert.ToBase64String(pkPhone),
+                Convert.ToBase64String(sessionSecret),
+                false,
+                DateTimeOffset.UtcNow);
+            try
+            {
+                await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
+                try
+                {
+                    await secure.SendPairOkAndSwitchAsync(new PeerMessage.PairOk(
+                        _localDeviceId,
+                        _localName,
+                        "windows",
+                        Convert.ToBase64String(sessionSecret),
+                        Convert.ToBase64String(_localPublicKey)), sessionSecret, ct).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Review issue 2 (ADR-058): the phone never learnt the secret, so this PC must
+                    // not keep trusting it; the failed attempt counts against the window.
+                    await ForgetUndeliveredPairingAsync(phoneId).ConfigureAwait(false);
+                    PairingWindow.RecordFailure(attempt);
+                    throw;
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(sessionSecret);
+            }
+            PairingWindow.Complete(trusted);
+            try { PairingCompleted?.Invoke(trusted); }
+            catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
+            await RunSessionAsync(secure, trusted, addresses, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // attempt.Secret is this attempt's own clone (PairingWindow.TryBeginAttempt), so
+            // zeroing it here and above never touches the window's secret.
+            CryptographicOperations.ZeroMemory(attempt.Secret);
+        }
+    }
+
     private enum ConfirmOutcome { Accepted, Declined, TimedOut, Abandoned }
 
     /// <summary>
-    /// Receiver side of confirm pairing (04-PROTOCOL.md 4.3, ADR-031). The phone is A, this PC B:
-    /// commit to nB, learn nA, reveal nB, check the phone's pairHello under the bootstrap key K,
-    /// then ask the user to compare the code. <c>pairOk</c> is sent only after Accept. Nonces, the
-    /// code and K are never logged.
+    /// Receiver side of confirm pairing (04-PROTOCOL.md 4.3, ADR-031, ADR-058). The phone is A,
+    /// this PC B: commit to nB, learn nA, reveal nB, check the phone's pairHello under the
+    /// bootstrap keys, then ask the user to compare the code. <c>pairOk</c> is sent only after
+    /// Accept. Nonces, the code and every key are never logged.
     /// </summary>
-    private async Task RunConfirmPairingAsync(WebSocket socket, LinkPreamble preamble, SessionAddresses addresses, CancellationToken ct)
+    private async Task RunConfirmPairingAsync(WebSocket socket, byte[] preambleBytes, byte[] peerEpk, LinkPreamble preamble, SessionAddresses addresses, CancellationToken ct)
     {
-        byte[]? pkA = TryDecodeKey(preamble.Pk);
+        byte[]? pkA = FrameCrypto.DecodeKey32(preamble.Pk);
         DeviceId? claimed = DeviceId.ParseOrNull(preamble.Id);
         if (_deriveSharedKey is null || pkA is null || claimed is null || !DeviceId.Matches(claimed.Value, pkA))
         {
@@ -446,23 +575,39 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         string idA = claimed.Value.Value;
 
         byte[] nB = PairConfirm.NewNonce();
-        await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(
-            LinkPreambleAck.ModePairingConfirm,
-            Pk: Convert.ToBase64String(_localPublicKey),
-            Commit: Convert.ToBase64String(PairConfirm.Commitment(_localPublicKey, pkA, nB)))), ct).ConfigureAwait(false);
+        byte[] transcript;
+        byte[] dh;
+        using (EphemeralKey eph = EphemeralKey.Generate())
+        {
+            transcript = await SendKeyedAckAsync(socket, preambleBytes, new LinkPreambleAck(
+                LinkPreambleAck.ModePairingConfirm,
+                Pk: Convert.ToBase64String(_localPublicKey),
+                Commit: Convert.ToBase64String(PairConfirm.Commitment(_localPublicKey, pkA, nB))), eph, ct).ConfigureAwait(false);
+            dh = eph.Agree(peerEpk);
+        }
 
-        byte[] nA = await ReceivePairNonceAsync(socket, ct).ConfigureAwait(false);
-        await SendTextAsync(socket, PeerMessageJson.Encode(LinkPairNonce.For(nB)), ct).ConfigureAwait(false);
+        LinkKeys keys;
+        string code;
+        try
+        {
+            byte[] nA = await ReceivePairNonceAsync(socket, ct).ConfigureAwait(false);
+            await SendTextAsync(socket, PeerMessageJson.Encode(LinkPairNonce.For(nB)), ct).ConfigureAwait(false);
+            code = PairConfirm.Code(pkA, _localPublicKey, nA, nB);
+            byte[] staticKey = _deriveSharedKey(pkA, transcript, ConnectionKeySchedule.StaticInfo(idA, _localDeviceId));
+            try { keys = ConnectionKeySchedule.PairConfirm(LinkRole.Responder, idA, _localDeviceId, transcript, nA, nB, dh, staticKey); }
+            finally { CryptographicOperations.ZeroMemory(staticKey); }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(dh);
+        }
+        await using var secure = new SecureLinkSession(socket, keys);
 
-        string code = PairConfirm.Code(pkA, _localPublicKey, nA, nB);
-        byte[] key = _deriveSharedKey(pkA, PairConfirm.BootstrapSalt(nA, nB), PairConfirm.BootstrapInfo(idA, _localDeviceId));
-        await using var secure = new SecureLinkSession(socket, _localDeviceId, key, encrypt: false, preamble.Id);
-        CryptographicOperations.ZeroMemory(key);
-
-        // A pairHello that verifies under K proves the phone holds the private key behind pkA.
+        // A pairHello that opens under the bootstrap keys proves the phone holds the private key
+        // behind pkA and took part in this connection's ephemeral exchange.
         PeerMessage.PairHello hello = await ReceiveConfirmPairHelloAsync(secure, ct).ConfigureAwait(false);
-        byte[] helloKey = DecodeBase64(hello.PublicKeyB64, "PairHello public key");
-        if (!string.Equals(hello.DeviceId, idA, StringComparison.OrdinalIgnoreCase) ||
+        byte[] helloKey = FrameCrypto.DecodeKey32(hello.PublicKeyB64) ?? throw new InvalidDataException("Invalid PairHello public key.");
+        if (!string.Equals(hello.DeviceId, idA, StringComparison.Ordinal) ||
             !CryptographicOperations.FixedTimeEquals(helloKey, pkA))
             throw new UnauthorizedAccessException("PairHello does not match the confirmed identity.");
 
@@ -521,15 +666,31 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             Convert.ToBase64String(sessionSecret),
             false,
             DateTimeOffset.UtcNow);
-        await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
-        await secure.SendSealedAsync(new PeerMessage.PairOk(
-            _localDeviceId,
-            _localName,
-            "windows",
-            Convert.ToBase64String(sessionSecret),
-            Convert.ToBase64String(_localPublicKey)), ct).ConfigureAwait(false);
-        secure.Rekey(sessionSecret);
-        CryptographicOperations.ZeroMemory(sessionSecret);
+        try
+        {
+            await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
+            // The receive keys switch before pairOk leaves, so the phone's first session frame
+            // can never be read under the bootstrap keys (04-PROTOCOL.md 4.3).
+            try
+            {
+                await secure.SendPairOkAndSwitchAsync(new PeerMessage.PairOk(
+                    _localDeviceId,
+                    _localName,
+                    "windows",
+                    Convert.ToBase64String(sessionSecret),
+                    Convert.ToBase64String(_localPublicKey)), sessionSecret, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Review issue 2 (ADR-058): the phone never learnt the secret; keep no trust.
+                await ForgetUndeliveredPairingAsync(idA).ConfigureAwait(false);
+                throw;
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(sessionSecret);
+        }
         VeyroTrace.Info($"Confirm pairing with {idA} completed");
         try { PairingCompleted?.Invoke(trusted); }
         catch (Exception error) { VeyroTrace.Error("PairingCompleted handler failed", error); }
@@ -568,38 +729,64 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                 }
             }
 
-            await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreamble(
-                _localDeviceId, _localName, "windows",
-                Pair: LinkPreamble.PairConfirm,
-                Pk: Convert.ToBase64String(_localPublicKey))), ct).ConfigureAwait(false);
-            LinkPreambleAck? ack = PeerMessageJson.Decode<LinkPreambleAck>(await ReceiveTextAsync(socket, ct).ConfigureAwait(false));
-            if (ack is null || ack.Mode != LinkPreambleAck.ModePairingConfirm)
+            string phoneId = expected.Value.Value;
+            byte[] transcript;
+            byte[] dh;
+            LinkPreambleAck? ack;
+            using (EphemeralKey eph = EphemeralKey.Generate())
             {
-                VeyroTrace.Warn($"PC-initiated pairing refused: {ack?.Mode ?? "no answer"} {ack?.Reason}");
-                return new PcPairResult(ack?.Mode == LinkPreambleAck.ModeBusy ? PcPairOutcome.Busy : PcPairOutcome.Refused);
+                byte[] preambleBytes = Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(
+                    _localDeviceId, _localName, "windows",
+                    Pair: LinkPreamble.PairConfirm,
+                    Pk: Convert.ToBase64String(_localPublicKey),
+                    Cn: Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                    Epk: Convert.ToBase64String(eph.PublicKey))));
+                await socket.SendAsync(preambleBytes, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+                byte[] ackBytes = await ReceiveFrameAsync(socket, ct).ConfigureAwait(false);
+                ack = PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(ackBytes));
+                if (ack is null || ack.Mode != LinkPreambleAck.ModePairingConfirm)
+                {
+                    VeyroTrace.Warn($"PC-initiated pairing refused: {ack?.Mode ?? "no answer"} {ack?.Reason}");
+                    return new PcPairResult(ack?.Mode == LinkPreambleAck.ModeBusy ? PcPairOutcome.Busy : PcPairOutcome.Refused);
+                }
+                byte[]? ackEpk = FrameCrypto.DecodeKey32(ack.Epk);
+                if (ackEpk is null || FrameCrypto.DecodeKey32(ack.Cn) is null)
+                    return new PcPairResult(PcPairOutcome.Failed);
+                transcript = ConnectionKeySchedule.Transcript(preambleBytes, ackBytes);
+                dh = eph.Agree(ackEpk);
             }
 
             // The answering key must hash to the phone the user picked, and its nonce must match
             // the commitment it made before seeing ours.
-            byte[]? pkB = TryDecodeKey(ack.Pk);
-            byte[]? commit = string.IsNullOrEmpty(ack.Commit) ? null : DecodeBase64(ack.Commit, "commit");
+            byte[]? pkB = FrameCrypto.DecodeKey32(ack.Pk);
+            byte[]? commit = FrameCrypto.DecodeKey32(ack.Commit);
             if (pkB is null || commit is null || !DeviceId.Matches(expected.Value, pkB))
-                return new PcPairResult(PcPairOutcome.IdentityMismatch);
-
-            byte[] nA = PairConfirm.NewNonce();
-            await SendTextAsync(socket, PeerMessageJson.Encode(LinkPairNonce.For(nA)), ct).ConfigureAwait(false);
-            byte[] nB = await ReceivePairNonceAsync(socket, ct).ConfigureAwait(false);
-            if (!CryptographicOperations.FixedTimeEquals(commit, PairConfirm.Commitment(pkB, _localPublicKey, nB)))
             {
-                VeyroTrace.Warn("PC-initiated pairing aborted: commitment mismatch; nothing stored");
+                CryptographicOperations.ZeroMemory(dh);
                 return new PcPairResult(PcPairOutcome.IdentityMismatch);
             }
 
-            string phoneId = expected.Value.Value;
-            showCode(PairConfirm.Code(_localPublicKey, pkB, nA, nB));
-            byte[] key = _deriveSharedKey(pkB, PairConfirm.BootstrapSalt(nA, nB), PairConfirm.BootstrapInfo(_localDeviceId, phoneId));
-            var secure = new SecureLinkSession(socket, _localDeviceId, key, encrypt: false, phoneId);
-            CryptographicOperations.ZeroMemory(key);
+            LinkKeys keys;
+            try
+            {
+                byte[] nA = PairConfirm.NewNonce();
+                await SendTextAsync(socket, PeerMessageJson.Encode(LinkPairNonce.For(nA)), ct).ConfigureAwait(false);
+                byte[] nB = await ReceivePairNonceAsync(socket, ct).ConfigureAwait(false);
+                if (!CryptographicOperations.FixedTimeEquals(commit, PairConfirm.Commitment(pkB, _localPublicKey, nB)))
+                {
+                    VeyroTrace.Warn("PC-initiated pairing aborted: commitment mismatch; nothing stored");
+                    return new PcPairResult(PcPairOutcome.IdentityMismatch);
+                }
+                showCode(PairConfirm.Code(_localPublicKey, pkB, nA, nB));
+                byte[] staticKey = _deriveSharedKey(pkB, transcript, ConnectionKeySchedule.StaticInfo(_localDeviceId, phoneId));
+                try { keys = ConnectionKeySchedule.PairConfirm(LinkRole.Initiator, _localDeviceId, phoneId, transcript, nA, nB, dh, staticKey); }
+                finally { CryptographicOperations.ZeroMemory(staticKey); }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(dh);
+            }
+            var secure = new SecureLinkSession(socket, keys);
             try
             {
                 await secure.SendAsync(new PeerMessage.PairHello(
@@ -634,19 +821,26 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                     }
                 }
 
-                byte[] okKey = DecodeBase64(ok.PublicKeyB64, "pairOk public key");
-                byte[] sessionSecret = DecodeBase64(ok.SessionSecretB64, "session secret");
-                if (!string.Equals(ok.DeviceId, phoneId, StringComparison.OrdinalIgnoreCase) ||
-                    !CryptographicOperations.FixedTimeEquals(okKey, pkB) || sessionSecret.Length != 32)
+                byte[]? okKey = FrameCrypto.DecodeKey32(ok.PublicKeyB64);
+                byte[]? sessionSecret = FrameCrypto.DecodeKey32(ok.SessionSecretB64);
+                if (!string.Equals(ok.DeviceId, phoneId, StringComparison.Ordinal) || okKey is null ||
+                    !CryptographicOperations.FixedTimeEquals(okKey, pkB) || sessionSecret is null)
                     return new PcPairResult(PcPairOutcome.IdentityMismatch);
 
                 var trusted = new TrustedPeer(
                     phoneId, ok.DeviceName, PlatformType.Android,
                     Convert.ToBase64String(pkB), Convert.ToBase64String(sessionSecret),
                     false, DateTimeOffset.UtcNow);
-                await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
-                secure.Rekey(sessionSecret);
-                CryptographicOperations.ZeroMemory(sessionSecret);
+                try
+                {
+                    await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
+                    // The loop above is sequential: the switch happens before the next read.
+                    await secure.SwitchToSessionAsync(sessionSecret, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(sessionSecret);
+                }
                 await secure.SendAsync(new PeerMessage.Hello(
                     _localDeviceId, _localName, "windows", Capabilities: LocalCapabilities), ct).ConfigureAwait(false);
                 VeyroTrace.Info($"PC-initiated pairing with {phoneId} completed");
@@ -681,6 +875,20 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         }
     }
 
+    /// <summary>
+    /// Review issue 2 (ADR-058): the trust record was written but <c>pairOk</c> did not leave, so
+    /// the phone holds no secret. The record is deleted again; nothing is reported paired.
+    /// </summary>
+    private async Task ForgetUndeliveredPairingAsync(string peerId)
+    {
+        VeyroTrace.Warn($"Pairing with {peerId} did not complete: pairOk was not sent; trust removed");
+        try { await _trustStore.RemoveAsync(peerId).ConfigureAwait(false); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            VeyroTrace.Error("Removing the undelivered pairing failed", error);
+        }
+    }
+
     private async Task<bool> AuthorizeSafelyAsync(InboundPairingRequest request)
     {
         try { return await PairingAuthorizer(request).ConfigureAwait(false); }
@@ -698,60 +906,18 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         LinkPairNonce? message = PeerMessageJson.Decode<LinkPairNonce>(await ReceiveTextAsync(socket, timeout.Token).ConfigureAwait(false));
         if (message is null || message.T != LinkPairNonce.Type)
             throw new InvalidDataException("Expected pairNonce.");
-        byte[] nonce = DecodeBase64(message.N, "pairNonce");
-        if (nonce.Length != PairConfirm.NonceSize)
-            throw new InvalidDataException("pairNonce has the wrong length.");
-        return nonce;
+        return FrameCrypto.DecodeKey32(message.N) ?? throw new InvalidDataException("pairNonce has the wrong length.");
     }
 
+    /// <summary>FR-C3: the confirm pairHello is the peer's first frame; it must open within <see cref="FirstFrameTimeout"/>.</summary>
     private async Task<PeerMessage.PairHello> ReceiveConfirmPairHelloAsync(SecureLinkSession secure, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(ConfirmHandshakeTimeout);
+        timeout.CancelAfter(FirstFrameTimeout);
         SecureLinkMessage message = await secure.ReceiveAsync(timeout.Token).ConfigureAwait(false)
             ?? throw new InvalidDataException("Peer closed before PairHello.");
         return message.Envelope.Payload as PeerMessage.PairHello
             ?? throw new InvalidDataException("Expected PairHello.");
-    }
-
-    private static byte[]? TryDecodeKey(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        try
-        {
-            byte[] key = Convert.FromBase64String(value);
-            return key.Length == 32 ? key : null;
-        }
-        catch (FormatException) { return null; }
-    }
-
-    /// <summary>
-    /// Receives the PairHello of a device pairing through the open window. A frame that does not
-    /// verify under the window's code (wrong code) or no PairHello in time is a failed attempt;
-    /// after <see cref="PairingWindow.MaxFailures"/> the window issues a new code.
-    /// </summary>
-    private async Task<SecureLinkMessage?> ReceiveWindowPairHelloAsync(
-        SecureLinkSession secure, PairingAttempt attempt, CancellationToken ct)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(WindowPairHelloTimeout);
-        try
-        {
-            return await secure.ReceiveAsync(timeout.Token).ConfigureAwait(false);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            VeyroTrace.Warn("Pairing window: PairHello did not verify (wrong code)");
-            PairingWindow.RecordFailure(attempt);
-            throw;
-        }
-        catch (Exception error) when (error is OperationCanceledException or WebSocketException &&
-                                      timeout.IsCancellationRequested && !ct.IsCancellationRequested)
-        {
-            VeyroTrace.Warn("Pairing window: no PairHello before the timeout");
-            PairingWindow.RecordFailure(attempt);
-            throw new TimeoutException("PairHello did not arrive in time.", error);
-        }
     }
 
     /// <summary>ADR-057: a removed phone that dials in must authenticate (its Hello) within this.</summary>
@@ -762,20 +928,28 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
 
     /// <summary>
     /// ADR-057: <paramref name="peerId"/> was removed here while it was away and may still trust
-    /// this PC. Answers in session mode under the kept <paramref name="secret"/>; only a holder of
-    /// the old pairing can send a message that authenticates under it. Then an authenticated
-    /// <c>unpair</c> tells it to forget this PC, and its close confirms it. Nothing it sends is acted
-    /// on: no session registration, no companion features, no transfers.
-    /// A dialler that closes without authenticating no longer holds that pairing (it removed this
-    /// PC too and is pairing again), so the notice is dropped and its next dial pairs normally.
+    /// this PC. Answers in session mode with keys from the kept <paramref name="secret"/>; only a
+    /// holder of the old pairing can send a frame that opens under them. Then an authenticated
+    /// <c>unpair</c> tells it to forget this PC, and its close confirms it. Nothing it sends is
+    /// acted on: no session registration, no companion features, no transfers.
+    /// A dialler that closes without sending anything no longer holds that pairing (it removed
+    /// this PC too and is pairing again), so the notice is dropped. A frame that fails to open (a
+    /// wrong secret) or is malformed keeps it (ADR-058).
     /// </summary>
-    private async Task TellRemovedPeerAsync(WebSocket socket, string peerId, byte[] secret, CancellationToken ct)
+    private async Task TellRemovedPeerAsync(WebSocket socket, byte[] preambleBytes, byte[] peerEpk, string peerId, byte[] secret, CancellationToken ct)
     {
         VeyroTrace.Info($"{peerId} was removed here; telling it to forget this PC");
-        await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeSession)), ct).ConfigureAwait(false);
-        await using var secure = new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, peerId);
-        CryptographicOperations.ZeroMemory(secret);
-        // 1. Any authenticated message proves the old pairing; the phone's Hello comes first.
+        LinkKeys keys;
+        try
+        {
+            keys = await RespondSessionAsync(socket, preambleBytes, peerEpk, peerId, secret, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secret);
+        }
+        await using var secure = new SecureLinkSession(socket, keys);
+        // 1. The phone's first frame (its Hello) must open under the old pairing's keys.
         try
         {
             using var hello = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -810,7 +984,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             await _trustStore.ClearPendingUnpairAsync(peerId).ConfigureAwait(false);
             return;
         }
-        catch (Exception error) when (!ct.IsCancellationRequested && error is OperationCanceledException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception error) when (!ct.IsCancellationRequested && error is OperationCanceledException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
             // No close in time, or a frame that did not authenticate: told next time.
         }
@@ -821,12 +995,16 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         => await socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
 
     private static async Task<string> ReceiveTextAsync(WebSocket socket, CancellationToken ct)
+        => Encoding.UTF8.GetString(await ReceiveFrameAsync(socket, ct).ConfigureAwait(false));
+
+    /// <summary>One complete text frame (<c>EndOfMessage</c> in one read, at most 64 KiB), as raw bytes.</summary>
+    private static async Task<byte[]> ReceiveFrameAsync(WebSocket socket, CancellationToken ct)
     {
         byte[] buffer = new byte[64 * 1024];
         WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
         if (result.MessageType != WebSocketMessageType.Text || !result.EndOfMessage || result.Count > buffer.Length)
             throw new InvalidDataException("Invalid VLP preamble.");
-        return Encoding.UTF8.GetString(buffer, 0, result.Count);
+        return buffer.AsSpan(0, result.Count).ToArray();
     }
 
     /// <summary>
@@ -834,7 +1012,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     /// Hello was already sent by the dialler; the phone's HelloAck and its own Hello are handled
     /// here as on any session.
     /// </summary>
-    public Task RunOutboundSessionAsync(SecureLinkSession secure, TrustedPeer peer, SessionAddresses addresses, CancellationToken ct = default)
+    public Task RunOutboundSessionAsync(SecureLinkSession secure, TrustedPeer peer, SessionAddresses addresses, CancellationToken ct = default,
+        TaskCompletionSource<bool>? registered = null)
     {
         if (!IsRunning) throw new InvalidOperationException("The listener is stopped.");
         // The listener's stop token ends dialled sessions too, so "Pause sync" disconnects them.
@@ -845,7 +1024,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         {
             try
             {
-                await RunSessionAsync(secure, peer, addresses, cancellation.Token).ConfigureAwait(false);
+                await RunSessionAsync(secure, peer, addresses, cancellation.Token, registered: registered).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
             catch (Exception error)
@@ -854,6 +1033,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             }
             finally
             {
+                registered?.TrySetResult(false);
                 cancellation.Dispose();
             }
         }
@@ -879,12 +1059,39 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         TrustedPeer peer,
         SessionAddresses addresses,
         CancellationToken ct,
-        Task<SecureLinkMessage?>? pendingReceive = null)
+        Task<SecureLinkMessage?>? pendingReceive = null,
+        TaskCompletionSource<bool>? registered = null)
     {
         using var sessionStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         CancellationToken sessionCt = sessionStop.Token;
+
+        // ADR-058 (FR-C): nothing is registered, replaced or dispatched until the peer's first
+        // frame opens under this connection's session keys. A replayed or wrong-key connection
+        // never gets past this, so it can never replace the live session.
+        SecureLinkMessage? first;
+        Task<SecureLinkMessage?> firstReceive = pendingReceive ?? secure.ReceiveAsync(sessionCt);
+        pendingReceive = null;
+        try
+        {
+            first = await firstReceive.WaitAsync(FirstFrameTimeout, sessionCt).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!ct.IsCancellationRequested &&
+                                      error is TimeoutException or WebSocketException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _ = firstReceive.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            VeyroTrace.Warn($"Session with {peer.DeviceId} closed before it was established ({error.GetType().Name})");
+            registered?.TrySetResult(false);
+            return;
+        }
+        if (first is null || !secure.IsEstablished)
+        {
+            registered?.TrySetResult(false);
+            return;
+        }
+
         using PeerSessionRegistry.Registration registration = _sessions.Open(
-            peer.DeviceId, secure.SendAsync, onReplaced: () => _ = CloseReplacedAsync(secure, sessionStop));
+            peer.DeviceId, secure.SendAsync, secure.ExportKey, onReplaced: () => _ = CloseReplacedAsync(secure, sessionStop));
+        registered?.TrySetResult(true);
         VeyroTrace.Info($"Session opened for peer {peer.DeviceId}");
         Task? activeTransfer = null;
         string? activeTransferId = null;
@@ -898,12 +1105,16 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                 SecureLinkMessage? message;
                 try
                 {
-                    // Confirm pairing hands over the receive it already had outstanding while the
-                    // user decided; it reads with whatever key is current, so after Rekey that is
-                    // the session secret.
-                    Task<SecureLinkMessage?> receive = pendingReceive ?? secure.ReceiveAsync(sessionCt);
-                    pendingReceive = null;
-                    message = await receive.ConfigureAwait(false);
+                    // The establishing frame first (read above, before registration), then the loop.
+                    if (first is not null)
+                    {
+                        message = first;
+                        first = null;
+                    }
+                    else
+                    {
+                        message = await secure.ReceiveAsync(sessionCt).ConfigureAwait(false);
+                    }
                 }
                 catch (Exception error) when (error is WebSocketException or IOException && !ct.IsCancellationRequested)
                 {
@@ -1148,6 +1359,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                     sessionPeer.DeviceId,
                     destinationRoot,
                     inboundItems,
+                    // ADR-058: the data socket's keys come from this session's exporter.
+                    Vtc3.KeyDeriver(secure.ExportKey, offer.TransferId),
                     ct: ct,
                     // Android's sender waits for the session itemResult after each item, not the
                     // VTC1 one; without it every phone-to-PC transfer (photos included) stalled.

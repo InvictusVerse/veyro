@@ -24,7 +24,6 @@ public sealed class PairingViewModel : BaseViewModel
     private bool _active;
     private string? _qrContent;
     private byte[]? _qrPng;
-    private string _codeText = string.Empty;
     private string _remainingText = string.Empty;
     private double _expiryProgress;
     private bool _isOpen;
@@ -83,13 +82,6 @@ public sealed class PairingViewModel : BaseViewModel
     public bool QrUnavailable => _isOpen && _qrPng is null;
     public bool IsExpired => _active && !_isOpen;
     public bool IsOpen => _isOpen;
-
-    /// <summary>"123 456": grouped so it is easy to read out and type.</summary>
-    public string CodeText
-    {
-        get => _codeText;
-        private set => SetProperty(ref _codeText, value);
-    }
 
     public string RemainingText
     {
@@ -204,8 +196,7 @@ public sealed class PairingViewModel : BaseViewModel
     private void Refresh()
     {
         PairingWindow window = _server.PairingWindow;
-        string? code = _active ? window.Code : null;
-        bool open = code is not null;
+        bool open = _active && window.IsOpen;
         if (_isOpen != open)
         {
             _isOpen = open;
@@ -214,7 +205,6 @@ public sealed class PairingViewModel : BaseViewModel
         OnPropertyChanged(nameof(IsExpired));
         OnPropertyChanged(nameof(QrUnavailable));
 
-        CodeText = code is null ? "--- ---" : $"{code[..3]} {code[3..]}";
         TimeSpan remaining = open ? window.Remaining : TimeSpan.Zero;
         RemainingText = open
             ? $"Expires in {(int)remaining.TotalMinutes}:{remaining.Seconds:00}"

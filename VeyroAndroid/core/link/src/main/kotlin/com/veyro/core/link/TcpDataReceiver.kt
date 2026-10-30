@@ -6,13 +6,16 @@ import com.veyro.core.model.TransferItem
 import com.veyro.core.model.TransferRoute
 import com.veyro.core.model.VerificationResult
 import com.veyro.core.protocol.tcp.TcpFrame
-import com.veyro.core.protocol.tcp.TcpFrameCodec
+import com.veyro.core.protocol.tcp.Vtc3
+import com.veyro.core.protocol.tcp.Vtc3Writer
 import com.veyro.core.transfer.DirectPart
 import com.veyro.core.transfer.ItemResult
 import com.veyro.core.transfer.PartFile
 import com.veyro.core.transfer.ReceivingItem
 import com.veyro.core.transfer.StoragePublishResult
 import com.veyro.core.transfer.TransferStoragePublisher
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -103,6 +106,8 @@ public class TcpDataReceiver(
         transferId: String,
         expectedAuthToken: String,
         expectedPeerDeviceId: String?,
+        /** `(saltA, saltB) -> 64 bytes` from the session exporter (`Vtc3.keyDeriver`, ADR-058). */
+        deriveKeys: (ByteArray, ByteArray) -> ByteArray,
         offerItems: List<TransferItem>,
         destinationDir: File,
         chunkSize: Int,
@@ -147,17 +152,31 @@ public class TcpDataReceiver(
         val input = BufferedInputStream(socket.getInputStream(), 512 * 1024)
         val output = BufferedOutputStream(socket.getOutputStream(), 256 * 1024)
 
+        // 0. Stream-open both ways: fresh salts, so this attempt's keys are new (04-PROTOCOL.md 7.3).
+        val channel = try {
+            Vtc3.openAsReceiver(input, output, transferId, deriveKeys)
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            VeyroLog.w(TAG) { "[$transferId] VTC3 stream-open failed (${t.javaClass.simpleName})" }
+            close("Stream-open failure")
+            return@withContext TcpReceiveOutcome.Failed("VTC3 stream-open failed")
+        }
+        val writer = channel.writer
+        val reader = channel.reader
+
         // 1. Read Auth frame
         val authFrame = try {
-            TcpFrameCodec.readFrame(input)
+            reader.readOrNull() ?: throw java.io.EOFException("Sender closed before Auth")
         } catch (t: Throwable) {
-            VeyroLog.e(TAG, t) { "[$transferId] Failed to read Auth frame: ${t.message}" }
+            VeyroLog.w(TAG) { "[$transferId] Failed to read Auth frame (${t.javaClass.simpleName})" }
+            channel.close()
             close("Auth read failure")
-            return@withContext TcpReceiveOutcome.Failed("Failed to read Auth frame: ${t.message}")
+            return@withContext TcpReceiveOutcome.Failed("Failed to read Auth frame")
         }
 
         if (authFrame !is TcpFrame.Auth) {
             VeyroLog.e(TAG) { "[$transferId] Expected Auth frame, got: ${authFrame.javaClass.simpleName}" }
+            channel.close()
             close("Protocol error on Auth")
             return@withContext TcpReceiveOutcome.Failed("Protocol error: unexpected initial frame")
         }
@@ -172,16 +191,16 @@ public class TcpDataReceiver(
                 "[$transferId] TCP auth failed: transferMatch=$isTransferMatch, tokenMatch=$isTokenMatch, peerMatch=$isPeerMatch"
             }
             runCatching {
-                TcpFrameCodec.writeFrame(
-                    output,
+                writer.write(
                     TcpFrame.AuthAck(
-                        seq = 1L,
+                        seq = 0L,
                         transferId = transferId,
                         ok = false,
                         reason = "UNAUTHORIZED",
                     ),
                 )
             }
+            channel.close()
             close("Auth validation rejected")
             return@withContext TcpReceiveOutcome.Failed("TCP authentication rejected")
         }
@@ -191,10 +210,9 @@ public class TcpDataReceiver(
         VeyroLog.i(TAG) { "[$transferId] Sender authenticated successfully via raw TCP ($route)" }
 
         // Send AuthAck
-        TcpFrameCodec.writeFrame(
-            output,
+        writer.write(
             TcpFrame.AuthAck(
-                seq = 1L,
+                seq = 0L,
                 transferId = transferId,
                 ok = true,
                 reason = null,
@@ -252,18 +270,31 @@ public class TcpDataReceiver(
         val results = mutableListOf<ItemResult>()
         val totalBytes = offerItems.sumOf { it.sizeBytes }
         var totalWritten = 0L
-        var lastSeq = 0L
         var transferEndReceived = false
         var completedReceived = false
         var cleanEofReceived = false
         var cancelledReason: String? = externalCancelReason
 
+        // Read-ahead (NFR-3): the next records are read and opened while chunk N is written to
+        // storage. The channel holds at most one frame (plus the one the producer has in hand),
+        // so memory stays bounded; frames still arrive in order, each already authenticated. A
+        // read failure is passed on and ends the producer.
+        val readAhead = Channel<Result<TcpFrame?>>(capacity = 1)
+        val producer = launch {
+            while (true) {
+                val next = runCatching { reader.readOrNull() }
+                readAhead.send(next)
+                if (next.isFailure || next.getOrNull() == null) break
+            }
+        }
+
         try {
             while (!isClosed.get()) {
                 val readStartNanos = System.nanoTime()
                 val frame = try {
-                    TcpFrameCodec.readFrameOrNull(input)
+                    readAhead.receive().getOrThrow()
                 } catch (t: Throwable) {
+                    if (t is kotlinx.coroutines.CancellationException) throw t
                     if (isClosed.get() || transferEndReceived || completedReceived || cancelledReason != null || externalCancelReason != null) break
                     val allItemsDone = results.size == offerItems.size && results.all { it.isVerified }
                     if (allItemsDone && t is java.io.EOFException) {
@@ -281,15 +312,8 @@ public class TcpDataReceiver(
                     break
                 }
 
-                if (frame.transferId != transferId) {
-                    VeyroLog.w(TAG) { "[$transferId] Ignored frame with mismatched transfer ID: ${frame.transferId}" }
-                    continue
-                }
-
-                if (frame.seq <= lastSeq) {
-                    VeyroLog.w(TAG) { "[$transferId] Out of order TCP frame: seq=${frame.seq} <= $lastSeq" }
-                }
-                lastSeq = frame.seq
+                // VTC3: the reader already rejected (fatally) a record for another transfer, out
+                // of order, tampered or replayed; whatever arrives here is authenticated and in order.
 
                 when (frame) {
                     is TcpFrame.ItemBegin -> {
@@ -366,11 +390,11 @@ public class TcpDataReceiver(
                             results += itemRes
                             VeyroLog.i(TAG) { "[$transferId] [tcp-receiver:item-result-notified] Emitting ItemResult for #${frame.itemIndex} (ok=${itemRes.isVerified})" }
                             onItemVerified(itemRes)
-                            writeItemResult(output, transferId, frame.itemIndex, itemRes.isVerified, itemRes.errorMessage)
+                            writeItemResult(writer, transferId, frame.itemIndex, itemRes.isVerified, itemRes.errorMessage)
                         } else {
                             // An ItemEnd for an item this receiver never opened: answer it, so a
                             // sender waiting on the data socket fails the item instead of hanging.
-                            writeItemResult(output, transferId, frame.itemIndex, false, "UNKNOWN_ITEM")
+                            writeItemResult(writer, transferId, frame.itemIndex, false, "UNKNOWN_ITEM")
                         }
                     }
 
@@ -391,8 +415,11 @@ public class TcpDataReceiver(
                 }
             }
         } finally {
+            // Cancel first: a producer blocked in a socket read ends when close() below closes it.
+            producer.cancel()
             parts.values.forEach { runCatching { it.close() } }
             close("acceptAndReceive finished")
+            channel.close()
         }
 
         if (cancelledReason != null || externalCancelReason != null) {
@@ -429,26 +456,22 @@ public class TcpDataReceiver(
         TcpReceiveOutcome.Completed(route, results)
     }
 
-    /** Receiver-side sequence for frames written back to the sender; AuthAck used 1. */
-    private var outboundSeq = 1L
-
     /**
-     * Answers an `ItemEnd` with a VTC1 [TcpFrame.ItemResult] on the data socket (04-PROTOCOL.md
+     * Answers an `ItemEnd` with a VTC3 [TcpFrame.ItemResult] on the data socket (04-PROTOCOL.md
      * 7.3). The WebSocket `itemResult` is still sent by the caller for Android senders; the Windows
      * sender reads only this one and blocks until it arrives.
      */
     private fun writeItemResult(
-        output: BufferedOutputStream,
+        writer: Vtc3Writer,
         transferId: String,
         itemIndex: Int,
         ok: Boolean,
         error: String?,
     ) {
         try {
-            TcpFrameCodec.writeFrame(
-                output,
+            writer.write(
                 TcpFrame.ItemResult(
-                    seq = ++outboundSeq,
+                    seq = 0L,
                     transferId = transferId,
                     itemIndex = itemIndex,
                     ok = ok,

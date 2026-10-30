@@ -1,4 +1,4 @@
-# VLP v1 Test Vectors
+# VLP Test Vectors
 
 Interop and conformance vectors shared by the Android and Windows implementations.
 
@@ -12,8 +12,10 @@ worst possible moment. Both platforms must pass every vector here before a phase
 |---|---|---|
 | `identity/` | deviceId + fingerprint derivation from a fixed public key | populated |
 | `path-safety/` | inbound `relPath` accept/reject corpus | **empty — the table previously claimed otherwise** |
-| `frames/` | `VTC1` data-plane frame encodings, byte-exact | **populated** — enforced by both platforms |
-| `link/` | `FrameCrypto` seal/open, PBKDF2 derivation, control-plane JSON | **populated** — enforced by both platforms |
+| `crypto/` | RFC vectors for the fixed primitives: HKDF-SHA256, ChaCha20-Poly1305, X25519 | **populated** (ADR-058) — enforced by both platforms |
+| `frames/` | `VTC3` sealed data-plane records, byte-exact | **populated** — enforced by both platforms |
+| `link/` | v3 connection and pairing key schedules, session frames, key exporter, control-plane JSON | **populated** — enforced by both platforms |
+| `tools/` | `GenV3.java`, the generator of every v3 file above | source, not vectors |
 | `discovery/` | presence record + UDP beacon encodings | **populated** — enforced by both platforms |
 | `transfer/` | resume bitmap, manifest round trips | **empty — waits on phase P4 close-out** |
 
@@ -26,8 +28,12 @@ worst possible moment. Both platforms must pass every vector here before a phase
 | Vector file | Android | Windows |
 |---|---|---|
 | `identity/device-id.json` | `core/model` `DeviceIdTest` | `Veyro.Tests` `InteropVectorTests` |
-| `frames/vtc1-frames.json` | `core/protocol` `Vtc1VectorTest` | `Veyro.Tests` `InteropVectorTests` |
-| `link/framecrypto.json` | `core/link` `FrameCryptoVectorTest` | `Veyro.Tests` `FrameCryptoVectorTests` |
+| `crypto/hkdf-sha256.json`, `crypto/chacha20poly1305.json`, `crypto/x25519.json` | `core/link` `ChaChaPolyVectorTest` | `Veyro.Tests` `ChaChaPolyVectorTests` |
+| `link/connection-schedule-v3.json` | `core/link` `ConnectionScheduleVectorTest` | `Veyro.Tests` `ConnectionScheduleVectorTests` |
+| `link/pairing-schedule-v3.json` | `core/link` `ConnectionScheduleVectorTest`, `core/crypto` `PairConfirmVectorTest` (static key) | `Veyro.Tests` `ConnectionScheduleVectorTests`, `PairConfirmVectorTests` |
+| `link/session-frames-v3.json` | `core/link` `SessionFrameVectorTest` | `Veyro.Tests` `SessionFrameVectorTests` |
+| `link/exporter-v3.json` | `core/link` `ExporterVectorTest` | `Veyro.Tests` `ExporterVectorTests` |
+| `frames/vtc3-frames.json` | `core/link` `Vtc3VectorTest` | `Veyro.Tests` `Vtc3VectorTests` |
 | `discovery/presence-beacon.json` | `core/protocol` `PresenceBeaconVectorTest` | `Veyro.Tests` `DiscoveryVectorTests` |
 | `link/control-messages.json` | `core/link` `ControlMessageVectorTest` | `Veyro.Tests` `ControlMessageVectorTests` |
 | `pair-confirm.json` | `core/crypto` `PairConfirmVectorTest` | `Veyro.Tests` `PairConfirmVectorTests` |
@@ -37,8 +43,8 @@ Run them:
 
 ```
 # Android
-gradlew :core:protocol:test --tests "com.veyro.core.protocol.Vtc1VectorTest"
-gradlew :core:link:testDebugUnitTest --tests "com.veyro.core.link.FrameCryptoVectorTest"
+gradlew :core:link:testDebugUnitTest --tests "com.veyro.core.link.SessionFrameVectorTest"
+gradlew :core:link:testDebugUnitTest --tests "com.veyro.core.link.ConnectionScheduleVectorTest"
 
 # Windows
 dotnet test VeyroWindows/src/Veyro.Tests/Veyro.Tests.csproj
@@ -47,10 +53,33 @@ dotnet test VeyroWindows/src/Veyro.Tests/Veyro.Tests.csproj
 Note that `:core:protocol` is a pure-JVM module (`test`) while `:core:link` is an Android library
 (`testDebugUnitTest`); the task names differ.
 
-The Windows suite loads `frames/vtc1-frames.json` at runtime and drives one test per vector, so
-adding a vector to the JSON automatically adds a Windows test. The Android suite pins the same
-constants inline, matching the existing `DeviceIdTest` convention, because `core/protocol` is a
-pure-Kotlin module with no JSON dependency and adding one for tests is not worth the coupling.
+Both suites load the v3 files at runtime (Android from `core/link`, which has a JSON dependency).
+Older files are still pinned inline on Android where the module has no JSON dependency, matching
+the `DeviceIdTest` convention.
+
+## Retired files (ADR-058)
+
+Link protocol v3 replaced the v2 control-frame crypto and the VTC1 data plane. These files stay
+frozen as history; no test reads them and no build sends or accepts what they describe.
+
+| File | Described | Replaced by |
+|---|---|---|
+| `link/framecrypto.json` | v2 `FrameCrypto` seal/open (explicit `n` and `m` fields) and the PBKDF2 PIN derivation | `link/session-frames-v3.json` |
+| `frames/vtc1-frames.json` | the unsealed VTC1 data plane | `frames/vtc3-frames.json` |
+| `pair-confirm.json` `expected.bootstrapKeyHex` | the v2 confirm bootstrap key | the static key in `link/pairing-schedule-v3.json` (`confirm`) |
+
+In `link/control-messages.json`, an entry marked `"retiredIn": 3` describes the v2 wire shape; its
+values were not edited. The rest of `pair-confirm.json` (keys, ids, commitment, code) is still
+current.
+
+## How the v3 files were made
+
+`tools/GenV3.java` is a single-file Java program that uses only JDK primitives (XDH for X25519,
+`ChaCha20-Poly1305`, `HmacSHA256`, SHA-256) and writes HKDF as the two RFC 5869 loops. It shares
+no code with either client. It first checks itself against RFC 5869 A.1-A.3, RFC 8439 2.8.2 and
+RFC 7748 6.1 and exits non-zero if one fails, then derives every v3 value from the formulas in
+`ProjectInfo/04-PROTOCOL.md` sections 4, 5 and 7 with fixed inputs, so a rerun is byte-identical.
+Run it from the repository root as its header comment shows (TMP, TEMP and hsperfdata stay off C:).
 
 ## Format
 
@@ -75,11 +104,12 @@ disagrees, the implementation is wrong, or the protocol changed and needs a vers
 
 ## Worked example of why rule 1 matters
 
-The first Windows implementation of the `VTC1` codec omitted `transferId` and `seq` from the frame
+The first Windows implementation of the (now retired) `VTC1` codec omitted `transferId` and `seq` from the frame
 header entirely, used `u32` where the wire uses `u16` for string lengths, and gave `Chunk` a byte
 offset where the wire carries a chunk index.
 
 It passed every one of its own tests, because the same wrong assumption produced both its encoder
 and its decoder. A round-trip test cannot detect this. Only comparing against a value derived
-outside the implementation can — which is what `frames/vtc1-frames.json` now does.
+outside the implementation can — which is what `frames/vtc1-frames.json` did and
+`frames/vtc3-frames.json` does now.
 

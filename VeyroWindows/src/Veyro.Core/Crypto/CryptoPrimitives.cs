@@ -30,22 +30,32 @@ public static class Hkdf
         int offset = 0;
         byte counter = 1;
 
-        while (offset < outputLength)
+        // The PRK copy and every block are secret: wiped once the output exists (review issue 6).
+        try
         {
-            using var hmac = new HMACSHA256(prkBytes);
-            if (t.Length > 0) hmac.TransformBlock(t, 0, t.Length, null, 0);
-            if (!info.IsEmpty)
+            while (offset < outputLength)
             {
-                byte[] infoBytes = info.ToArray();
-                hmac.TransformBlock(infoBytes, 0, infoBytes.Length, null, 0);
-            }
-            hmac.TransformFinalBlock([counter], 0, 1);
-            t = hmac.Hash!;
+                using var hmac = new HMACSHA256(prkBytes);
+                if (t.Length > 0) hmac.TransformBlock(t, 0, t.Length, null, 0);
+                if (!info.IsEmpty)
+                {
+                    byte[] infoBytes = info.ToArray();
+                    hmac.TransformBlock(infoBytes, 0, infoBytes.Length, null, 0);
+                }
+                hmac.TransformFinalBlock([counter], 0, 1);
+                CryptographicOperations.ZeroMemory(t);
+                t = hmac.Hash!;
 
-            int copyLen = Math.Min(t.Length, outputLength - offset);
-            Buffer.BlockCopy(t, 0, result, offset, copyLen);
-            offset += copyLen;
-            counter++;
+                int copyLen = Math.Min(t.Length, outputLength - offset);
+                Buffer.BlockCopy(t, 0, result, offset, copyLen);
+                offset += copyLen;
+                counter++;
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(t);
+            CryptographicOperations.ZeroMemory(prkBytes);
         }
 
         return result;
@@ -71,14 +81,26 @@ public static class X25519Crypto
         if (seed.Length != 32)
             throw new ArgumentException("X25519 seed must be 32 bytes.", nameof(seed));
 
-        var privParams = new X25519PrivateKeyParameters(seed.ToArray(), 0);
-        var pubParams = privParams.GeneratePublicKey();
-        return (privParams.GetEncoded(), pubParams.GetEncoded());
+        byte[] seedCopy = seed.ToArray();
+        try
+        {
+            var privParams = new X25519PrivateKeyParameters(seedCopy, 0);
+            var pubParams = privParams.GeneratePublicKey();
+            return (privParams.GetEncoded(), pubParams.GetEncoded());
+        }
+        finally
+        {
+            // BouncyCastle keeps its own copy; this one is wiped (review issue 6).
+            CryptographicOperations.ZeroMemory(seedCopy);
+        }
     }
 
     public static byte[] SharedSecret(ReadOnlySpan<byte> privateKey, ReadOnlySpan<byte> peerPublicKey)
     {
-        var priv = new X25519PrivateKeyParameters(privateKey.ToArray(), 0);
+        byte[] privateCopy = privateKey.ToArray();
+        var priv = new X25519PrivateKeyParameters(privateCopy, 0);
+        // BouncyCastle keeps its own copy; this one is wiped (review issue 6).
+        CryptographicOperations.ZeroMemory(privateCopy);
         var pub = new X25519PublicKeyParameters(peerPublicKey.ToArray(), 0);
         var agreement = new X25519Agreement();
         agreement.Init(priv);

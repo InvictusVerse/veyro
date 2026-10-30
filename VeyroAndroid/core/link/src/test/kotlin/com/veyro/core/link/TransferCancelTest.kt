@@ -63,7 +63,7 @@ public class TransferCancelTest {
 
     /** Two sessions wired to each other: `first` is the sender's, `second` the receiver's. */
     private fun connectedPair(): Pair<PeerConnection, PeerConnection> {
-        val key = FrameCrypto.sessionKeyFromBytes(ByteArray(32) { 42 })
+        val key = TestKeyPairing(ByteArray(32) { 42 })
         val toReceiver = Channel<Frame>(Channel.UNLIMITED)
         val toSender = Channel<Frame>(Channel.UNLIMITED)
         val senderWs = object : TestWebSocketSession() {
@@ -76,18 +76,18 @@ public class TransferCancelTest {
         }
         fun session(ws: TestWebSocketSession, local: String, peer: String, tag: String) = PeerConnection(
             ws = ws,
-            initialKey = key,
-            initialEncrypt = true,
+            keys = key.forLocal(local, peer),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = local,
             tag = tag,
             dispatcher = testDispatcher,
-            peerDeviceId = peer,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
         )
-        val sender = session(senderWs, SENDER_ID, RECEIVER_ID, "CancelSender").apply { start() }
-        val receiver = session(receiverWs, RECEIVER_ID, SENDER_ID, "CancelReceiver").apply { start() }
+        val sender = session(senderWs, SENDER_ID, RECEIVER_ID, "CancelSender").apply { start(); admit() }
+        val receiver = session(receiverWs, RECEIVER_ID, SENDER_ID, "CancelReceiver").apply { start(); admit() }
         return sender to receiver
     }
 
@@ -103,14 +103,13 @@ public class TransferCancelTest {
         assertTrue(decision.accept)
         val socket = Socket("127.0.0.1", decision.tcpPort!!)
         val out = BufferedOutputStream(socket.getOutputStream())
-        TcpFrameCodec.writeFrame(
-            out,
-            TcpFrame.Auth(seq = 1L, transferId = tid, authToken = decision.authToken!!, senderDeviceId = SENDER_ID, route = TransferRoute.LAN_TCP),
+        val channel = Vtc3TestPeer.asSender(BufferedInputStream(socket.getInputStream()), out, tid, sender)
+        channel.writer.write(
+            TcpFrame.Auth(seq = 0L, transferId = tid, authToken = decision.authToken!!, senderDeviceId = SENDER_ID, route = TransferRoute.LAN_TCP),
         )
-        out.flush()
-        assertTrue((TcpFrameCodec.readFrame(BufferedInputStream(socket.getInputStream())) as TcpFrame.AuthAck).ok)
-        TcpFrameCodec.writeFrame(out, TcpFrame.ItemBegin(2L, tid, 0, size, 2, CHUNK))
-        TcpFrameCodec.writeFrame(out, TcpFrame.Chunk(3L, tid, 0, 0, ByteArray(CHUNK) { 7 }))
+        assertTrue((channel.reader.readOrNull() as TcpFrame.AuthAck).ok)
+        channel.writer.write(TcpFrame.ItemBegin(0L, tid, 0, size, 2, CHUNK))
+        channel.writer.write(TcpFrame.Chunk(0L, tid, 0, 0, ByteArray(CHUNK) { 7 }))
         out.flush()
         socket
     }
@@ -189,11 +188,11 @@ public class TransferCancelTest {
             server.accept().use { socket ->
                 val input = BufferedInputStream(socket.getInputStream())
                 val out = BufferedOutputStream(socket.getOutputStream())
-                assertTrue(TcpFrameCodec.readFrame(input) is TcpFrame.Auth)
-                TcpFrameCodec.writeFrame(out, TcpFrame.AuthAck(1L, tid, ok = true))
-                out.flush()
-                TcpFrameCodec.readFrame(input) // ItemBegin
-                TcpFrameCodec.readFrame(input) // the first chunk; then the receiver cancels
+                val channel = Vtc3TestPeer.asReceiver(input, out, tid, receiver)
+                assertTrue(channel.reader.readOrNull() is TcpFrame.Auth)
+                channel.writer.write(TcpFrame.AuthAck(0L, tid, ok = true))
+                channel.reader.readOrNull() // ItemBegin
+                channel.reader.readOrNull() // the first chunk; then the receiver cancels
             }
             server.close()
             Thread.sleep(300)
