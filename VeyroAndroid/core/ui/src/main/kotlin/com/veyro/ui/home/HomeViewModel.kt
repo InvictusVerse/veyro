@@ -192,9 +192,14 @@ public class HomeViewModel(
 
     /** The Lock PC tile (ADR-038). A no-op unless [HomeUiState.canLockPc]. */
     public fun lockSelectedPc() {
+        _state.value.selectedPc?.let { lock(it.deviceId) }
+    }
+
+    /** Lock on a device's card. A no-op unless that PC is connected and understands `pcLock`. */
+    public fun lock(deviceId: DeviceId) {
         val current = _state.value
-        val pc = current.selectedPc ?: return
-        if (!current.canLockPc) return
+        val pc = current.pairedDevices.firstOrNull { it.deviceId == deviceId } ?: return
+        if (!current.canLock(pc)) return
         viewModelScope.launch {
             val sent = try {
                 lockPc(pc.deviceId.value)

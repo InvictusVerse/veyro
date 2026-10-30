@@ -353,8 +353,8 @@ public fun DeviceSettingsScreen(
             title = { Text("Remove ${peer.name}?") },
             text = {
                 Text(
-                    "This device will no longer be recognised and will need to be paired again. " +
-                        "Transfers in progress are not affected.",
+                    "This phone and ${peer.name} forget each other. If ${peer.name} is not connected " +
+                        "now, it is told the next time it connects. To use it again, pair it again.",
                 )
             },
             confirmButton = {

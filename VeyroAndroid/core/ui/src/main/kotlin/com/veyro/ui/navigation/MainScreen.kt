@@ -166,6 +166,7 @@ internal fun MainScreen(
                     searchQuery = searchQuery,
                     onDeviceClick = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
                     onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
+                    onSendFiles = { onSendFiles(listOf(it.value)) },
                 )
             }
 

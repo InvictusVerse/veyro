@@ -218,11 +218,12 @@ public data class HomeUiState(
 
     /** Lock PC needs the live session with that PC, and that PC must understand `pcLock`. */
     val canLockPc: Boolean
-        get() {
-            val pc = selectedPc ?: return false
-            if (pc.platform == Platform.ANDROID) return false
-            return pc.isConnected && Capability.DEVICE_STATUS in (peerCapabilities[pc.deviceId.value] ?: Capabilities.NONE)
-        }
+        get() = selectedPc?.let { canLock(it) } == true
+
+    /** [canLockPc] for any paired device, for its card on Devices. */
+    public fun canLock(device: PairedDeviceUi): Boolean =
+        device.platform != Platform.ANDROID && device.isConnected &&
+            Capability.DEVICE_STATUS in (peerCapabilities[device.deviceId.value] ?: Capabilities.NONE)
 
     /**
      * A connected phone that shares no media yet: Home says how to turn it on there. Null otherwise.
