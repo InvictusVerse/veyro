@@ -966,6 +966,33 @@ public class VeyroContainer(context: Context) {
         )
     }
 
+    /** ADR-073: the PC's sound on this phone, and photos or scans taken for the PC. */
+    public val speakerAndCapture: com.veyro.mirror.SpeakerAndCapture by lazy {
+        com.veyro.mirror.SpeakerAndCapture(
+            context = appContext,
+            scope = appScope,
+            dispatchers = dispatchers,
+            appVisible = appVisible,
+            localSubnets = { localAddressProvider.localAddresses().map { it.address to it.prefixLength } },
+        )
+    }
+
+    /** Same rule as the other bridges: it only follows a session something else opened. */
+    public val speakerCaptureBridge: com.veyro.core.companion.SpeakerCaptureBridge by lazy {
+        com.veyro.core.companion.SpeakerCaptureBridge(
+            links = companionLinks,
+            speakerAllowed = flow { emitAll(settingsStore.pcAudioAllowed) },
+            captureAllowed = flow { emitAll(settingsStore.photoCaptureAllowed) },
+            host = speakerAndCapture,
+            sender = PhotoSender { link, file, requestId ->
+                val connection = (link as? PeerConnectionLink)?.connection ?: return@PhotoSender false
+                transferCoordinator.sendRequested(connection, file, requestId) is SendResult.Success
+            },
+            pcName = { link -> clipSourceName(link.peerDeviceId) },
+            scope = appScope,
+        )
+    }
+
     /** Same rule as the other bridges: it only follows a session something else opened. */
     public val screenShareBridge: com.veyro.core.companion.ScreenShareBridge by lazy {
         com.veyro.core.companion.ScreenShareBridge(

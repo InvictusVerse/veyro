@@ -90,6 +90,16 @@ public interface SettingsStore {
 
     public suspend fun setCameraShareAllowed(allowed: Boolean) {}
 
+    /** "Play PC sound on this phone" (ADR-073). On; the PC turns the sound on and off. */
+    public val pcAudioAllowed: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setPcAudioAllowed(allowed: Boolean) {}
+
+    /** "Take photos for PCs" (ADR-073). On; each photo or scan needs a tap on the phone. */
+    public val photoCaptureAllowed: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setPhotoCaptureAllowed(allowed: Boolean) {}
+
     /** "Auto-fetch PC clipboard" (ADR-043): keep what the PC copies here. On by default. */
     public val clipboardReceiveEnabled: Flow<Boolean> get() = flowOf(true)
 

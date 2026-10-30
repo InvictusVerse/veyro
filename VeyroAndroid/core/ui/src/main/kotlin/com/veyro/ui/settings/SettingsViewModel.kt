@@ -151,6 +151,14 @@ public class SettingsViewModel(
             .onEach { _state.value = _state.value.copy(cameraShareAllowed = it) }
             .launchIn(viewModelScope)
 
+        settingsStore.pcAudioAllowed
+            .onEach { _state.value = _state.value.copy(pcAudioAllowed = it) }
+            .launchIn(viewModelScope)
+
+        settingsStore.photoCaptureAllowed
+            .onEach { _state.value = _state.value.copy(photoCaptureAllowed = it) }
+            .launchIn(viewModelScope)
+
         settingsStore.wallpaperShareEnabled
             .onEach { _state.value = _state.value.copy(wallpaperShareEnabled = it) }
             .launchIn(viewModelScope)
@@ -181,6 +189,16 @@ public class SettingsViewModel(
     /** ADR-067. Off: PCs no longer see the cameras and a running camera session ends. */
     public fun setCameraShareAllowed(allowed: Boolean) {
         viewModelScope.launch { settingsStore.setCameraShareAllowed(allowed) }
+    }
+
+    /** ADR-073. Off: a PC's sound stops and PCs are told it is off. */
+    public fun setPcAudioAllowed(allowed: Boolean) {
+        viewModelScope.launch { settingsStore.setPcAudioAllowed(allowed) }
+    }
+
+    /** ADR-073. Off: PC photo requests are declined at once. */
+    public fun setPhotoCaptureAllowed(allowed: Boolean) {
+        viewModelScope.launch { settingsStore.setPhotoCaptureAllowed(allowed) }
     }
 
     /** ADR-038. The photo permission, if needed, is requested by the Activity. */

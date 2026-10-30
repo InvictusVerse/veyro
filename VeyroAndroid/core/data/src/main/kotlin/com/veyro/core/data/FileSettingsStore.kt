@@ -75,6 +75,9 @@ public class FileSettingsStore(
         val screenShareAllowed: Boolean = true,
         // ADR-067. On: the phone still asks for a tap every time a PC wants the camera.
         val cameraShareAllowed: Boolean = true,
+        // ADR-073. On: the PC's sound starts only when the PC turns it on; photos need a tap each time.
+        val pcAudioAllowed: Boolean = true,
+        val photoCaptureAllowed: Boolean = true,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -198,6 +201,20 @@ public class FileSettingsStore(
 
     override suspend fun setCameraShareAllowed(allowed: Boolean) {
         update { it.copy(cameraShareAllowed = allowed) }
+    }
+
+    override val pcAudioAllowed: Flow<Boolean> =
+        state.asStateFlow().map { it.pcAudioAllowed }
+
+    override suspend fun setPcAudioAllowed(allowed: Boolean) {
+        update { it.copy(pcAudioAllowed = allowed) }
+    }
+
+    override val photoCaptureAllowed: Flow<Boolean> =
+        state.asStateFlow().map { it.photoCaptureAllowed }
+
+    override suspend fun setPhotoCaptureAllowed(allowed: Boolean) {
+        update { it.copy(photoCaptureAllowed = allowed) }
     }
 
     override val wallpaperShareEnabled: Flow<Boolean> =

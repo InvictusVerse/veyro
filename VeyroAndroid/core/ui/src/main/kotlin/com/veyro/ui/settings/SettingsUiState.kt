@@ -73,6 +73,10 @@ public data class SettingsUiState(
     /** "Let PCs use this phone's camera" (ADR-067). On; a tap on the phone each time. */
     val cameraShareAllowed: Boolean = true,
 
+    /** ADR-073: the PC's sound on this phone, and photos taken for the PC. On. */
+    val pcAudioAllowed: Boolean = true,
+    val photoCaptureAllowed: Boolean = true,
+
     /** Clipboard and sent / received notifications clear themselves (ADR-044). On by default. */
     val notificationAutoClear: Boolean = true,
 

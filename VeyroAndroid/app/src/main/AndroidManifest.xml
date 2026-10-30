@@ -286,6 +286,20 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- ADR-073: takes a photo or scan for a PC through the phone's camera app. Started only by
+             Veyro for a request that is still waiting. -->
+        <activity
+            android:name=".mirror.CaptureActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Veyro" />
+
+        <!-- ADR-073: Stop on the PC sound notification, Decline on a photo request. Only our own PendingIntents. -->
+        <receiver
+            android:name=".mirror.SpeakerCaptureReceiver"
+            android:exported="false" />
+
         <!-- ADR-066: Decline on the screen-sharing request. Only our own PendingIntents. -->
         <receiver
             android:name=".mirror.ScreenShareActionReceiver"

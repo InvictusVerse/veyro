@@ -344,6 +344,30 @@ public fun DeviceSettingsScreen(
                 }
 
                 item {
+                    // ADR-073. The PC turns its sound on; a notification with Stop shows while it plays.
+                    SwitchPreferenceWidget(
+                        title = "Play PC sound on this phone",
+                        subtitle = "A PC can play its sound through this phone's speaker or headphones. " +
+                            "A notification with Stop shows while it plays.",
+                        icon = VeyroIcons.MusicNote,
+                        checked = settings.pcAudioAllowed,
+                        onCheckedChanged = { on -> settingsViewModel.setPcAudioAllowed(on) },
+                    )
+                }
+
+                item {
+                    // ADR-073. Each photo or scan needs a tap on the phone.
+                    SwitchPreferenceWidget(
+                        title = "Take photos and scans for PCs",
+                        subtitle = "A PC can ask for a photo or a document scan. You take it on the phone; " +
+                            "it goes to the PC's clipboard and Downloads.",
+                        icon = VeyroIcons.Image,
+                        checked = settings.photoCaptureAllowed,
+                        onCheckedChanged = { on -> settingsViewModel.setPhotoCaptureAllowed(on) },
+                    )
+                }
+
+                item {
                     SwitchPreferenceWidget(
                         title = "Ring and sound mode",
                         subtitle = "Let the PC ring this phone to find it, and switch its ringer mode or " +

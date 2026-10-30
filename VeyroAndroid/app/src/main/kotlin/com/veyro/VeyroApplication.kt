@@ -57,6 +57,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider, ScreenSh
         // ADR-066. Same rule: it answers a PC's streamStart only over a session something else
         // opened, and never captures without the user's switch and Android's consent.
         container.screenShareBridge.start()
+        // ADR-073. Same rule: the PC's sound and photo requests only over a session something else opened.
+        container.speakerCaptureBridge.start()
         // ADR-043: "Send to <PC>" in the share sheet's top row.
         container.startShareShortcuts()
         // ADR-044: start reading "Clear notifications automatically" now, so the first notification has it.

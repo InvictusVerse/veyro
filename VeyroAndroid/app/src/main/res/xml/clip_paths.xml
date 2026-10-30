@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- ADR-043: an image from the PC's clipboard is written here and offered to the system clipboard
-     through a content:// URI. Only this cache folder is exposed; nothing else. -->
+     through a content:// URI. ADR-073: the camera app writes a photo for the PC into captures/.
+     Only these cache folders are exposed; nothing else. -->
 <paths>
     <cache-path name="clips" path="clips/" />
+    <cache-path name="captures" path="captures/" />
 </paths>
