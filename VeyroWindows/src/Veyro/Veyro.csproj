@@ -48,6 +48,27 @@
     <!-- Icon of the optional Explorer "Send with Veyro" menu (ADR-039); built from the logo PNGs -->
     <Content Include="Assets\Veyro.ico" />
   </ItemGroup>
+  <!-- ADR-067: the optional virtual camera DLL, built with MSVC by its own script (no MSBuild C++
+       project) when its source changed, and shipped as VirtualCamera\VeyroVirtualCamera.dll. It is
+       installed only when the user presses Set up. x64 only for now. -->
+  <PropertyGroup>
+    <VirtualCameraDir>$(MSBuildProjectDirectory)\..\VeyroVirtualCamera</VirtualCameraDir>
+    <VirtualCameraDll>$(VirtualCameraDir)\bin\x64\VeyroVirtualCamera.dll</VirtualCameraDll>
+  </PropertyGroup>
+  <Target Name="BuildVirtualCamera" BeforeTargets="BeforeBuild"
+          Inputs="$(VirtualCameraDir)\VeyroVirtualCamera.cpp;$(VirtualCameraDir)\VeyroVirtualCamera.def;$(VirtualCameraDir)\build.ps1"
+          Outputs="$(VirtualCameraDll)"
+          Condition="'$(Platform)' == 'x64' And Exists('D:\Microsoft\VisualStudio\VC\Tools\MSVC')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(VirtualCameraDir)\build.ps1&quot;" />
+    <ItemGroup Condition="'@(VirtualCameraContent)' == ''">
+      <Content Include="$(VirtualCameraDll)" Link="VirtualCamera\VeyroVirtualCamera.dll" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+  <ItemGroup Condition="'$(Platform)' == 'x64' And Exists('$(VirtualCameraDll)')">
+    <VirtualCameraContent Include="$(VirtualCameraDll)" />
+    <Content Include="$(VirtualCameraDll)" Link="VirtualCamera\VeyroVirtualCamera.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- ADR-047: compact the large-object heap when it fragments, so trimmed memory stays trimmed. -->
     <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />

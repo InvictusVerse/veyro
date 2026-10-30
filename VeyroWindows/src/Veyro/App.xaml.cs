@@ -605,6 +605,7 @@ public partial class App : Application
     {
         HandleClosedEvents = false;
         // Mirror windows first: each sends streamStop while the phone's session is still up.
+        VeyroContainer.Instance.VirtualCamera.Dispose();
         VeyroContainer.Instance.Mirror.Dispose();
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
         VeyroContainer.Instance.Photos.Dispose();

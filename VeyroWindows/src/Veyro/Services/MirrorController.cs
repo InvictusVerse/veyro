@@ -71,6 +71,18 @@ public sealed class MirrorController : IDisposable
     /// <summary>The player while the media socket is open; null otherwise.</summary>
     public MirrorPlayer? Player => _player;
 
+    /// <summary>ADR-067: every VIDEO_CONFIG from the phone, for the virtual camera's decoder. Background thread.</summary>
+    public event Action<Vms1.VideoConfig>? VideoConfigReceived;
+
+    /// <summary>ADR-067: every whole access unit from the phone. Background thread; do not change the data.</summary>
+    public event Action<AccessUnit>? AccessUnitReceived;
+
+    /// <summary>The latest VIDEO_CONFIG of this session, or null.</summary>
+    public Vms1.VideoConfig? LastVideoConfig { get; private set; }
+
+    /// <summary>Asks the phone for a keyframe (rate-limited on the phone).</summary>
+    public Task RequestKeyframeAsync() => RequestKeyframeCoreAsync();
+
     public MirrorStatus Status => _session.Status;
     public PeerMessage.StreamState? LastState => _session.LastState;
 
@@ -302,6 +314,8 @@ public sealed class MirrorController : IDisposable
                         throw new EndOfStreamException();
                     case Vms1Frame.VideoConfigFrame config:
                         player.ConfigureVideo(config.Config);
+                        LastVideoConfig = config.Config;
+                        VideoConfigReceived?.Invoke(config.Config);
                         break;
                     case Vms1Frame.AudioConfigFrame audio:
                         player.ConfigureAudio(audio.Config);
@@ -311,6 +325,8 @@ public sealed class MirrorController : IDisposable
                         {
                             player.BeforeAccessUnit(unit.Key);
                             if (queue.Enqueue(unit)) _dispatcher.TryEnqueue(() => _ = RequestKeyframeAsync());
+                            try { AccessUnitReceived?.Invoke(unit); }
+                            catch (Exception error) { VeyroTrace.Warn($"Frame consumer failed: {error.GetType().Name}"); }
                         }
                         break;
                     case Vms1Frame.Audio audio:
@@ -347,7 +363,7 @@ public sealed class MirrorController : IDisposable
         }
     }
 
-    private async Task RequestKeyframeAsync()
+    private async Task RequestKeyframeCoreAsync()
     {
         if (_session.Sid is { } sid && _session.Status.IsLive) await SendAsync(new PeerMessage.StreamKeyframe(sid));
     }

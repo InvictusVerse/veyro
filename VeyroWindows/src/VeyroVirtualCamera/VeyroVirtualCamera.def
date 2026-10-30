@@ -1,0 +1,6 @@
+LIBRARY VeyroVirtualCamera
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
+    VeyroVcamRegister
+    VeyroVcamRemove

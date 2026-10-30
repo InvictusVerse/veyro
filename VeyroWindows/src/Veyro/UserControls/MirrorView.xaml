@@ -150,6 +150,24 @@
                                 Text="Clean view hides these controls so only the phone's picture is captured. The window can stay behind other windows, but not minimised (the phone pauses while it is)."
                                 TextWrapping="Wrap" />
                             <Button Click="CleanViewOn_Click" Content="Turn on Clean view" />
+                            <!--  ADR-067: the optional virtual camera, as NectarLink's add-on  -->
+                            <StackPanel
+                                x:Name="VcamPanel"
+                                Margin="0,8,0,0"
+                                Spacing="8"
+                                Visibility="Collapsed">
+                                <Rectangle Height="1" Fill="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Virtual camera add-on" />
+                                <TextBlock
+                                    x:Name="VcamStatus"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="VcamSetUpButton" Click="VcamSetUp_Click" Content="Set up" Style="{StaticResource AccentButtonStyle}" />
+                                    <Button x:Name="VcamRemoveButton" Click="VcamRemove_Click" Content="Remove" />
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
                     </Flyout>
                 </Button.Flyout>

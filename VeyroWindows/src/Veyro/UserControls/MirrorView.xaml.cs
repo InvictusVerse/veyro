@@ -38,8 +38,54 @@ public sealed partial class MirrorView : UserControl
             MirrorSwitch.Visibility = Visibility.Visible;
             QualityShortText.Text = "Camera";
             AutomationProperties.SetName(Player, "Phone camera");
+            VcamPanel.Visibility = Visibility.Visible;
+            RefreshVcam();
+            VeyroContainer.Instance.VirtualCamera.InUseChanged += OnVcamInUse;
+            Unloaded += (_, _) => VeyroContainer.Instance.VirtualCamera.InUseChanged -= OnVcamInUse;
         }
         LoadSettings();
+    }
+
+    // ── Virtual camera add-on (ADR-067) ──────────────────────────────────────────────
+
+    private static VirtualCameraService Vcam => VeyroContainer.Instance.VirtualCamera;
+
+    private void OnVcamInUse(bool inUse) => RefreshVcam();
+
+    private void RefreshVcam()
+    {
+        if (!_camera) return;
+        Veyro.Platform.Media.VirtualCameraState state = Vcam.Setup.State;
+        VcamStatus.Text = state switch
+        {
+            Veyro.Platform.Media.VirtualCameraState.Unsupported => "Needs Windows 11.",
+            Veyro.Platform.Media.VirtualCameraState.Ready => Vcam.InUse
+                ? "Ready. An app is using \"Veyro Phone Camera\" now."
+                : "Ready. Pick \"Veyro Phone Camera\" in Zoom, Teams, Meet, Discord, OBS or the Camera app; the phone asks for its tap when an app starts using it.",
+            _ => "Adds \"Veyro Phone Camera\" to Zoom, Teams, Meet, Discord, OBS and the Camera app. Needs one administrator prompt. Nothing is installed until you press Set up; Remove takes it out again.",
+        };
+        VcamSetUpButton.Visibility = state == Veyro.Platform.Media.VirtualCameraState.NotSetUp ? Visibility.Visible : Visibility.Collapsed;
+        VcamRemoveButton.Visibility = state == Veyro.Platform.Media.VirtualCameraState.Ready ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void VcamSetUp_Click(object sender, RoutedEventArgs e)
+    {
+        VcamSetUpButton.IsEnabled = false;
+        VcamStatus.Text = "Setting up… approve the administrator prompt.";
+        string? failed = await Vcam.Setup.SetUpAsync();
+        VcamSetUpButton.IsEnabled = true;
+        RefreshVcam();
+        if (failed is not null) VcamStatus.Text = failed;
+    }
+
+    private async void VcamRemove_Click(object sender, RoutedEventArgs e)
+    {
+        VcamRemoveButton.IsEnabled = false;
+        VcamStatus.Text = "Removing… approve the administrator prompt.";
+        string? failed = await Vcam.Setup.RemoveAsync();
+        VcamRemoveButton.IsEnabled = true;
+        RefreshVcam();
+        if (failed is not null) VcamStatus.Text = failed;
     }
 
     // ── Camera (ADR-067) ─────────────────────────────────────────────────────────────

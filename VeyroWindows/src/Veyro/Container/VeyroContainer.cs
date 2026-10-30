@@ -58,6 +58,7 @@ public sealed class VeyroContainer
     public CallRouter CallRouter { get; }
     public CallWindowService CallWindowService { get; }
     public MirrorService Mirror { get; }
+    public VirtualCameraService VirtualCamera { get; }
     public INetworkDiagnosticsService NetworkDiagnostics { get; }
     public IQrCodeRenderer QrCodeRenderer { get; }
     public IPhotoActions PhotoActions { get; }
@@ -207,6 +208,9 @@ public sealed class VeyroContainer
         CallWindowService = new CallWindowService(BluetoothCalling, Calls, ThemeModeService);
         // ADR-066: one mirror window per phone; quality is this PC's setting, the phone only consents.
         Mirror = new MirrorService(PeerSessions, TrustStore, IdentityManager.DeviceId.Value, SettingsStore, ThemeModeService);
+        // ADR-067: the optional "Veyro Phone Camera" add-on; idle (a timer, nothing open) until set up.
+        VirtualCamera = new VirtualCameraService(Mirror, new Veyro.Platform.Media.VirtualCameraSetup(), SettingsStore,
+            connectedPhone: () => DeviceManager.ActiveDevice is { IsConnected: true } device ? device.DeviceId : null);
         NotificationToastService = new NotificationToastService(
             NotificationMirror, Messaging, Calls, CallRouter,
             // Invoked on toast activation, long after construction has assigned the view model.

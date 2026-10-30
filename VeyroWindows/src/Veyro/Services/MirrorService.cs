@@ -51,6 +51,16 @@ public sealed class MirrorService : IDisposable
     /// <summary>ADR-067: opens (or brings forward) the camera window for <paramref name="peerId"/>. UI thread.</summary>
     public void OpenCamera(string peerId) => OpenWindow(peerId, camera: true);
 
+    /// <summary>ADR-067: closes the camera window, which stops the phone's camera. UI thread.</summary>
+    public void CloseCamera()
+    {
+        foreach (MirrorWindow window in _windows.Values.Where(w => w.IsCamera).ToList())
+        {
+            try { window.Close(); }
+            catch (Exception error) { VeyroTrace.Error("Closing the camera window failed", error); }
+        }
+    }
+
     /// <summary>The phone's latest usable caps, or null when it has sent none on this connection.</summary>
     public PeerMessage.StreamCaps? CapsOf(string peerId)
     {
