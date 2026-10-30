@@ -244,6 +244,20 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         catch (Exception error) { VeyroTrace.Error("ReceivingChanged handler failed", error); }
     }
 
+    /// <summary>
+    /// An inbound offer ended: completed, failed, cancelled, declined or timed out. Raised once per
+    /// offer, for the Transfers history; offers that answer a request this PC made (photo fetches,
+    /// ADR-034) are not raised. Server thread.
+    /// </summary>
+    public event Action<InboundTransferReport>? InboundTransferFinished;
+
+    private void RaiseInboundTransferFinished(InboundTransferReport report)
+    {
+        // Type only: a handler's message could name the user's files.
+        try { InboundTransferFinished?.Invoke(report); }
+        catch (Exception error) { VeyroTrace.Warn($"InboundTransferFinished handler failed: {error.GetType().Name}"); }
+    }
+
     /// <summary>Live authenticated sessions, for companion features (ADR-025).</summary>
     public IPeerSessionRegistry Sessions => _sessions;
 
@@ -1326,6 +1340,23 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     {
         bool decided = false;
         string destinationRoot = claim?.DestinationDirectory ?? _destinationRoot;
+        // The Transfers history gets one report per offer; a photo fetch the PC asked for is not
+        // history (ADR-034).
+        bool reported = claim is not null;
+        IReadOnlyList<InboundTransferItem> reportItems = offer.Items.Where(item => !item.IsDir)
+            .Select(item => new InboundTransferItem(item.Index, item.RelPath, item.Size)).ToList();
+        string? reportFolder = InboundFolderLayout.FolderNameOf(offer.Items);
+        void Report(InboundTransferOutcome outcome, IReadOnlyDictionary<string, string>? saved = null)
+        {
+            if (reported) return;
+            reported = true;
+            var items = reportItems
+                .Select(item => new InboundTransferReportItem(item.Index, item.RelativePath, item.SizeBytes,
+                    saved is not null && saved.TryGetValue(item.RelativePath, out string? path) ? path : null))
+                .ToList();
+            RaiseInboundTransferFinished(new InboundTransferReport(
+                sessionPeer.DeviceId, offer.TransferId, items, Math.Max(0, offer.TotalBytes), reportFolder, outcome, destinationRoot));
+        }
         try
         {
             // Re-read trust per offer: the user may have revoked the peer or changed auto-accept
@@ -1342,6 +1373,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                 decided = true;
                 string reason = OfferDeclineReasons.For(verdict);
                 VeyroTrace.Info($"Inbound offer declined: reason={reason}");
+                Report(verdict == OfferVerdict.TimedOut ? InboundTransferOutcome.TimedOut : InboundTransferOutcome.Declined);
                 await secure.SendAsync(new PeerMessage.TransferDecision(offer.TransferId, false, reason), ct).ConfigureAwait(false);
                 if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, new UnauthorizedAccessException("The peer is no longer trusted."));
                 return;
@@ -1351,6 +1383,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             // destination is saved as "Name (2)". BulkTransfer still validates every path.
             InboundFolderLayout layout = InboundFolderLayout.Plan(destinationRoot, offer.Items, renameTakenFolders: claim is null);
             var inboundItems = layout.Files.ToList();
+            reportItems = inboundItems;
+            reportFolder = layout.FolderName;
             Directory.CreateDirectory(destinationRoot);
             var resume = BulkTransfer.BuildResume(destinationRoot, inboundItems);
             BulkTransferResult result;
@@ -1405,6 +1439,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             // The folder's empty directories, once its files are in (ADR-064).
             int directoriesNotMade = layout.CreateEmptyDirectories(destinationRoot);
             if (directoriesNotMade > 0) VeyroTrace.Warn($"Inbound folder: {directoriesNotMade} empty directories not created");
+            if (claim is null) Report(InboundTransferOutcome.Completed, SavedPaths(destinationRoot, result.CompletedPaths));
             await secure.SendAsync(new PeerMessage.TransferEnd(offer.TransferId, true), ct).ConfigureAwait(false);
             if (claim is not null)
             {
@@ -1418,12 +1453,15 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         catch (OperationCanceledException error) when (ct.IsCancellationRequested)
         {
             VeyroTrace.Info("Inbound transfer cancelled");
+            Report(InboundTransferOutcome.Cancelled);
             if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, error);
         }
         catch (Exception error)
         {
             // Type only: exception messages can name the user's files.
             VeyroTrace.Warn($"Inbound transfer failed: {error.GetType().Name}");
+            // A cancel frame on the data socket is the phone stopping the transfer.
+            Report(error is OperationCanceledException ? InboundTransferOutcome.Cancelled : InboundTransferOutcome.Failed);
             if (claim is not null) RequestedOffers?.OnFailed(sessionPeer.DeviceId, offer.RequestId!, error);
             try
             {
@@ -1434,6 +1472,23 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Relative path to absolute saved path for the files that arrived. BulkTransfer validated each
+    /// before writing it; a path that does not resolve inside <paramref name="destinationRoot"/> is
+    /// still left out, so the history never points outside the received-files folder.
+    /// </summary>
+    private static Dictionary<string, string> SavedPaths(string destinationRoot, IReadOnlyList<string> completed)
+    {
+        string root = Path.GetFullPath(destinationRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var saved = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string relative in completed)
+        {
+            string full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) saved[relative] = full;
+        }
+        return saved;
     }
 
     /// <summary>A throwing prompt is an "error" decision (the outer catch), never a silent Decline.</summary>

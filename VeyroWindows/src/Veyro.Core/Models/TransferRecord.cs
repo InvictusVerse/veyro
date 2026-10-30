@@ -10,5 +10,7 @@ public sealed record TransferRecord(
     VerificationOutcome Verification,
     IReadOnlyList<TransferItem> Items,
     string? DestinationFolder = null,
-    string? ErrorMessage = null
+    string? ErrorMessage = null,
+    // ADR-064: the saved name of a received folder, for "Folder X, N files". Older records have none.
+    string? FolderName = null
 );

@@ -125,6 +125,16 @@
                                 VerticalAlignment="Center"
                                 Orientation="Horizontal"
                                 Spacing="6">
+                                <!--  A received entry: its saved file or folder.  -->
+                                <Button
+                                    Click="OpenReceived_Click"
+                                    Content="Open"
+                                    Visibility="{x:Bind HasSavedTarget}" />
+                                <Button
+                                    Margin="0,0,8,0"
+                                    Click="ShowReceivedInFolder_Click"
+                                    Content="Show in folder"
+                                    Visibility="{x:Bind HasSavedTarget}" />
                                 <FontIcon FontSize="14" Glyph="{x:Bind OutcomeGlyph}" />
                                 <TextBlock Text="{x:Bind OutcomeText}" />
                             </StackPanel>
@@ -145,7 +155,7 @@
             <TextBlock
                 HorizontalAlignment="Center"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="No files sent yet."
+                Text="No files sent or received yet."
                 TextAlignment="Center"
                 TextWrapping="Wrap" />
         </StackPanel>

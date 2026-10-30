@@ -4,5 +4,8 @@ public enum VerificationOutcome
 {
     Pending,
     Verified,
-    Failed
+    Failed,
+    // Appended, so stored history (saved as numbers) keeps its meaning.
+    Cancelled,
+    Declined
 }
