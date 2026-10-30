@@ -1,7 +1,10 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using Veyro.Core.Calls;
+using Veyro.Core.Crypto;
 using Veyro.Core.Data;
 using Veyro.Core.Link;
 using Veyro.Core.Media;
@@ -243,6 +246,79 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         Assert.True(_registry.IsConnected(_one.Id));
         Assert.Equal(1, opened);
         Assert.Equal(0, closed);
+    }
+
+    /// <summary>
+    /// A phone played on a raw socket (review issue 3): completes the WebSocket upgrade, answers
+    /// the PC's preamble in session mode with this connection's real keys, then sends one sealed
+    /// frame built by <paramref name="firstFrame"/> and holds the socket until the PC closes it.
+    /// </summary>
+    private static async Task RawPhoneAnswersDialAsync(TcpListener listener, Phone phone, Func<SessionSealer, string> firstFrame, CancellationToken ct)
+    {
+        using TcpClient client = await listener.AcceptTcpClientAsync(ct);
+        NetworkStream stream = client.GetStream();
+        var header = new List<byte>();
+        while (!(header.Count >= 4 && header[^4] == '\r' && header[^3] == '\n' && header[^2] == '\r' && header[^1] == '\n'))
+        {
+            int next = stream.ReadByte();
+            if (next < 0) return;
+            header.Add((byte)next);
+        }
+        string key = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n")
+            .First(line => line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))["Sec-WebSocket-Key:".Length..].Trim();
+        string accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"), ct);
+        using WebSocket ws = WebSocket.CreateFromStream(stream, new WebSocketCreationOptions { IsServer = true });
+
+        byte[] buffer = new byte[64 * 1024];
+        WebSocketReceiveResult result = await ws.ReceiveAsync(buffer, ct);
+        byte[] preambleBytes = buffer.AsSpan(0, result.Count).ToArray();
+        LinkPreamble preamble = PeerMessageJson.Decode<LinkPreamble>(Encoding.UTF8.GetString(preambleBytes))!;
+        using EphemeralKey eph = EphemeralKey.Generate();
+        byte[] ackBytes = Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreambleAck(LinkPreambleAck.ModeSession) with
+        {
+            Cn = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            Epk = Convert.ToBase64String(eph.PublicKey)
+        }));
+        await ws.SendAsync(ackBytes, WebSocketMessageType.Text, true, ct);
+        using LinkKeys keys = ConnectionKeySchedule.Session(LinkRole.Responder, preamble.Id, phone.Id,
+            ConnectionKeySchedule.Transcript(preambleBytes, ackBytes), eph.Agree(FrameCrypto.DecodeKey32(preamble.Epk)!), phone.Secret);
+        using var sealer = new SessionSealer(keys.SendKey, phone.Id, FrameCrypto.DirR2I);
+        await ws.SendAsync(Encoding.UTF8.GetBytes(firstFrame(sealer)), WebSocketMessageType.Text, true, ct);
+        try
+        {
+            while ((await ws.ReceiveAsync(buffer, ct)).MessageType != WebSocketMessageType.Close) { }
+        }
+        catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException) { }
+    }
+
+    /// <summary>
+    /// Review issue 3 (ADR-058): a dialled phone whose first frame authenticates but is malformed
+    /// (InvalidDataException on the PC) ends the dial with false; the dial does not hang.
+    /// </summary>
+    [Fact]
+    public async Task DialledPhoneWhoseFirstFrameIsMalformed_EndsTheDialWithFalse()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            TrustedPeer trusted = _trustStore.GetPeer(_one.Id)!;
+            Task phone = RawPhoneAnswersDialAsync(listener, _one, sealer => sealer.Seal(
+                $"{{\"v\":2,\"msgId\":\"m\",\"from\":\"{_one.Id}\",\"seq\":1,\"ts\":1,\"payload\":{{\"t\":\"hello\"}}}}"), Ct);
+            var endpoint = new PeerEndpoint("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port);
+            bool registered = await new LinkClient(PcId, "Test PC")
+                .OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct)
+                .WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.False(registered);
+            Assert.False(_registry.IsConnected(_one.Id));
+            await phone.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            listener.Stop();
+        }
     }
 
     [Fact]

@@ -296,6 +296,21 @@ class FileTrustStoreTest {
         assertTrue(p.pairingSecret.contentEquals(reloaded.pendingUnpairSecret(p.deviceId)))
     }
 
+    /**
+     * Review issue 12 (ADR-058): `ConnectionManager.tellRemovedPeer` zeroes the array it is given,
+     * so the store must hand out a fresh copy each time, never its own.
+     */
+    @Test
+    fun `the kept secret is handed out as a fresh copy the caller may wipe`() = runBlocking {
+        val p = peer(1)
+        val s = timedStore()
+        s.put(p)
+        s.removeAndNotify(p.deviceId)
+
+        s.pendingUnpairSecret(p.deviceId)!!.fill(0)
+        assertTrue("wiping one copy leaves the kept secret intact", p.pairingSecret.contentEquals(s.pendingUnpairSecret(p.deviceId)))
+    }
+
     @Test
     fun `told or paired again, the kept secret goes`() = runBlocking {
         val told = peer(1)

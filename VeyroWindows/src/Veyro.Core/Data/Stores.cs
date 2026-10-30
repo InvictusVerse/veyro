@@ -66,7 +66,10 @@ public interface ITrustStore
     /// </summary>
     Task RemoveAndNotifyAsync(string deviceId) => RemoveAsync(deviceId);
 
-    /// <summary>The kept pairing secret of a phone removed here and not yet told, or null (ADR-057).</summary>
+    /// <summary>
+    /// The kept pairing secret of a phone removed here and not yet told, or null (ADR-057). A fresh
+    /// array the caller owns: LinkServer zeroes it after use (review issue 12).
+    /// </summary>
     byte[]? GetPendingUnpairSecret(string deviceId) => null;
 
     /// <summary>The phone was told, or no longer holds the old pairing: drop its kept secret.</summary>

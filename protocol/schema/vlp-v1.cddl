@@ -168,8 +168,8 @@ vtc3-record = [
 ; link-envelope (04-PROTOCOL.md section 6); this section is kept for the field numbering only.
 
 ; =============================================================================================
-; Control messages. Canonical CBOR maps with INTEGER keys, so the encoding is stable across
-; languages and cheap to parse on a phone. JSON is used only for logs, never on the wire.
+; Control messages: HISTORICAL CBOR sketch, not the wire format. Link protocol v3 (ADR-058)
+; sends every control message as the JSON link-envelope above, sealed in a link-wire-frame.
 ; =============================================================================================
 
 control-message = hello / hello-ack / transfer-offer / transfer-decision / item-begin /
