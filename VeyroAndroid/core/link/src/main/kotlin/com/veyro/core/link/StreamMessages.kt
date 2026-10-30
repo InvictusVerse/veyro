@@ -26,6 +26,12 @@ public data class StreamCaps(
      * Never the microphone. Whether to send it is the PC's choice ([StreamStart.audio]).
      */
     val audio: Boolean = false,
+    /**
+     * Android's audio permission, which playback capture needs (StreamRules.AUDIO_*): `granted`,
+     * `ask` (not asked yet), `denied` (refused; Android shows the dialog again) or `blocked`
+     * (Android no longer shows it; asking opens Veyro's settings on the phone).
+     */
+    val audioPermission: String? = null,
 ) : PeerMessage
 
 @Serializable
@@ -75,13 +81,31 @@ public data class StreamState(
     val audio: Boolean? = null,
     /** Android thermal status 0..6 while streaming. */
     val thermal: Int? = null,
+    /** As in [StreamCaps.audioPermission]; sent while the PC asked for audio and it is not playing. */
+    val audioPermission: String? = null,
 ) : PeerMessage
 
-/** PC to phone: new limits mid-session (the PC's bitrate control, the user's changes, pause). */
+/**
+ * PC to phone: ask the phone's user again for the audio permission during session [sid] (the
+ * user pressed "Ask again" on the PC). The phone posts a notification that opens Android's
+ * dialog, or Veyro's App info when Android no longer shows it, and answers with [StreamState].
+ * The phone acts on at most one per 3 s.
+ */
+@Serializable
+@SerialName("streamAskAudio")
+public data class StreamAskAudio(val sid: String) : PeerMessage
+
+/**
+ * PC to phone: new limits mid-session (the PC's bitrate control, the user's changes, pause).
+ * [codec] and [hw] switch the encoder on the same capture: Android 14 consent is single-use, so
+ * a quality change never asks the user again. The phone sends a new VIDEO_CONFIG and a keyframe.
+ */
 @Serializable
 @SerialName("streamConfig")
 public data class StreamConfig(
     val sid: String,
+    val codec: String? = null,
+    val hw: Boolean? = null,
     val maxLong: Int? = null,
     val fps: Int? = null,
     val bitrate: Int? = null,
@@ -118,6 +142,15 @@ public object StreamRules {
         "projection-ended", "locked", "thermal", "encoder", "network", "session-closed", "error",
     )
 
+    public const val AUDIO_GRANTED: String = "granted"
+    public const val AUDIO_ASK: String = "ask"
+    public const val AUDIO_DENIED: String = "denied"
+    public const val AUDIO_BLOCKED: String = "blocked"
+    public val AUDIO_PERMISSIONS: Set<String> = setOf(AUDIO_GRANTED, AUDIO_ASK, AUDIO_DENIED, AUDIO_BLOCKED)
+
+    /** The least time between two audio-permission prompts the phone shows for a PC. */
+    public const val ASK_AUDIO_INTERVAL_MS: Long = 3_000L
+
     public val MAX_LONG: IntRange = 160..3840
     public val FPS: IntRange = 1..120
     public val BITRATE: IntRange = 250_000..80_000_000
@@ -147,10 +180,12 @@ public object StreamRules {
             isPrivateIpv4(m.host) && m.port in PORT
 
     public fun isValid(m: StreamConfig): Boolean =
-        sidBytes(m.sid) != null && (m.maxLong == null || m.maxLong in MAX_LONG) &&
+        sidBytes(m.sid) != null && (m.codec == null || isCodec(m.codec)) && (m.maxLong == null || m.maxLong in MAX_LONG) &&
             (m.fps == null || m.fps in FPS) && (m.bitrate == null || m.bitrate in BITRATE)
 
     public fun isValid(m: StreamKeyframe): Boolean = sidBytes(m.sid) != null
+
+    public fun isValid(m: StreamAskAudio): Boolean = sidBytes(m.sid) != null
 
     public fun isValid(m: StreamStop): Boolean = sidBytes(m.sid) != null && m.reason in REASONS
 }

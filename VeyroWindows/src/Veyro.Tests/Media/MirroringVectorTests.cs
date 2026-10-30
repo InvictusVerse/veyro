@@ -208,7 +208,7 @@ public sealed class MirroringVectorTests
     {
         using var doc = Load("link-stream.json");
         var vectors = doc.RootElement.GetProperty("vectors").EnumerateArray().ToList();
-        Assert.Equal(10, vectors.Count);
+        Assert.Equal(13, vectors.Count);
         foreach (var vector in vectors)
         {
             string json = vector.GetProperty("json").GetString()!;
@@ -221,6 +221,7 @@ public sealed class MirroringVectorTests
                 "streamConfig" => typeof(PeerMessage.StreamConfig),
                 "streamKeyframe" => typeof(PeerMessage.StreamKeyframe),
                 "streamStop" => typeof(PeerMessage.StreamStop),
+                "streamAskAudio" => typeof(PeerMessage.StreamAskAudio),
                 var other => throw new InvalidOperationException(other),
             };
             Assert.IsType(expected, decoded);

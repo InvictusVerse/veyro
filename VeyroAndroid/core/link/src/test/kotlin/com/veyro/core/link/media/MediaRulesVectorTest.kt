@@ -2,6 +2,7 @@ package com.veyro.core.link.media
 
 import com.veyro.core.link.PeerMessage
 import com.veyro.core.link.PeerMessageJson
+import com.veyro.core.link.StreamAskAudio
 import com.veyro.core.link.StreamCaps
 import com.veyro.core.link.StreamConfig
 import com.veyro.core.link.StreamKeyframe
@@ -37,9 +38,10 @@ class MediaRulesVectorTest {
         val types = mapOf(
             "streamCaps" to StreamCaps::class, "streamStart" to StreamStart::class, "streamState" to StreamState::class,
             "streamConfig" to StreamConfig::class, "streamKeyframe" to StreamKeyframe::class, "streamStop" to StreamStop::class,
+            "streamAskAudio" to StreamAskAudio::class,
         )
         val vectors = MediaVectors.load("link-stream.json").getValue("vectors").jsonArray.map { it.jsonObject }
-        assertEquals(10, vectors.size)
+        assertEquals(13, vectors.size)
         for (vector in vectors) {
             val type = vector.getValue("type").jsonPrimitive.content
             val text = vector.getValue("json").jsonPrimitive.content
@@ -59,6 +61,8 @@ class MediaRulesVectorTest {
                 is StreamConfig -> assertTrue(StreamRules.isValid(m))
                 is StreamKeyframe -> assertTrue(StreamRules.isValid(m))
                 is StreamStop -> assertTrue(StreamRules.isValid(m))
+                is StreamAskAudio -> assertTrue(StreamRules.isValid(m))
+                is StreamState -> assertTrue(m.audioPermission == null || m.audioPermission in StreamRules.AUDIO_PERMISSIONS)
                 else -> Unit
             }
         }
@@ -76,6 +80,7 @@ class MediaRulesVectorTest {
                 is StreamConfig -> StreamRules.isValid(m)
                 is StreamKeyframe -> StreamRules.isValid(m)
                 is StreamStop -> StreamRules.isValid(m)
+                is StreamAskAudio -> StreamRules.isValid(m)
                 else -> true
             }
             assertFalse("accepted: $why", valid)

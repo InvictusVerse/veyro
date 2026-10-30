@@ -252,17 +252,24 @@ stream-codec = "h264" / "h265"
 stream-reason = "user" / "declined" / "timeout" / "busy" / "disabled" / "permission" /
                 "unsupported" / "projection-ended" / "locked" / "thermal" / "encoder" /
                 "network" / "session-closed" / "error"
+stream-audio-permission = "granted" / "ask" / "denied" / "blocked"   ; Android's permission for playback capture
 stream-caps = { "t": "streamCaps", ? "allowed": bool, ? "screen": { "w": 16..8192, "h": 16..8192, "maxFps": 1..240 },
-                ? "encoders": [* { "codec": tstr, "hw": bool, "maxW": 16..8192, "maxH": 16..8192, "fps": 1..240 }], ? "audio": bool }
+                ? "encoders": [* { "codec": tstr, "hw": bool, "maxW": 16..8192, "maxH": 16..8192, "fps": 1..240 }], ? "audio": bool,
+                ? "audioPermission": stream-audio-permission }
 stream-start = { "t": "streamStart", "sid": stream-sid, "source": "screen", "codec": stream-codec, "hw": bool,
                  "maxLong": 160..3840, "fps": 1..120, "bitrate": 250000..80000000, ? "audio": bool,
                  "host": tstr, "port": 1024..65535 }               ; host: private IPv4 only
 stream-state = { "t": "streamState", "sid": stream-sid,
                  "state": "asking" / "starting" / "streaming" / "paused" / "stopped", ? "reason": stream-reason,
                  ? "codec": stream-codec, ? "w": 16..8192, ? "h": 16..8192, ? "fps": 1..240,
-                 ? "bitrate": 0..80000000, ? "hw": bool, ? "audio": bool, ? "thermal": 0..6 }
-stream-config = { "t": "streamConfig", "sid": stream-sid, ? "maxLong": 160..3840, ? "fps": 1..120,
+                 ? "bitrate": 0..80000000, ? "hw": bool, ? "audio": bool, ? "thermal": 0..6,
+                 ? "audioPermission": stream-audio-permission }
+; codec/hw switch the encoder on the same capture (Android 14 consent is single-use).
+stream-config = { "t": "streamConfig", "sid": stream-sid, ? "codec": stream-codec, ? "hw": bool,
+                  ? "maxLong": 160..3840, ? "fps": 1..120,
                   ? "bitrate": 250000..80000000, ? "audio": bool, ? "paused": bool }
+; PC to phone: ask the phone's user again for the audio permission; acted on at most once per 3 s.
+stream-ask-audio = { "t": "streamAskAudio", "sid": stream-sid }
 stream-keyframe = { "t": "streamKeyframe", "sid": stream-sid }
 stream-stop = { "t": "streamStop", "sid": stream-sid, "reason": stream-reason }
 

@@ -15,6 +15,7 @@ namespace Veyro.Core.Link;
 [JsonDerivedType(typeof(StreamConfig), "streamConfig")]
 [JsonDerivedType(typeof(StreamKeyframe), "streamKeyframe")]
 [JsonDerivedType(typeof(StreamStop), "streamStop")]
+[JsonDerivedType(typeof(StreamAskAudio), "streamAskAudio")]
 public abstract partial record PeerMessage
 {
     /// <summary>
@@ -25,7 +26,9 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("allowed")] bool Allowed = false,
         [property: JsonPropertyName("screen")] StreamScreen? Screen = null,
         [property: JsonPropertyName("encoders")] IReadOnlyList<StreamEncoder>? Encoders = null,
-        [property: JsonPropertyName("audio")] bool Audio = false) : PeerMessage;
+        [property: JsonPropertyName("audio")] bool Audio = false,
+        /// <summary>Android's audio permission for playback capture: granted, ask, denied or blocked (<see cref="StreamRules"/>).</summary>
+        [property: JsonPropertyName("audioPermission")] string? AudioPermission = null) : PeerMessage;
 
     public sealed record StreamScreen(
         [property: JsonPropertyName("w")] int W,
@@ -68,11 +71,25 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("bitrate")] int? Bitrate = null,
         [property: JsonPropertyName("hw")] bool? Hw = null,
         [property: JsonPropertyName("audio")] bool? Audio = null,
-        [property: JsonPropertyName("thermal")] int? Thermal = null) : PeerMessage;
+        [property: JsonPropertyName("thermal")] int? Thermal = null,
+        [property: JsonPropertyName("audioPermission")] string? AudioPermission = null) : PeerMessage;
 
-    /// <summary>PC to phone: new limits mid-session (bitrate control, the user's changes, pause).</summary>
+    /// <summary>
+    /// PC to phone: ask the phone's user again for the audio permission during this session. The
+    /// phone shows Android's dialog (or Veyro's App info once Android stops showing it) and acts
+    /// on at most one per 3 s.
+    /// </summary>
+    public sealed record StreamAskAudio([property: JsonPropertyName("sid")] string Sid) : PeerMessage;
+
+    /// <summary>
+    /// PC to phone: new limits mid-session (bitrate control, the user's changes, pause).
+    /// <c>Codec</c> and <c>Hw</c> switch the encoder on the same capture: Android 14 consent is
+    /// single-use, so a quality change never asks the phone's user again.
+    /// </summary>
     public sealed record StreamConfig(
         [property: JsonPropertyName("sid")] string Sid,
+        [property: JsonPropertyName("codec")] string? Codec = null,
+        [property: JsonPropertyName("hw")] bool? Hw = null,
         [property: JsonPropertyName("maxLong")] int? MaxLong = null,
         [property: JsonPropertyName("fps")] int? Fps = null,
         [property: JsonPropertyName("bitrate")] int? Bitrate = null,
@@ -110,6 +127,13 @@ public static class StreamRules
         "projection-ended", "locked", "thermal", "encoder", "network", "session-closed", "error",
     };
 
+    public const string AudioGranted = "granted";
+    public const string AudioAsk = "ask";
+    public const string AudioDenied = "denied";
+    public const string AudioBlocked = "blocked";
+
+    public static bool IsAudioPermission(string? value) => value is AudioGranted or AudioAsk or AudioDenied or AudioBlocked;
+
     public const int MinMaxLong = 160, MaxMaxLong = 3840;
     public const int MinFps = 1, MaxFps = 120;
     public const int MinBitrate = 250_000, MaxBitrate = 80_000_000;
@@ -132,6 +156,7 @@ public static class StreamRules
     public static PeerMessage.StreamCaps? Clean(PeerMessage.StreamCaps caps)
     {
         if (caps.Screen is { } s && (s.W is < 16 or > 8192 || s.H is < 16 or > 8192 || s.MaxFps is < 1 or > 240)) return null;
+        if (caps.AudioPermission is not null && !IsAudioPermission(caps.AudioPermission)) return null;
         var encoders = (caps.Encoders ?? [])
             .Where(e => e is not null && IsCodec(e.Codec) && e.MaxW is >= 16 and <= 8192 && e.MaxH is >= 16 and <= 8192 && e.Fps is >= 1 and <= 240)
             .Take(16)
@@ -145,7 +170,8 @@ public static class StreamRules
         (m.Codec is null || IsCodec(m.Codec)) &&
         m.W is null or (>= 16 and <= 8192) && m.H is null or (>= 16 and <= 8192) &&
         m.Fps is null or (>= 1 and <= 240) && m.Bitrate is null or (>= 0 and <= MaxBitrate) &&
-        m.Thermal is null or (>= 0 and <= 6);
+        m.Thermal is null or (>= 0 and <= 6) &&
+        (m.AudioPermission is null || IsAudioPermission(m.AudioPermission));
 
     public static bool IsValid(PeerMessage.StreamStop m) => SidBytes(m.Sid) is not null && Reasons.Contains(m.Reason);
 }
