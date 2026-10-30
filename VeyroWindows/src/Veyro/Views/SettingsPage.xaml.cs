@@ -19,6 +19,10 @@ public sealed partial class SettingsPage : Page
     public GeneralViewModel ViewModel => VeyroContainer.Instance.GeneralViewModel;
     public BluetoothCallingViewModel Bluetooth => VeyroContainer.Instance.BluetoothCallingViewModel;
     public DevicesViewModel Devices => VeyroContainer.Instance.DevicesViewModel;
+    public NotificationRulesViewModel NotificationRules => VeyroContainer.Instance.NotificationRulesViewModel;
+
+    /// <summary>Navigation parameter that opens the per-app notification rules (ADR-063).</summary>
+    public const string NotificationsSection = "notifications";
 
     private string _initialSection = "general";
 
@@ -38,6 +42,7 @@ public sealed partial class SettingsPage : Page
         SettingsNav.SelectedItem = _initialSection switch
         {
             DevicesSection => DevicesItem,
+            NotificationsSection => NotificationsItem,
             BluetoothSection => BluetoothItem,
             "about" => AboutItem,
             _ => GeneralItem
@@ -61,6 +66,7 @@ public sealed partial class SettingsPage : Page
         string tag = (args.SelectedItem as NavigationViewItem)?.Tag as string ?? "general";
         GeneralSection.Visibility = tag == "general" ? Visibility.Visible : Visibility.Collapsed;
         DevicesSectionPanel.Visibility = tag == DevicesSection ? Visibility.Visible : Visibility.Collapsed;
+        NotificationsSectionPanel.Visibility = tag == NotificationsSection ? Visibility.Visible : Visibility.Collapsed;
         BluetoothSectionPanel.Visibility = tag == BluetoothSection ? Visibility.Visible : Visibility.Collapsed;
         AboutSection.Visibility = tag == "about" ? Visibility.Visible : Visibility.Collapsed;
     }

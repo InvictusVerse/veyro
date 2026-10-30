@@ -13,6 +13,9 @@ namespace Veyro.Platform.Services;
 /// Also asks about incoming files with Accept / Decline toasts (ADR-036; counts only, no names).
 /// Also raises toasts for incoming SMS and ringing calls (ADR-027) and routes their reply and
 /// call buttons to <see cref="IMessagingService"/> and <see cref="ICallService"/>.
+/// ADR-063: a notification with a one-time code gets "Copy code"; every mirrored notification gets
+/// "Turn off pop-ups for &lt;app&gt;" in its "..." menu. Per-app rules are applied by the mirror
+/// service before a change reaches this class, so a "Feed only" app never raises a toast here.
 /// Notification, message and call contents are user data: never logged here. SMS and call toasts
 /// expire on reboot and are removed when the phone's session closes; toast arguments carry ids
 /// only, never numbers or text.
@@ -22,6 +25,11 @@ public sealed class NotificationToastService : INotificationToastService
     private const string ReplyInputId = "reply";
     private const string SmsReplyInputId = "smsReply";
     private const int MaxActionButtons = 3;
+    /// <summary>Windows shows at most 5 buttons and context-menu items on one toast.</summary>
+    private const int MaxToastActions = 5;
+    private const int MaxMenuLabelLength = 60;
+    private static readonly TimeSpan ConfirmationLifetime = TimeSpan.FromSeconds(15);
+    private static readonly string ConfirmationTag = Hash("confirm");
     private const int MaxTitleLength = 200;
     private const int MaxBodyLength = 1000;
     private const int MaxButtonLabelLength = 40;
@@ -34,6 +42,8 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly Action<string, long> _openThread;
     private readonly Func<string, string?> _phoneName;
     private readonly Action<string> _showPhone;
+    private readonly Func<string, Task<bool>>? _copyText;
+    private readonly INotificationAppRules? _rules;
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
     private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
@@ -50,7 +60,9 @@ public sealed class NotificationToastService : INotificationToastService
         Action<string, long> openThread,
         string fallbackDataDirectory,
         Func<string, string?>? phoneName = null,
-        Action<string>? showPhone = null)
+        Action<string>? showPhone = null,
+        Func<string, Task<bool>>? copyText = null,
+        INotificationAppRules? rules = null)
     {
         _mirror = mirror;
         _messaging = messaging;
@@ -61,6 +73,10 @@ public sealed class NotificationToastService : INotificationToastService
         // ADR-040: with several phones a toast says which one it came from, and opening it shows that phone.
         _phoneName = phoneName ?? (_ => null);
         _showPhone = showPhone ?? (_ => { });
+        // ADR-063: "Copy code" (through the clipboard service, so it is not sent back to the
+        // phones) and "Turn off pop-ups for <app>".
+        _copyText = copyText;
+        _rules = rules;
     }
 
     /// <summary>"From Pixel 8" under the toast, so toasts from two phones are told apart. Shown, never logged.</summary>
@@ -141,6 +157,20 @@ public sealed class NotificationToastService : INotificationToastService
             if (CacheIcon(notification) is { } logo)
                 builder.SetAppLogoOverride(logo, AppNotificationImageCrop.Circle);
 
+            // A toast holds at most 5 buttons and context-menu items together.
+            int room = MaxToastActions;
+            // ADR-063: the code travels in the button's arguments; it is already in the toast's text.
+            if (_copyText is not null && notification.Code is { } code)
+            {
+                builder.AddButton(new AppNotificationButton("Copy code")
+                    .AddArgument("action", "copy-code")
+                    .AddArgument("code", code));
+                room--;
+            }
+
+            bool canMute = _rules is not null && NotificationAppRules.IsValidPackage(notification.Package);
+            if (canMute) room--;
+
             if (notification.CanReply)
             {
                 builder.AddTextBox(ReplyInputId, "Type a reply", "Reply");
@@ -149,9 +179,10 @@ public sealed class NotificationToastService : INotificationToastService
                     .AddArgument("peer", peer)
                     .AddArgument("key", key)
                     .SetInputId(ReplyInputId));
+                room--;
             }
 
-            foreach (NotificationActionInfo action in notification.Actions.Take(MaxActionButtons))
+            foreach (NotificationActionInfo action in notification.Actions.Take(Math.Min(MaxActionButtons, room)))
             {
                 builder.AddButton(new AppNotificationButton(Clip(action.Label, MaxButtonLabelLength))
                     .AddArgument("action", "action")
@@ -160,11 +191,72 @@ public sealed class NotificationToastService : INotificationToastService
                     .AddArgument("index", action.Index.ToString(CultureInfo.InvariantCulture)));
             }
 
+            // ADR-063: in the toast's "..." menu, where Windows keeps its own "turn off" choices.
+            if (canMute)
+            {
+                builder.AddButton(new AppNotificationButton(Clip("Turn off pop-ups for " + notification.AppName, MaxMenuLabelLength))
+                    .AddArgument("action", "mute-app")
+                    .AddArgument("pkg", notification.Package!)
+                    .SetContextMenuPlacement());
+            }
+
             AppNotificationManager.Default.Show(builder.BuildNotification());
         }
         catch (Exception error)
         {
             VeyroTrace.Error("Showing mirrored notification failed", error);
+        }
+    }
+
+    // ── Copy code and per-app pop-ups (ADR-063) ──────────────────────────────────────
+
+    private async Task CopyCodeAsync(string code)
+    {
+        bool copied = false;
+        try { copied = _copyText is not null && await _copyText(code).ConfigureAwait(false); }
+        // The type only: the code is user data.
+        catch (Exception error) { VeyroTrace.Warn($"Copying a code from a toast failed: {error.GetType().Name}"); }
+        ShowConfirmation(copied ? "Code copied" : "Could not copy the code", null);
+    }
+
+    private async Task TurnOffPopupsAsync(string package)
+    {
+        if (_rules is null) return;
+        string label = _rules.Apps.FirstOrDefault(app => app.Package == package)?.Label ?? package;
+        try
+        {
+            await _rules.SetModeAsync(package, NotificationAppMode.FeedOnly).ConfigureAwait(false);
+            ShowConfirmation(
+                Clip($"Pop-ups off for {label}", MaxTitleLength),
+                "Its notifications still appear in Veyro. Change it in Settings > Notifications.");
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Turning off pop-ups failed: {error.GetType().Name}");
+        }
+    }
+
+    /// <summary>A quiet toast that answers a toast button and leaves the notification centre soon after.</summary>
+    private void ShowConfirmation(string title, string? text)
+    {
+        if (!_registered) return;
+        try
+        {
+            var builder = new AppNotificationBuilder()
+                .AddArgument("action", "open")
+                .SetTag(ConfirmationTag)
+                .SetGroup(StatusGroup)
+                .AddText(title)
+                .MuteAudio();
+            if (text is not null) builder.AddText(text);
+            AppNotification notification = builder.BuildNotification();
+            notification.Expiration = DateTimeOffset.Now.Add(ConfirmationLifetime);
+            notification.ExpiresOnReboot = true;
+            AppNotificationManager.Default.Show(notification);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Confirmation toast failed: {error.GetType().Name}");
         }
     }
 
@@ -429,6 +521,15 @@ public sealed class NotificationToastService : INotificationToastService
                     App.ShowMainWindow();
                     AnswerTransferPrompt(arguments, null);
                 });
+                return;
+            // ADR-063. Arguments come back from Windows; only a well-formed code or package is used.
+            case "copy-code":
+                if (arguments.TryGetValue("code", out string? code) && OneTimeCodeDetector.IsCode(code))
+                    _ = CopyCodeAsync(code);
+                return;
+            case "mute-app":
+                if (arguments.TryGetValue("pkg", out string? package) && NotificationAppRules.IsValidPackage(package))
+                    _ = TurnOffPopupsAsync(package);
                 return;
         }
         if (action is "open" or "call-open")

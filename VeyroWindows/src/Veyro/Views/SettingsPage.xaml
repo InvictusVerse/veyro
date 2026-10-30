@@ -13,6 +13,7 @@
     xmlns:contracts="using:Veyro.Data.Contracts"
     xmlns:converters="using:Veyro.Converters"
     xmlns:models="using:Veyro.Data.Models"
+    xmlns:settings="using:Veyro.ViewModels.Settings"
     Background="Transparent"
     Loaded="Page_Loaded">
 
@@ -47,6 +48,11 @@
         <NavigationView.MenuItems>
             <NavigationViewItem x:Name="GeneralItem" Content="General" Icon="Setting" Tag="general" />
             <NavigationViewItem x:Name="DevicesItem" Content="Devices" Icon="CellPhone" Tag="devices" />
+            <NavigationViewItem x:Name="NotificationsItem" Content="Notifications" Tag="notifications">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xEA8F;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem x:Name="BluetoothItem" Content="Bluetooth calling" Tag="bluetooth">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE702;" />
@@ -406,6 +412,89 @@
                             TextAlignment="Center"
                             TextWrapping="Wrap" />
                     </StackPanel>
+                </StackPanel>
+
+                <!--  Notifications: per-app rules (ADR-063)  -->
+                <StackPanel x:Name="NotificationsSectionPanel" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Margin="0,0,0,8" FontSize="28" FontWeight="SemiBold" Text="Notifications" />
+                    <TextBlock
+                        Margin="0,0,0,12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Choose what each phone app does on this PC. Show: a pop-up and the feed. Feed only: in the feed, no pop-up. Hide: not shown on this PC at all. The choice applies to every paired phone."
+                        TextWrapping="Wrap" />
+
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Apps" />
+                    <ItemsRepeater ItemsSource="{x:Bind NotificationRules.Apps, Mode=OneWay}">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Orientation="Vertical" Spacing="4" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="settings:NotificationAppRuleItem">
+                                <Border Style="{StaticResource SettingsCardStyle}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                                            <TextBlock
+                                                Style="{StaticResource SettingsCardHeaderStyle}"
+                                                Text="{x:Bind Label, Mode=OneWay}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                Style="{StaticResource SettingsCardDescriptionStyle}"
+                                                Text="{x:Bind Package}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <ComboBox
+                                            Grid.Column="1"
+                                            MinWidth="140"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.Name="{x:Bind Label, Mode=OneWay}"
+                                            SelectedIndex="{x:Bind ModeIndex, Mode=TwoWay}">
+                                            <ComboBoxItem Content="Show" />
+                                            <ComboBoxItem Content="Feed only" />
+                                            <ComboBoxItem Content="Hide" />
+                                        </ComboBox>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                    <Border Style="{StaticResource SettingsCardStyle}" Visibility="{x:Bind NotificationRules.HasNoApps, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock
+                            Style="{StaticResource SettingsCardDescriptionStyle}"
+                            Text="Apps appear here after they send a notification to this PC."
+                            TextWrapping="Wrap" />
+                    </Border>
+
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="In the feed" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE81C;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Earlier" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="{x:Bind NotificationRules.HistoryHelp}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE8C8;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Copy code" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="When a notification holds a one-time code, the pop-up and the feed show Copy code. It puts only the code on this PC's clipboard and does not send it back to your phones." TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
                 </StackPanel>
 
                 <!--  Bluetooth calling (ADR-029)  -->

@@ -28,6 +28,7 @@ public sealed class VeyroContainer
     public Veyro.Platform.Services.WindowsClipboard WindowsClipboard { get; }
     public ClipboardViewModel ClipboardViewModel { get; }
     public NotificationMirrorService NotificationMirror { get; }
+    public NotificationAppRules NotificationRules { get; }
     public PhoneMediaService PhoneMedia { get; }
     public IWindowsMediaSource PcMediaSource { get; }
     public PcMediaPublisher PcMediaPublisher { get; }
@@ -69,6 +70,7 @@ public sealed class VeyroContainer
     public PhotosViewModel PhotosViewModel { get; }
     public GeneralViewModel GeneralViewModel { get; }
     public DevicesViewModel DevicesViewModel { get; }
+    public NotificationRulesViewModel NotificationRulesViewModel { get; }
     public BluetoothCallingViewModel BluetoothCallingViewModel { get; }
     public PairingViewModel PairingViewModel { get; }
     public OnboardingViewModel OnboardingViewModel { get; }
@@ -94,7 +96,10 @@ public sealed class VeyroContainer
             sessions: PeerSessions,
             // ADR-031: confirm pairing derives its key inside the identity (private key stays there).
             deriveSharedKey: (peerKey, salt, info) => IdentityManager.DeriveSharedKey(peerKey, salt, info));
-        NotificationMirror = new NotificationMirrorService(PeerSessions);
+        // ADR-063: per-app rules (settings.json, every phone) are applied before any toast; the
+        // Earlier history is in memory only.
+        NotificationRules = new NotificationAppRules(SettingsStore);
+        NotificationMirror = new NotificationMirrorService(PeerSessions, NotificationRules);
         PhoneMedia = new PhoneMediaService(PeerSessions);
         PcMediaSource = new WindowsMediaSource();
         PcMediaPublisher = new PcMediaPublisher(PeerSessions, PcMediaSource);
@@ -178,14 +183,17 @@ public sealed class VeyroContainer
             DataDirectory,
             // ADR-040: toasts name their phone; opening one shows that phone (UI thread).
             phoneName: peerId => TrustStore.GetPeer(peerId)?.DisplayName,
-            showPhone: peerId => DeviceManager.Select(peerId));
+            showPhone: peerId => DeviceManager.Select(peerId),
+            // ADR-063: Copy code goes through the clipboard service, so it is not echoed to the phones.
+            copyText: Clipboard.CopyTextToPcAsync,
+            rules: NotificationRules);
         // ADR-036: incoming files are asked about one at a time, by dialog or actionable toast,
         // with a 60 s deadline that reaches the phone as "timeout", not "declined".
         // ADR-038: "Always accept from this phone" (pre-ticked) is saved in the trust store.
         TransferConsent = new TransferConsentCoordinator(new TransferConsentUi(NotificationToastService), trustStore: TrustStore);
         LinkServer.OfferConsent = TransferConsent.DecideAsync;
 
-        NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager);
+        NotificationsViewModel = new NotificationsViewModel(NotificationMirror, DeviceManager, NotificationRules, Clipboard.CopyTextToPcAsync);
         PhoneMediaViewModel = new PhoneMediaViewModel(PhoneMedia, DeviceManager);
         DeviceStatusViewModel = new DeviceStatusViewModel(DeviceStatus, Wallpaper, DeviceManager);
 
@@ -198,6 +206,7 @@ public sealed class VeyroContainer
         ClipboardViewModel = new ClipboardViewModel(Clipboard, SettingsStore, peerId => TrustStore.GetPeer(peerId)?.DisplayName);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore, PeerSessions);
+        NotificationRulesViewModel = new NotificationRulesViewModel(NotificationRules);
         TransferConsent.AutoAcceptEnabled += _ => App.MainWindow?.DispatcherQueue.TryEnqueue(DevicesViewModel.RefreshAutoAccept);
 
         // ADR-030: QR pairing screen (shared by onboarding and Settings) and first-run flow.

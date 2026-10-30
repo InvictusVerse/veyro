@@ -20,28 +20,29 @@ public sealed partial class NotificationsControl : UserControl
         => (sender as FrameworkElement)?.DataContext as NotificationItemViewModel;
 
     // Sefirah reveals the card's buttons on hover.
-    private void Card_PointerEntered(object sender, PointerRoutedEventArgs e) => SetDismissOpacity(sender as DependencyObject, 1);
+    private void Card_PointerEntered(object sender, PointerRoutedEventArgs e) => SetHoverActionsOpacity(sender as DependencyObject, 1);
 
-    private void Card_PointerExited(object sender, PointerRoutedEventArgs e) => SetDismissOpacity(sender as DependencyObject, 0);
+    private void Card_PointerExited(object sender, PointerRoutedEventArgs e) => SetHoverActionsOpacity(sender as DependencyObject, 0);
 
-    private void DismissButton_GotFocus(object sender, RoutedEventArgs e)
+    /// <summary>Keyboard focus on a hidden card button shows the card's buttons.</summary>
+    private void HoverAction_GotFocus(object sender, RoutedEventArgs e)
     {
-        if (sender is UIElement button) button.Opacity = 1;
+        if (sender is DependencyObject button && VisualTreeHelper.GetParent(button) is UIElement panel) panel.Opacity = 1;
     }
 
-    private static void SetDismissOpacity(DependencyObject? root, double opacity)
+    private static void SetHoverActionsOpacity(DependencyObject? root, double opacity)
     {
         if (root is null) return;
         int count = VisualTreeHelper.GetChildrenCount(root);
         for (int i = 0; i < count; i++)
         {
             DependencyObject child = VisualTreeHelper.GetChild(root, i);
-            if (child is Button { Tag: "DismissButton" } button)
+            if (child is FrameworkElement { Tag: "HoverActions" } panel)
             {
-                button.Opacity = opacity;
+                panel.Opacity = opacity;
                 return;
             }
-            SetDismissOpacity(child, opacity);
+            SetHoverActionsOpacity(child, opacity);
         }
     }
 
@@ -51,6 +52,29 @@ public sealed partial class NotificationsControl : UserControl
     }
 
     private async void ClearAll_Click(object sender, RoutedEventArgs e) => await ViewModel.ClearAllAsync();
+
+    private void ClearHistory_Click(object sender, RoutedEventArgs e) => ViewModel.ClearHistory();
+
+    private async void CopyCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (ItemOf(sender) is { } item) await ViewModel.CopyCodeAsync(item);
+    }
+
+    /// <summary>ADR-063: the card's menu, built on click so it always shows the app's current choice.</summary>
+    private void More_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement button || ItemOf(sender) is not { } item) return;
+        var popups = new MenuFlyoutItem
+        {
+            Text = item.PopupsMenuText,
+            // Bell to turn pop-ups back on, quiet-hours moon to turn them off.
+            Icon = new FontIcon { Glyph = item.Mode == NotificationAppMode.FeedOnly ? "\uEA8F" : "\uE708" }
+        };
+        popups.Click += async (_, _) => await ViewModel.TogglePopupsAsync(item);
+        var menu = new MenuFlyout();
+        menu.Items.Add(popups);
+        menu.ShowAt(button);
+    }
 
     private async void SendReply_Click(object sender, RoutedEventArgs e)
     {

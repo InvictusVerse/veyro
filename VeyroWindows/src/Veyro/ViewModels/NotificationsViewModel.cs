@@ -5,17 +5,39 @@ namespace Veyro.ViewModels;
 
 /// <summary>
 /// Mirrored notifications of the active device for the sidebar feed (ADR-025). Talks only to
-/// <see cref="INotificationMirrorService"/>; never to sockets.
+/// <see cref="INotificationMirrorService"/>; never to sockets. ADR-063: an "Earlier" group with
+/// what left the phone in the last 24 hours (memory only), "Copy code", and per-app pop-ups.
 /// </summary>
 public sealed class NotificationsViewModel : BaseViewModel
 {
+    /// <summary>Shown under "Earlier": history is not written to disk (ADR-063).</summary>
+    public const string HistoryHelpText = "Removed or dismissed in the last 24 hours. Kept in memory only, so it is gone when Veyro quits.";
+
+    public string HistoryHelp => HistoryHelpText;
+
+    private static readonly TimeSpan CopiedFeedback = TimeSpan.FromSeconds(2);
+
     private readonly INotificationMirrorService _mirror;
     private readonly IDeviceManager _deviceManager;
+    private readonly INotificationAppRules? _rules;
+    private readonly Func<string, Task<bool>>? _copyText;
     private readonly DispatcherQueue? _dispatcher;
     private string? _peerId;
 
     public ObservableCollection<NotificationItemViewModel> Notifications { get; } = [];
-    public bool HasNoNotifications => Notifications.Count == 0;
+    public ObservableCollection<NotificationItemViewModel> History { get; } = [];
+
+    /// <summary>Nothing live and nothing earlier: the empty state is shown.</summary>
+    public bool HasNoNotifications => Notifications.Count == 0 && History.Count == 0;
+
+    /// <summary>Nothing live, but the Earlier group has entries.</summary>
+    public bool HasOnlyHistory => Notifications.Count == 0 && History.Count > 0;
+
+    public bool HasHistory => History.Count > 0;
+
+    public string NoCurrentText => _deviceManager.ActiveDevice is { IsConnected: false }
+        ? "Notifications from the phone appear here while it is connected."
+        : "No notifications on the phone right now.";
 
     /// <summary>Why the feed is empty: offline phones have no mirrored notifications at all.</summary>
     public string EmptyText => _deviceManager.ActiveDevice switch
@@ -25,18 +47,21 @@ public sealed class NotificationsViewModel : BaseViewModel
         _ => "No notifications. Turn on notification mirroring in Veyro on the phone if you expect some."
     };
 
-    public NotificationsViewModel(INotificationMirrorService mirror, IDeviceManager deviceManager)
+    public NotificationsViewModel(
+        INotificationMirrorService mirror,
+        IDeviceManager deviceManager,
+        INotificationAppRules? rules = null,
+        Func<string, Task<bool>>? copyText = null)
     {
         _mirror = mirror;
         _deviceManager = deviceManager;
+        _rules = rules;
+        _copyText = copyText;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _peerId = deviceManager.ActiveDevice?.DeviceId;
 
-        Notifications.CollectionChanged += (_, _) =>
-        {
-            OnPropertyChanged(nameof(HasNoNotifications));
-            OnPropertyChanged(nameof(HasNotifications));
-        };
+        Notifications.CollectionChanged += (_, _) => RaiseCounts();
+        History.CollectionChanged += (_, _) => RaiseCounts();
         _mirror.Changed += change => Post(() =>
         {
             if (string.Equals(change.PeerId, _peerId, StringComparison.OrdinalIgnoreCase)) Sync();
@@ -46,11 +71,15 @@ public sealed class NotificationsViewModel : BaseViewModel
             _peerId = device?.DeviceId;
             Sync();
             OnPropertyChanged(nameof(EmptyText));
+            OnPropertyChanged(nameof(NoCurrentText));
         });
         _deviceManager.ConnectionChanged += peerId => Post(() =>
         {
-            if (string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) OnPropertyChanged(nameof(EmptyText));
+            if (!string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) return;
+            OnPropertyChanged(nameof(EmptyText));
+            OnPropertyChanged(nameof(NoCurrentText));
         });
+        if (_rules is not null) _rules.Changed += () => Post(RefreshModes);
         Sync();
     }
 
@@ -64,6 +93,53 @@ public sealed class NotificationsViewModel : BaseViewModel
     }
 
     public bool HasNotifications => Notifications.Count > 0;
+
+    /// <summary>Empties the Earlier group of the shown phone. Nothing is sent to the phone.</summary>
+    public void ClearHistory()
+    {
+        if (_peerId is not null) _mirror.ClearHistory(_peerId);
+    }
+
+    /// <summary>"Copy code": the code alone onto this PC's clipboard, not sent back to the phones (ADR-063).</summary>
+    public async Task CopyCodeAsync(NotificationItemViewModel item)
+    {
+        if (!item.HasCode || _copyText is null) return;
+        item.StatusText = string.Empty;
+        bool copied;
+        try { copied = await _copyText(item.Code); }
+        catch (Exception error)
+        {
+            // The type only: the code is user data.
+            VeyroTrace.Warn($"Copying a notification code failed: {error.GetType().Name}");
+            copied = false;
+        }
+        if (!copied)
+        {
+            item.StatusText = "Could not copy the code.";
+            return;
+        }
+        item.CodeCopied = true;
+        await Task.Delay(CopiedFeedback);
+        item.CodeCopied = false;
+    }
+
+    /// <summary>The feed's quick action: pop-ups off (Feed only) or back on (Show) for the item's app.</summary>
+    public async Task TogglePopupsAsync(NotificationItemViewModel item)
+    {
+        if (_rules is null || !item.CanSetRules) return;
+        NotificationAppMode next = item.Mode == NotificationAppMode.FeedOnly ? NotificationAppMode.Show : NotificationAppMode.FeedOnly;
+        try
+        {
+            await _rules.SetModeAsync(item.Package!, next, item.AppName);
+            item.NoteText = next == NotificationAppMode.FeedOnly
+                ? $"Pop-ups off for {item.AppName}. Change it in Settings > Notifications."
+                : $"Pop-ups on for {item.AppName}.";
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Changing pop-ups failed: {error.GetType().Name}");
+        }
+    }
 
     public Task InvokeActionAsync(NotificationActionItem action)
         => RunAsync(action.Owner, () => _mirror.InvokeActionAsync(action.Owner.PeerId, action.Owner.Key, action.Index), "action");
@@ -105,33 +181,53 @@ public sealed class NotificationsViewModel : BaseViewModel
         else _dispatcher.TryEnqueue(() => action());
     }
 
-    /// <summary>Keyed sync so an in-progress reply survives unrelated updates.</summary>
+    private void RaiseCounts()
+    {
+        OnPropertyChanged(nameof(HasNoNotifications));
+        OnPropertyChanged(nameof(HasNotifications));
+        OnPropertyChanged(nameof(HasOnlyHistory));
+        OnPropertyChanged(nameof(HasHistory));
+    }
+
     private void Sync()
     {
-        IReadOnlyList<MirroredNotification> latest = _peerId is null ? [] : _mirror.GetNotifications(_peerId);
+        SyncList(Notifications, _peerId is null ? [] : _mirror.GetNotifications(_peerId), isHistory: false);
+        SyncList(History, _peerId is null ? [] : _mirror.GetHistory(_peerId), isHistory: true);
+        RefreshModes();
+    }
+
+    /// <summary>Keyed sync so an in-progress reply survives unrelated updates.</summary>
+    private static void SyncList(ObservableCollection<NotificationItemViewModel> target, IReadOnlyList<MirroredNotification> latest, bool isHistory)
+    {
         var keys = latest.Select(n => n.Key).ToHashSet(StringComparer.Ordinal);
-        for (int i = Notifications.Count - 1; i >= 0; i--)
+        for (int i = target.Count - 1; i >= 0; i--)
         {
-            if (!keys.Contains(Notifications[i].Key)) Notifications.RemoveAt(i);
+            if (!keys.Contains(target[i].Key)) target.RemoveAt(i);
         }
         for (int i = 0; i < latest.Count; i++)
         {
-            int existing = IndexOf(latest[i].Key);
+            int existing = IndexOf(target, latest[i].Key);
             if (existing < 0)
             {
-                Notifications.Insert(i, new NotificationItemViewModel(latest[i]));
+                target.Insert(i, new NotificationItemViewModel(latest[i], isHistory));
                 continue;
             }
-            Notifications[existing].Update(latest[i]);
-            if (existing != i) Notifications.Move(existing, i);
+            target[existing].Update(latest[i]);
+            if (existing != i) target.Move(existing, i);
         }
     }
 
-    private int IndexOf(string key)
+    private void RefreshModes()
     {
-        for (int i = 0; i < Notifications.Count; i++)
+        foreach (NotificationItemViewModel item in Notifications.Concat(History))
+            item.Mode = _rules?.ModeFor(item.Package) ?? NotificationAppMode.Show;
+    }
+
+    private static int IndexOf(ObservableCollection<NotificationItemViewModel> target, string key)
+    {
+        for (int i = 0; i < target.Count; i++)
         {
-            if (Notifications[i].Key == key) return i;
+            if (target[i].Key == key) return i;
         }
         return -1;
     }
@@ -145,13 +241,17 @@ public sealed class NotificationItemViewModel : BaseViewModel
     private bool _isReplyOpen;
     private string _replyText = string.Empty;
     private string _statusText = string.Empty;
+    private string _noteText = string.Empty;
+    private bool _codeCopied;
+    private NotificationAppMode _mode;
 
     private string? _iconSource;
     private Microsoft.UI.Xaml.Media.ImageSource? _icon;
 
-    public NotificationItemViewModel(MirroredNotification model)
+    public NotificationItemViewModel(MirroredNotification model, bool isHistory = false)
     {
         _model = model;
+        IsHistory = isHistory;
         Actions = BuildActions(model);
         _ = UpdateIconAsync(model.IconPngBase64);
     }
@@ -196,9 +296,49 @@ public sealed class NotificationItemViewModel : BaseViewModel
     public string Text => _model.Body;
     public bool HasTitle => !string.IsNullOrWhiteSpace(_model.Title);
     public bool HasText => !string.IsNullOrWhiteSpace(_model.Body);
-    public bool CanReply => _model.CanReply;
+
+    /// <summary>In the Earlier group: gone from the phone, so no reply, actions or dismiss.</summary>
+    public bool IsHistory { get; }
+    public bool IsLive => !IsHistory;
+    public bool CanReply => !IsHistory && _model.CanReply;
     public IReadOnlyList<NotificationActionItem> Actions { get; private set; }
     public bool HasActions => Actions.Count > 0;
+
+    /// <summary>The one-time code, empty when there is none (ADR-063). Shown in the text already; never logged.</summary>
+    public string Code => _model.Code ?? string.Empty;
+    public bool HasCode => !string.IsNullOrEmpty(_model.Code);
+
+    public bool CodeCopied
+    {
+        get => _codeCopied;
+        set
+        {
+            if (!SetProperty(ref _codeCopied, value)) return;
+            OnPropertyChanged(nameof(CopyCodeLabel));
+            OnPropertyChanged(nameof(CopyCodeGlyph));
+        }
+    }
+
+    public string CopyCodeLabel => _codeCopied ? "Copied" : "Copy code";
+    public string CopyCodeGlyph => _codeCopied ? "\uE73E" : "\uE8C8";
+
+    public string? Package => _model.Package;
+
+    /// <summary>Per-app rules need the phone's package name; without one there is no quick action.</summary>
+    public bool CanSetRules => NotificationAppRules.IsValidPackage(_model.Package);
+
+    public NotificationAppMode Mode
+    {
+        get => _mode;
+        set
+        {
+            if (SetProperty(ref _mode, value)) OnPropertyChanged(nameof(PopupsMenuText));
+        }
+    }
+
+    public string PopupsMenuText => _mode == NotificationAppMode.FeedOnly
+        ? $"Turn on pop-ups for {AppName}"
+        : $"Turn off pop-ups for {AppName}";
 
     public string TimeText
     {
@@ -234,16 +374,29 @@ public sealed class NotificationItemViewModel : BaseViewModel
 
     public bool HasStatus => !string.IsNullOrEmpty(_statusText);
 
+    /// <summary>A neutral note under the card, such as "Pop-ups off for Chat".</summary>
+    public string NoteText
+    {
+        get => _noteText;
+        set
+        {
+            if (SetProperty(ref _noteText, value)) OnPropertyChanged(nameof(HasNote));
+        }
+    }
+
+    public bool HasNote => !string.IsNullOrEmpty(_noteText);
+
     public void Update(MirroredNotification model)
     {
         _model = model;
         Actions = BuildActions(model);
         _ = UpdateIconAsync(model.IconPngBase64);
-        if (!model.CanReply) IsReplyOpen = false;
+        if (!CanReply) IsReplyOpen = false;
         foreach (string name in new[]
                  {
                      nameof(AppName), nameof(Title), nameof(Text), nameof(HasTitle), nameof(HasText),
-                     nameof(CanReply), nameof(Actions), nameof(HasActions), nameof(TimeText)
+                     nameof(CanReply), nameof(Actions), nameof(HasActions), nameof(TimeText),
+                     nameof(Code), nameof(HasCode), nameof(Package), nameof(CanSetRules), nameof(PopupsMenuText)
                  })
         {
             OnPropertyChanged(name);
@@ -251,5 +404,5 @@ public sealed class NotificationItemViewModel : BaseViewModel
     }
 
     private IReadOnlyList<NotificationActionItem> BuildActions(MirroredNotification model)
-        => model.Actions.Take(3).Select(action => new NotificationActionItem(this, action.Index, action.Label)).ToList();
+        => IsHistory ? [] : model.Actions.Take(3).Select(action => new NotificationActionItem(this, action.Index, action.Label)).ToList();
 }

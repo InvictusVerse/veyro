@@ -2,7 +2,8 @@
     Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/NotificationsControl.xaml, GPL-3.0.
     Modified for Veyro: items come from NotificationMirrorService (ADR-025); dismiss, reply and
     actions go back to the phone. Pin, filter and open-app are not in Veyro's protocol, so they
-    are not offered.
+    are not offered. ADR-063: Copy code, a per-app pop-ups quick action, and an Earlier group
+    with what left the phone in the last 24 hours.
 -->
 <UserControl
     x:Class="Veyro.UserControls.NotificationsControl"
@@ -12,6 +13,185 @@
     xmlns:viewModels="using:Veyro.ViewModels">
     <UserControl.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+        <!--  One card for live and Earlier notifications; Earlier cards have no reply, actions or dismiss.  -->
+        <DataTemplate x:Key="NotificationCardTemplate" x:DataType="viewModels:NotificationItemViewModel">
+            <Border
+                Margin="0,0,0,8"
+                Padding="12"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                PointerEntered="Card_PointerEntered"
+                PointerExited="Card_PointerExited">
+                <Grid ColumnSpacing="12" RowSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid
+                        Grid.Row="0"
+                        Grid.Column="0"
+                        Width="40"
+                        Height="40"
+                        VerticalAlignment="Top">
+                        <Image
+                            AutomationProperties.AccessibilityView="Raw"
+                            Source="{x:Bind Icon, Mode=OneWay}"
+                            Visibility="{x:Bind HasIcon, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <Border
+                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="20"
+                            Visibility="{x:Bind HasNoIcon, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <FontIcon FontSize="18" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE91C;" />
+                        </Border>
+                    </Grid>
+
+                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                Grid.Column="0"
+                                FontWeight="Medium"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind AppName, Mode=OneWay}"
+                                TextTrimming="CharacterEllipsis" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <!--  Hidden until hover, as in Sefirah; still reachable by keyboard.  -->
+                                <StackPanel
+                                    Opacity="0"
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    Tag="HoverActions">
+                                    <!--  ADR-063: Turn off / on pop-ups for this app.  -->
+                                    <Button
+                                        Width="20"
+                                        Height="20"
+                                        Padding="0"
+                                        AutomationProperties.Name="More options"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        Click="More_Click"
+                                        GotFocus="HoverAction_GotFocus"
+                                        ToolTipService.ToolTip="More options"
+                                        Visibility="{x:Bind CanSetRules, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <FontIcon FontSize="10" Glyph="&#xE712;" />
+                                    </Button>
+                                    <Button
+                                        Width="20"
+                                        Height="20"
+                                        Padding="0"
+                                        AutomationProperties.Name="Dismiss on phone"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        Click="Dismiss_Click"
+                                        GotFocus="HoverAction_GotFocus"
+                                        ToolTipService.ToolTip="Dismiss on phone"
+                                        Visibility="{x:Bind IsLive, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <FontIcon FontSize="10" Glyph="&#xE711;" />
+                                    </Button>
+                                </StackPanel>
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    HorizontalTextAlignment="End"
+                                    Text="{x:Bind TimeText, Mode=OneWay}" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            IsTextSelectionEnabled="True"
+                            Text="{x:Bind Title, Mode=OneWay}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind HasTitle, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <TextBlock
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            IsTextSelectionEnabled="True"
+                            MaxLines="6"
+                            Text="{x:Bind Text, Mode=OneWay}"
+                            TextTrimming="CharacterEllipsis"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind HasText, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    </StackPanel>
+
+                    <StackPanel
+                        Grid.Row="1"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="2"
+                        Spacing="8">
+                        <!--  ADR-063: only the code goes onto this PC's clipboard.  -->
+                        <Button
+                            AutomationProperties.Name="Copy code"
+                            Click="CopyCode_Click"
+                            ToolTipService.ToolTip="Copy the code to this PC's clipboard"
+                            Visibility="{x:Bind HasCode, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon FontSize="14" Glyph="{x:Bind CopyCodeGlyph, Mode=OneWay}" />
+                                <TextBlock AutomationProperties.LiveSetting="Polite" Text="{x:Bind CopyCodeLabel, Mode=OneWay}" />
+                            </StackPanel>
+                        </Button>
+                        <Grid ColumnSpacing="4" Visibility="{x:Bind CanReply, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                Grid.Column="0"
+                                AutomationProperties.Name="Reply text"
+                                KeyDown="ReplyBox_KeyDown"
+                                MaxLength="4096"
+                                PlaceholderText="Reply"
+                                Text="{x:Bind ReplyText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                Grid.Column="1"
+                                AutomationProperties.Name="Send reply"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Click="SendReply_Click"
+                                ToolTipService.ToolTip="Send">
+                                <FontIcon Glyph="&#xE724;" />
+                            </Button>
+                        </Grid>
+                        <ItemsRepeater ItemsSource="{x:Bind Actions, Mode=OneWay}" Visibility="{x:Bind HasActions, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Orientation="Horizontal" Spacing="4" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:NotificationActionItem">
+                                    <Button
+                                        MaxWidth="140"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        Click="Action_Click">
+                                        <TextBlock Text="{x:Bind Label}" TextTrimming="CharacterEllipsis" />
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                        <TextBlock
+                            FontSize="12"
+                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                            Text="{x:Bind StatusText, Mode=OneWay}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <TextBlock
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="{x:Bind NoteText, Mode=OneWay}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind HasNote, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Grid>
@@ -46,154 +226,57 @@
             Grid.Row="1"
             Margin="0,8,-14,0"
             Padding="0,0,14,0">
-            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Notifications, Mode=OneWay}" VerticalCacheLength="6">
-                <ItemsRepeater.Layout>
-                    <StackLayout Orientation="Vertical" />
-                </ItemsRepeater.Layout>
-                <ItemsRepeater.ItemTemplate>
-                    <DataTemplate x:DataType="viewModels:NotificationItemViewModel">
-                        <Border
-                            Margin="0,0,0,8"
-                            Padding="12"
-                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            PointerEntered="Card_PointerEntered"
-                            PointerExited="Card_PointerExited">
-                            <Grid ColumnSpacing="12" RowSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
+            <StackPanel>
+                <ItemsRepeater
+                    ItemTemplate="{StaticResource NotificationCardTemplate}"
+                    ItemsSource="{x:Bind ViewModel.Notifications, Mode=OneWay}"
+                    VerticalCacheLength="6">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Orientation="Vertical" />
+                    </ItemsRepeater.Layout>
+                </ItemsRepeater>
+                <TextBlock
+                    Margin="0,0,0,8"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="{x:Bind ViewModel.NoCurrentText, Mode=OneWay}"
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind ViewModel.HasOnlyHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                                <Grid
-                                    Grid.Row="0"
-                                    Grid.Column="0"
-                                    Width="40"
-                                    Height="40"
-                                    VerticalAlignment="Top">
-                                    <Image
-                                        AutomationProperties.AccessibilityView="Raw"
-                                        Source="{x:Bind Icon, Mode=OneWay}"
-                                        Visibility="{x:Bind HasIcon, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                    <Border
-                                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                        CornerRadius="20"
-                                        Visibility="{x:Bind HasNoIcon, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <FontIcon FontSize="18" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE91C;" />
-                                    </Border>
-                                </Grid>
-
-                                <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4">
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock
-                                            Grid.Column="0"
-                                            FontWeight="Medium"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Text="{x:Bind AppName, Mode=OneWay}"
-                                            TextTrimming="CharacterEllipsis" />
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                                            <!--  Hidden until hover, as in Sefirah; still reachable by keyboard.  -->
-                                            <Button
-                                                Width="20"
-                                                Height="20"
-                                                Padding="0"
-                                                AutomationProperties.Name="Dismiss on phone"
-                                                Background="Transparent"
-                                                BorderBrush="Transparent"
-                                                Click="Dismiss_Click"
-                                                GotFocus="DismissButton_GotFocus"
-                                                Opacity="0"
-                                                Tag="DismissButton"
-                                                ToolTipService.ToolTip="Dismiss on phone">
-                                                <FontIcon FontSize="10" Glyph="&#xE711;" />
-                                            </Button>
-                                            <TextBlock
-                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                HorizontalTextAlignment="End"
-                                                Text="{x:Bind TimeText, Mode=OneWay}" />
-                                        </StackPanel>
-                                    </Grid>
-                                    <TextBlock
-                                        FontWeight="SemiBold"
-                                        IsTextSelectionEnabled="True"
-                                        Text="{x:Bind Title, Mode=OneWay}"
-                                        TextWrapping="Wrap"
-                                        Visibility="{x:Bind HasTitle, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                    <TextBlock
-                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        IsTextSelectionEnabled="True"
-                                        MaxLines="6"
-                                        Text="{x:Bind Text, Mode=OneWay}"
-                                        TextTrimming="CharacterEllipsis"
-                                        TextWrapping="Wrap"
-                                        Visibility="{x:Bind HasText, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                </StackPanel>
-
-                                <StackPanel
-                                    Grid.Row="1"
-                                    Grid.Column="0"
-                                    Grid.ColumnSpan="2"
-                                    Spacing="8">
-                                    <Grid ColumnSpacing="4" Visibility="{x:Bind CanReply, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBox
-                                            Grid.Column="0"
-                                            AutomationProperties.Name="Reply text"
-                                            KeyDown="ReplyBox_KeyDown"
-                                            MaxLength="4096"
-                                            PlaceholderText="Reply"
-                                            Text="{x:Bind ReplyText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                        <Button
-                                            Grid.Column="1"
-                                            AutomationProperties.Name="Send reply"
-                                            Background="Transparent"
-                                            BorderBrush="Transparent"
-                                            Click="SendReply_Click"
-                                            ToolTipService.ToolTip="Send">
-                                            <FontIcon Glyph="&#xE724;" />
-                                        </Button>
-                                    </Grid>
-                                    <ItemsRepeater ItemsSource="{x:Bind Actions, Mode=OneWay}" Visibility="{x:Bind HasActions, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <ItemsRepeater.Layout>
-                                            <StackLayout Orientation="Horizontal" Spacing="4" />
-                                        </ItemsRepeater.Layout>
-                                        <ItemsRepeater.ItemTemplate>
-                                            <DataTemplate x:DataType="viewModels:NotificationActionItem">
-                                                <Button
-                                                    MaxWidth="140"
-                                                    Background="Transparent"
-                                                    BorderBrush="Transparent"
-                                                    Click="Action_Click">
-                                                    <TextBlock Text="{x:Bind Label}" TextTrimming="CharacterEllipsis" />
-                                                </Button>
-                                            </DataTemplate>
-                                        </ItemsRepeater.ItemTemplate>
-                                    </ItemsRepeater>
-                                    <TextBlock
-                                        FontSize="12"
-                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                        Text="{x:Bind StatusText, Mode=OneWay}"
-                                        TextWrapping="Wrap"
-                                        Visibility="{x:Bind HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                </StackPanel>
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsRepeater.ItemTemplate>
-            </ItemsRepeater>
+                <!--  ADR-063: what left the phone in the last 24 hours, in memory only.  -->
+                <StackPanel Visibility="{x:Bind ViewModel.HasHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Grid Margin="0,8,0,0" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontWeight="SemiBold"
+                            Text="Earlier" />
+                        <HyperlinkButton
+                            Grid.Column="1"
+                            Padding="8,4"
+                            VerticalAlignment="Center"
+                            AutomationProperties.Name="Clear history on this PC"
+                            Click="ClearHistory_Click"
+                            Content="Clear history" />
+                    </Grid>
+                    <TextBlock
+                        Margin="0,0,0,8"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Text="{x:Bind ViewModel.HistoryHelp}"
+                        TextWrapping="Wrap" />
+                    <ItemsRepeater
+                        ItemTemplate="{StaticResource NotificationCardTemplate}"
+                        ItemsSource="{x:Bind ViewModel.History, Mode=OneWay}"
+                        VerticalCacheLength="6">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Orientation="Vertical" />
+                        </ItemsRepeater.Layout>
+                    </ItemsRepeater>
+                </StackPanel>
+            </StackPanel>
         </ScrollViewer>
 
         <StackPanel
