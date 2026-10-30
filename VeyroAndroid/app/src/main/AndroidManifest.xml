@@ -92,6 +92,14 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- Screen mirroring (ADR-066): Android grants playback capture (the sound apps play) only to
+         apps holding this permission, which it labels "Microphone". Asked only when a PC asks
+         for the phone's sound; Veyro never opens the microphone (AudioPlaybackCaptureConfiguration
+         only). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
     <!-- The permissions above would otherwise imply telephony hardware is required. Without it,
          the feature simply serves empty lists. -->
     <uses-feature
@@ -262,6 +270,20 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- ADR-066: the transparent window behind Android's screen-capture and audio dialogs.
+             Started only by Veyro's own notifications and code. -->
+        <activity
+            android:name=".mirror.MirrorConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- ADR-066: Decline on the screen-sharing request. Only our own PendingIntents. -->
+        <receiver
+            android:name=".mirror.ScreenShareActionReceiver"
+            android:exported="false" />
 
         <!-- ADR-062: the 4x1 home-screen widget. Exported because the launcher sends it updates. -->
         <receiver

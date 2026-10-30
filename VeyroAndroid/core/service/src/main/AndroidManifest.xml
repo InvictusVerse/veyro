@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Screen mirroring (ADR-066). The microphone type only carries the phone's own sound
+         (playback capture) while Veyro is in the background; the microphone is never opened. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <application>
         <!--
@@ -23,6 +27,12 @@
             android:name="com.veyro.core.service.VeyroBackgroundService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- ADR-066: holds screen sharing; started only from Veyro's consent activity. -->
+        <service
+            android:name="com.veyro.core.service.VeyroScreenShareService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
 
         <!-- Exported only because the system sends BOOT_COMPLETED and MY_PACKAGE_REPLACED; it
              checks the action and does nothing else. -->

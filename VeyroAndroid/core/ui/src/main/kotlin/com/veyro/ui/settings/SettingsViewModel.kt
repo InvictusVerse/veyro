@@ -143,6 +143,10 @@ public class SettingsViewModel(
             .onEach { _state.value = _state.value.copy(startOnBoot = it) }
             .launchIn(viewModelScope)
 
+        settingsStore.screenShareAllowed
+            .onEach { _state.value = _state.value.copy(screenShareAllowed = it) }
+            .launchIn(viewModelScope)
+
         settingsStore.wallpaperShareEnabled
             .onEach { _state.value = _state.value.copy(wallpaperShareEnabled = it) }
             .launchIn(viewModelScope)
@@ -163,6 +167,11 @@ public class SettingsViewModel(
 
     public fun setNotificationAutoClearMinutes(minutes: Int) {
         viewModelScope.launch { settingsStore.setNotificationAutoClearMinutes(minutes) }
+    }
+
+    /** ADR-066. Off: PCs are told mirroring is off and any running session ends. */
+    public fun setScreenShareAllowed(allowed: Boolean) {
+        viewModelScope.launch { settingsStore.setScreenShareAllowed(allowed) }
     }
 
     /** ADR-038. The photo permission, if needed, is requested by the Activity. */

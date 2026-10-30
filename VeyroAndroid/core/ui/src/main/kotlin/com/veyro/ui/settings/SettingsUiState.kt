@@ -67,6 +67,9 @@ public data class SettingsUiState(
     /** Send this phone's wallpaper to the PC (ADR-038). On by default. */
     val wallpaperShareEnabled: Boolean = true,
 
+    /** "Let PCs mirror this screen" (ADR-066). On by default; Android asks every session. */
+    val screenShareAllowed: Boolean = true,
+
     /** Clipboard and sent / received notifications clear themselves (ADR-044). On by default. */
     val notificationAutoClear: Boolean = true,
 

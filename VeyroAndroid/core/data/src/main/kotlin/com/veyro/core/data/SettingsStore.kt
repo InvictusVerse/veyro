@@ -77,6 +77,14 @@ public interface SettingsStore {
 
     public suspend fun setWallpaperShareEnabled(enabled: Boolean) {}
 
+    /**
+     * "Let PCs mirror this screen" (ADR-066). On by default: Android still asks for consent each
+     * time a PC starts, and nothing is captured without it. Off, PCs are told mirroring is off.
+     */
+    public val screenShareAllowed: Flow<Boolean> get() = flowOf(true)
+
+    public suspend fun setScreenShareAllowed(allowed: Boolean) {}
+
     /** "Auto-fetch PC clipboard" (ADR-043): keep what the PC copies here. On by default. */
     public val clipboardReceiveEnabled: Flow<Boolean> get() = flowOf(true)
 

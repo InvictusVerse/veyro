@@ -320,6 +320,18 @@ public fun DeviceSettingsScreen(
                 }
 
                 item {
+                    // ADR-066. Every quality setting is on the PC; this switch only allows it.
+                    SwitchPreferenceWidget(
+                        title = "Let PCs mirror this screen",
+                        subtitle = "A PC can ask to show this phone's screen, and its sound if you allow it. " +
+                            "Android asks you each time; nothing is shared until you tap Start now.",
+                        icon = VeyroIcons.Desktop,
+                        checked = settings.screenShareAllowed,
+                        onCheckedChanged = { on -> settingsViewModel.setScreenShareAllowed(on) },
+                    )
+                }
+
+                item {
                     SwitchPreferenceWidget(
                         title = "Ring and sound mode",
                         subtitle = "Let the PC ring this phone to find it, and switch its ringer mode or " +

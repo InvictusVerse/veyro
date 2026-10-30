@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import com.veyro.core.service.BackgroundHost
+import com.veyro.core.service.ScreenShareServiceHost
 import com.veyro.di.VeyroContainer
 
 /**
@@ -23,11 +24,13 @@ import com.veyro.di.VeyroContainer
  * service's own sticky restart, never from here: a process started for the notification listener
  * must not try to start a foreground service, which Android 12+ refuses from the background.
  */
-public class VeyroApplication : Application(), BackgroundHost.Provider {
+public class VeyroApplication : Application(), BackgroundHost.Provider, ScreenShareServiceHost.Provider {
 
     public val container: VeyroContainer by lazy { VeyroContainer(this) }
 
     override val backgroundHost: BackgroundHost get() = container.backgroundController
+
+    override val screenShareHost: ScreenShareServiceHost get() = container.screenShareCoordinator
 
     override fun onCreate() {
         super.onCreate()
@@ -51,6 +54,9 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         // ADR-059. Same rule: names and the auto-fetch switch travel over a session something
         // else opened; a rename or a toggle reaches every connected device at once.
         container.deviceInfoSync.start()
+        // ADR-066. Same rule: it answers a PC's streamStart only over a session something else
+        // opened, and never captures without the user's switch and Android's consent.
+        container.screenShareBridge.start()
         // ADR-043: "Send to <PC>" in the share sheet's top row.
         container.startShareShortcuts()
         // ADR-044: start reading "Clear notifications automatically" now, so the first notification has it.

@@ -71,6 +71,8 @@ public class FileSettingsStore(
         val notificationAutoClearMinutes: Int = SettingsStore.DEFAULT_AUTO_CLEAR_MINUTES,
         // ADR-060. Defaulted so older files decode; off until the user opts in.
         val phoneControlsAllowed: Boolean = false,
+        // ADR-066. Defaulted so older files decode; on (Android asks every session anyway).
+        val screenShareAllowed: Boolean = true,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -180,6 +182,13 @@ public class FileSettingsStore(
 
     override suspend fun setStartOnBoot(enabled: Boolean) {
         update { it.copy(startOnBoot = enabled) }
+    }
+
+    override val screenShareAllowed: Flow<Boolean> =
+        state.asStateFlow().map { it.screenShareAllowed }
+
+    override suspend fun setScreenShareAllowed(allowed: Boolean) {
+        update { it.copy(screenShareAllowed = allowed) }
     }
 
     override val wallpaperShareEnabled: Flow<Boolean> =

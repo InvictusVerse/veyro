@@ -61,6 +61,7 @@ dependencies {
     implementation(project(":core:transfer"))
     implementation(project(":core:service"))
     implementation(project(":core:companion"))
+    implementation(project(":core:media"))
 
 
     // ── android ────────────────────────────────────────────────────────────────────────────

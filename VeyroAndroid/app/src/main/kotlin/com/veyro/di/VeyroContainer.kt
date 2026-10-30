@@ -952,6 +952,31 @@ public class VeyroContainer(context: Context) {
             ?.let { runCatching { trustStore.find(it) }.getOrNull()?.displayName }
             ?: "your PC"
 
+    /**
+     * Screen mirroring on the phone (ADR-066): the PC decides the quality; the phone asks its
+     * user (notification, then Android's dialog) and captures. Behind "Let PCs mirror this screen".
+     */
+    public val screenShareCoordinator: com.veyro.mirror.ScreenShareCoordinator by lazy {
+        com.veyro.mirror.ScreenShareCoordinator(
+            context = appContext,
+            scope = appScope,
+            dispatchers = dispatchers,
+            appVisible = appVisible,
+            localSubnets = { localAddressProvider.localAddresses().map { it.address to it.prefixLength } },
+        )
+    }
+
+    /** Same rule as the other bridges: it only follows a session something else opened. */
+    public val screenShareBridge: com.veyro.core.companion.ScreenShareBridge by lazy {
+        com.veyro.core.companion.ScreenShareBridge(
+            links = companionLinks,
+            allowed = flow { emitAll(settingsStore.screenShareAllowed) },
+            host = screenShareCoordinator,
+            pcName = { link -> clipSourceName(link.peerDeviceId) },
+            scope = appScope,
+        )
+    }
+
     /** The virtual clipboard as Clipboard-screen rows; image previews decoded off the main thread. */
     public val clipboardRows: Flow<List<ClipRow>> by lazy {
         val thumbnails = java.util.Collections.synchronizedMap(HashMap<String, ImageBitmap?>())

@@ -28,11 +28,16 @@ public class VeyroNotifications(private val context: Context) {
         public const val CHANNEL_PROGRESS: String = "veyro.transfer.progress"
         public const val CHANNEL_OFFERS: String = "veyro.transfer.offers"
         public const val CHANNEL_BACKGROUND: String = "veyro.background"
+        public const val CHANNEL_SCREEN_REQUESTS: String = "veyro.screen.requests"
+        public const val CHANNEL_SCREEN: String = "veyro.screen"
 
         public const val ID_PROGRESS: Int = 1001
         public const val ID_OFFER: Int = 1002
         public const val ID_BACKGROUND: Int = 1003
         public const val ID_RESULT: Int = 1004
+        public const val ID_SCREEN_REQUEST: Int = 1010
+        public const val ID_SCREEN_SHARING: Int = 1011
+        public const val ID_SCREEN_AUDIO: Int = 1012
 
         /** The default for "Clear notifications automatically": 5 minutes (ADR-044). */
         public const val AUTO_CLEAR_MS: Long = 5 * 60 * 1000L
@@ -83,6 +88,82 @@ public class VeyroNotifications(private val context: Context) {
                 setShowBadge(false)
             },
         )
+
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_SCREEN_REQUESTS,
+                "Screen sharing requests",
+                // High: a PC is waiting for an answer, and Android needs a tap to show its dialog.
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Asks whether a PC may show your screen, or play your phone's sound."
+                setShowBadge(true)
+            },
+        )
+
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_SCREEN,
+                "Screen sharing",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Shown while a PC shows your screen, with Stop."
+                setShowBadge(false)
+            },
+        )
+    }
+
+    /** "<PC> wants to show your screen" (ADR-066), with Share and Decline. */
+    public fun screenRequest(
+        title: String,
+        text: String,
+        shareLabel: String,
+        shareIntent: PendingIntent,
+        declineIntent: PendingIntent?,
+        timeoutMs: Long,
+    ): Notification {
+        val builder = Notification.Builder(context, CHANNEL_SCREEN_REQUESTS)
+            .setCategory(Notification.CATEGORY_RECOMMENDATION)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(shareIntent)
+            .setTimeoutAfter(timeoutMs)
+        NotificationCard.apply(
+            context,
+            builder,
+            NotificationCard.Spec(
+                title = title,
+                text = text,
+                pills = listOfNotNull(
+                    NotificationCard.Pill(shareLabel, shareIntent, NotificationCard.Glyph.OPEN),
+                    declineIntent?.let { NotificationCard.Pill("Decline", it, NotificationCard.Glyph.CLOSE) },
+                ),
+            ),
+        )
+        return builder.build()
+    }
+
+    /** The screen-sharing service's notification (ADR-066): who sees the screen, and Stop. */
+    public fun screenSharing(title: String, text: String, stopIntent: PendingIntent, contentIntent: PendingIntent?): Notification {
+        val builder = Notification.Builder(context, CHANNEL_SCREEN)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+        contentIntent?.let { builder.setContentIntent(it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        NotificationCard.apply(
+            context,
+            builder,
+            NotificationCard.Spec(
+                title = title,
+                text = text,
+                pills = listOf(NotificationCard.Pill("Stop", stopIntent, NotificationCard.Glyph.CLOSE)),
+            ),
+        )
+        return builder.build()
     }
 
     public fun progress(

@@ -64,6 +64,8 @@ public value class Capabilities(public val bits: Int) {
             Capability.WALLPAPER,
             Capability.PHONE_CONTROLS,
             Capability.DEVICE_INFO,
+            // ADR-066: the screen goes to a PC only after the user's switch and Android's consent.
+            Capability.SCREEN_SOURCE,
         )
 
         /**
@@ -123,7 +125,7 @@ public enum class Capability(public val bit: Int) {
 
     /**
      * This phone can share its screen: `streamCaps`, `streamStart` and the VMS1 socket (ADR-066).
-     * Not advertised until the capture side is built.
+     * PC only, never phone to phone.
      */
     SCREEN_SOURCE(0x8000),
 
