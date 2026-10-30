@@ -70,8 +70,9 @@ internal static class HandoffCoordinator
             return new HandoffReply(HandoffOutcome.Sent);
         }
 
-        // Only regular files that still exist; a folder or a vanished file is skipped.
-        List<string> files = request.Paths.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // Files and folders that still exist (ADR-064: a folder is sent whole); a vanished one is skipped.
+        List<string> files = request.Paths.Where(path => File.Exists(path) || Directory.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (files.Count == 0) return await FailVisiblyAsync(request, "The files are no longer available.");
 
         List<SendCandidate> paired = container.DeviceManager.PairedDevices
@@ -107,7 +108,13 @@ internal static class HandoffCoordinator
                 return new HandoffReply(HandoffOutcome.Failed, GenericFailure);
         }
 
-        string what = files.Count == 1 ? Path.GetFileName(files[0]) : $"{files.Count} files";
+        string what = files.Count switch
+        {
+            1 when Directory.Exists(files[0]) => $"the {Path.GetFileName(Path.TrimEndingDirectorySeparator(files[0]))} folder",
+            1 => Path.GetFileName(files[0]),
+            _ when files.Any(Directory.Exists) => $"{files.Count} items",
+            _ => $"{files.Count} files"
+        };
         string names = string.Join(", ", targets.Select(id => Find(container, id)?.Name ?? "your phone"));
         // While the window is open the transfer banner shows progress; otherwise a toast does.
         bool toast = !App.WindowOnScreen;
@@ -165,11 +172,15 @@ internal static class HandoffCoordinator
         }
         try
         {
-            long totalBytes = files.Sum(path => new FileInfo(path).Length);
+            // A folder counts its files (ADR-064); one too big to send shows no totals here and
+            // says so when the send starts.
+            OutgoingPlan? plan = null;
+            try { plan = await Task.Run(() => OutgoingPlanner.Build(files)); }
+            catch (FolderTooLargeException) { }
             // The one case that needs the window: the user picks the phone.
             XamlRoot? root = await App.ShowMainWindowForDialogAsync();
             if (root is null) return null;
-            var dialog = new SendToDialog(paired, preselected, files.Count, totalBytes) { XamlRoot = root };
+            var dialog = new SendToDialog(paired, preselected, plan?.FileCount ?? files.Count, plan?.TotalBytes ?? 0) { XamlRoot = root };
             return await dialog.AskAsync();
         }
         finally

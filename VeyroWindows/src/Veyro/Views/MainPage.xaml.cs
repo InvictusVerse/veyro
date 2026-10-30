@@ -300,9 +300,10 @@ public sealed partial class MainPage : Page
         if (!ViewModel.HasActiveDevice || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
         var items = await e.DataView.GetStorageItemsAsync();
+        // Files and whole folders (ADR-064).
         var filePaths = items
-            .OfType<StorageFile>()
-            .Select(f => f.Path)
+            .Where(item => item is StorageFile or StorageFolder)
+            .Select(item => item.Path)
             .Where(p => !string.IsNullOrEmpty(p))
             .ToList();
 

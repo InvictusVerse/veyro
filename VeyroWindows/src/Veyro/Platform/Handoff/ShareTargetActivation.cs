@@ -44,7 +44,12 @@ internal static class ShareTargetActivation
             var paths = new List<string>(items.Count);
             foreach (IStorageItem item in items)
             {
-                // Folders are not sent (the transfer path sends files).
+                // ADR-064: a folder on disk is sent whole; one with no real path is skipped.
+                if (item is StorageFolder sharedFolder)
+                {
+                    if (!string.IsNullOrEmpty(sharedFolder.Path) && Directory.Exists(sharedFolder.Path)) paths.Add(sharedFolder.Path);
+                    continue;
+                }
                 if (item is not StorageFile file) continue;
                 if (!string.IsNullOrEmpty(file.Path) && File.Exists(file.Path))
                 {
@@ -59,11 +64,11 @@ internal static class ShareTargetActivation
                 paths.Add(copy.Path);
             }
             operation.ReportDataRetrieved();
-            VeyroTrace.Info($"Share received {paths.Count} file(s), {staged.Count} staged");
+            VeyroTrace.Info($"Share received {paths.Count} item(s), {staged.Count} staged");
 
             if (paths.Count == 0)
             {
-                operation.ReportError("Veyro can send files, not folders.");
+                operation.ReportError("Veyro can send files and folders that are saved on this PC.");
                 return;
             }
 

@@ -95,6 +95,10 @@
             <desktop5:ItemType Type="*">
               <desktop5:Verb Id="SendWithVeyro" Clsid="03FEE873-1C45-4C21-9509-78F1A3E62C1C" />
             </desktop5:ItemType>
+            <!-- ADR-064: folders too, sent whole. -->
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="SendFolderWithVeyro" Clsid="03FEE873-1C45-4C21-9509-78F1A3E62C1C" />
+            </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>
 

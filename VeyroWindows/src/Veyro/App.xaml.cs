@@ -391,6 +391,28 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// "Send folder" (ADR-064): the system folder picker, then the whole folder to the selected
+    /// phone, its structure and empty directories kept. UI thread.
+    /// </summary>
+    public static async Task PickAndSendFolderAsync()
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FolderPicker();
+            InitializeWithWindow.Initialize(picker, WindowHandle);
+            picker.FileTypeFilter.Add("*");
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is null || string.IsNullOrEmpty(folder.Path)) return;
+            await VeyroContainer.Instance.TransfersPageViewModel.SendFilesToActiveDeviceAsync([folder.Path]);
+        }
+        catch (Exception error)
+        {
+            // Type only: exception messages can name the user's folders.
+            VeyroTrace.Warn($"Sending a folder failed: {error.GetType().Name}");
+        }
+    }
+
     private void Window_Closed(object sender, WindowEventArgs args)
     {
         if (HandleClosedEvents &&

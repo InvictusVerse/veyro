@@ -13,6 +13,9 @@ public sealed partial class TransfersPage : Page
     /// <summary>ADR-038: straight to the system file picker.</summary>
     private async void SendFiles_Click(object sender, RoutedEventArgs e) => await App.PickAndSendFilesAsync();
 
+    /// <summary>ADR-064: straight to the system folder picker.</summary>
+    private async void SendFolder_Click(object sender, RoutedEventArgs e) => await App.PickAndSendFolderAsync();
+
     private void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
     {
         string dir = ViewModel.DownloadDirectory;
