@@ -1,8 +1,13 @@
 package com.veyro.core.link
 
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.crypto.ConnectionKeySchedule
+import com.veyro.core.crypto.LinkKeys
+import com.veyro.core.crypto.LinkMode
+import com.veyro.core.crypto.LinkRole
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.DeviceNames
+import com.veyro.core.protocol.ProtocolConstants
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
@@ -13,10 +18,12 @@ import io.ktor.websocket.send
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -32,55 +39,53 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.Base64
+import kotlinx.serialization.descriptors.elementNames
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import java.util.Collections
 import java.util.LinkedHashSet
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-import javax.crypto.SecretKey
 
 /**
- * An authenticated peer-to-peer connection over a WebSocket.
+ * An authenticated peer-to-peer connection over a WebSocket (link protocol v3, ADR-058).
  *
  * ## Provenance
  *
- * A port of `services/ecosystem/transport/Session.kt` from the author's Invox code, which is a
- * working system. The structure is kept deliberately close to the original because every piece of it
- * exists for a reason that was learned the hard way:
+ * The structure (heartbeat, mailboxes, the pairing hand-over) is a port of
+ * `services/ecosystem/transport/Session.kt` from the author's Invox code. The frame protection is
+ * v3: per-connection direction keys from [LinkKeys], ChaCha20-Poly1305 with an implicit counter
+ * nonce ([SessionSealer], [SessionOpener]).
  *
- *  - **Mode-mismatch rejection.** A plaintext frame arriving in an encrypted session is dropped
- *    before anything else. Without it, a peer could downgrade a session to plaintext by simply
- *    sending unencrypted frames.
- *  - **Replay cache.** Per-frame random nonce checked against a bounded LRU.
- *  - **Monotonic `seq` per sender.** Makes reorder and truncation detectable rather than silently
- *    accepted.
+ *  - **Fail closed.** Any frame that fails its tag, is malformed, out of order, of a type not
+ *    allowed in the current phase, or binary closes the connection and dispatches nothing
+ *    ([closeCause] says why). Replays, reorders and reflections all fail the tag.
+ *  - **Established.** The connection is established when a frame opens under session keys
+ *    ([awaitEstablished]). Only then may the owner claim it, report it, or export keys.
+ *  - **Pairing switch.** [sendPairOkAndSwitch] (responder) and [switchToSession] (initiator) move
+ *    the same socket from the bootstrap keys to the session keys (04-PROTOCOL.md 4.3).
  *  - **Heartbeat with a dead-peer timeout.** A TCP connection to a device that walked out of Wi-Fi
  *    range can stay "open" for minutes. Without an application-level heartbeat a transfer hangs
  *    instead of failing.
- *  - **`rekey()`.** The pairing exchange starts under a PIN-derived key and must switch to the
- *    long-lived secret mid-conversation, without tearing the socket down.
  *
- * ## Deliberate improvements
- *
- *  - The incoming flow has `extraBufferCapacity` and `SUSPEND` overflow rather than drop-on-full.
- *    Invox carried control messages only; Veyro carries file chunks, and dropping a chunk because
- *    a buffer was full would corrupt a transfer silently. Suspending applies backpressure to the
- *    socket instead.
- *  - Uses standard `java.util.Base64` rather than `android.util.Base64`, enabling fast host JVM
- *    testing without Android runtime mock dependencies.
+ * Uses standard `java.util.Base64` rather than `android.util.Base64`, enabling fast host JVM
+ * testing without Android runtime mock dependencies.
  */
 public class PeerConnection(
     private val ws: WebSocketSession,
-    initialKey: SecretKey,
-    initialEncrypt: Boolean,
+    keys: LinkKeys,
     public val localDeviceId: String,
     private val tag: String = "PeerConnection",
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    public val peerDeviceId: String? = null,
     public val enableHeartbeat: Boolean = true,
     public var remoteHost: String? = null,
     public var localHost: String? = null,
+    /** FR-C3: the peer's first frame under keys it has not used yet must open within this. */
+    private val firstFrameTimeoutMs: Long = ProtocolConstants.HANDSHAKE_TIMEOUT_MILLIS,
 ) {
 
     public companion object {
@@ -111,30 +116,66 @@ public class PeerConnection(
         public const val MAX_FRAME_SIZE_BYTES: Long = 24L * 1024 * 1024
 
         /**
-         * How long the read loop holds after a `pairOk` for [rekey] (ADR-056). Saving the pairing
-         * takes milliseconds; this only bounds a caller that never rekeys.
+         * How long the read loop holds after a `pairOk` for [switchToSession] (ADR-056), and after
+         * the establishing frame for [admit]. Both take milliseconds; this only bounds a caller
+         * that never calls them. The admission gate fails closed.
          */
         internal const val REKEY_WAIT_MS: Long = 10_000L
+
+        /** Serial names of every [PeerMessage] this build can decode (04-PROTOCOL.md 6). */
+        internal val KNOWN_PAYLOAD_TYPES: Set<String> =
+            PeerMessage.serializer().descriptor.getElementDescriptor(1).elementNames.toSet()
+
+        private val PAIRING_TYPES = setOf("pairHello", "pairOk", "pairFail")
     }
 
-    @Volatile
-    private var key: SecretKey = initialKey
+    /** Why the connection closed, first cause wins. Null while open. */
+    public enum class CloseCause { AUTH_FAILED, PROTOCOL, PEER_CLOSED, TIMEOUT, LOCAL }
 
     @Volatile
-    private var encryptFrames: Boolean = initialEncrypt
+    public var closeCause: CloseCause? = null
+        private set
+
+    /** The id this connection's keys are bound to. */
+    public val peerDeviceId: String? = keys.peerId
+
+    private val role: LinkRole = keys.role
+    private val sendDir: Byte = if (keys.role == LinkRole.INITIATOR) FrameCrypto.DIR_I2R else FrameCrypto.DIR_R2I
+    private val recvDir: Byte = if (keys.role == LinkRole.INITIATOR) FrameCrypto.DIR_R2I else FrameCrypto.DIR_I2R
+
+    /** Receive state: replaced as a whole, read once per frame after the socket read. */
+    private class RecvState(val opener: SessionOpener, val mode: LinkMode)
+
+    /** Guarded by [sendMutex]. */
+    private var currentKeys: LinkKeys = keys
+    private var sealer: SessionSealer = SessionSealer(keys.sendKey, localDeviceId, sendDir)
+
+    @Volatile
+    private var recv: RecvState = RecvState(SessionOpener(keys.recvKey, keys.peerId, recvDir), keys.mode)
+
+    @Volatile
+    private var expSecret: ByteArray? = keys.expSecret
+
+    /** True until the first frame opens under the current receive keys (pairing responder: `pairHello`). */
+    @Volatile
+    private var awaitingFirstFrame: Boolean = true
+    private var sawPairHello = false
+    private var firstFrameTimer: Job? = null
 
     /**
-     * Set while a `pairOk` waits for [rekey] (ADR-056). The side that sends pairOk switches to the
-     * session key at once, so its next frame (another phone's Hello) is already under that key.
-     * Read before the rekey, that frame failed authentication and was dropped, and this side
-     * never learnt the peer's capabilities: phone-to-phone worked in one direction only.
+     * Set while a `pairOk` waits for [switchToSession] (ADR-056). The responder switches as it
+     * sends `pairOk`, so its next frame is already under the session keys; read before the switch,
+     * that frame would fail and close the connection.
      */
     @Volatile
     private var rekeyGate: CompletableDeferred<Unit>? = null
 
-    private val nonceCache = NonceCache()
-    private val seqOut = AtomicLong(0)
-    private val lastSeqByPeer = HashMap<String, Long>()
+    private val _established = CompletableDeferred<Unit>()
+    private val admitted = CompletableDeferred<Unit>()
+    private val closedSignal = CompletableDeferred<Unit>()
+
+    /** Completes when a frame opens under session keys (04-PROTOCOL.md 4.4). */
+    public val established: Deferred<Unit> get() = _established
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private var heartbeatJob: Job? = null
@@ -154,9 +195,9 @@ public class PeerConnection(
     /**
      * While true the heartbeat neither pings nor declares the peer dead.
      *
-     * Confirm pairing sets it while the user decides on the other device (ADR-031): the PC sends
-     * nothing until Accept, and a ping in flight when both sides rekey would arrive under the wrong
-     * key. Clearing it restarts the silence clock.
+     * Set in every pairing mode (ADR-031, ADR-058): the responder sends nothing until its user
+     * decides, and a ping in flight across the key switch would close the connection. Received
+     * pings are still answered. Clearing it restarts the silence clock.
      */
     @Volatile
     public var heartbeatPaused: Boolean = false
@@ -245,18 +286,82 @@ public class PeerConnection(
     public fun isTransferActive(transferId: String): Boolean = mailboxes.containsKey(transferId)
     public fun isTransferCompleted(transferId: String): Boolean = completedTransfers.contains(transferId)
 
-    /** Switches from the PIN-derived bootstrap key to the long-lived session secret. */
-    public suspend fun rekey(newKey: SecretKey) {
-        sendMutex.withLock {
-            key = newKey
-            encryptFrames = true
-            // Cleared because nonces are only meaningful per key: a nonce seen under the bootstrap key
-            // is not a replay under the session key, and keeping them would reject valid frames.
-            nonceCache.clear()
-            seqOut.set(0)
-            lastSeqByPeer.clear()
-            VeyroLog.i(tag) { "Rekeyed to the session secret; encryption on" }
+    /** True once a frame opened under session keys and the connection has not closed. */
+    public val isEstablished: Boolean get() = _established.isCompleted && !isClosedFlag
+
+    /** True when established; false when the connection closes first. */
+    public suspend fun awaitEstablished(): Boolean {
+        if (_established.isCompleted) return true
+        select<Unit> {
+            _established.onAwait { }
+            closedSignal.onAwait { }
         }
+        return _established.isCompleted
+    }
+
+    /** Lets the read loop go on past the establishing frame (04-PROTOCOL.md 4.4). Call after claiming the slot. */
+    public fun admit() {
+        admitted.complete(Unit)
+    }
+
+    /**
+     * The key exporter (04-PROTOCOL.md 5.4). Only on an established session-mode connection;
+     * throws [IllegalStateException] otherwise and [IllegalArgumentException] for bad arguments.
+     */
+    public fun exportKey(label: String, context: ByteArray, length: Int): ByteArray {
+        val secret = expSecret
+        check(_established.isCompleted && !isClosedFlag && secret != null && recv.mode == LinkMode.SESSION) {
+            "key export needs an established session"
+        }
+        return ConnectionKeySchedule.export(secret, label, context, length)
+    }
+
+    /**
+     * Responder side of the pairing switch: one operation under the send lock. The session
+     * receive keys are installed first, so the initiator's first session frame can never be read
+     * under the bootstrap keys; then `pairOk` is sealed under the bootstrap send key and written;
+     * then the session send keys replace it with the counter at 0. The bootstrap keys are wiped.
+     */
+    public suspend fun sendPairOkAndSwitch(pairOk: PeerMessage.PairOk, newPairingSecret: ByteArray) {
+        sendMutex.withLock {
+            val boot = currentKeys
+            check(boot.mode != LinkMode.SESSION) { "not in a pairing phase" }
+            val session = ConnectionKeySchedule.afterPairing(boot, newPairingSecret)
+            val oldRecv = recv
+            awaitingFirstFrame = true
+            recv = RecvState(SessionOpener(session.recvKey, session.peerId, recvDir), LinkMode.SESSION)
+            sendLocked(pairOk)
+            val oldSealer = sealer
+            sealer = SessionSealer(session.sendKey, localDeviceId, sendDir)
+            currentKeys = session
+            expSecret = session.expSecret
+            oldSealer.wipe()
+            oldRecv.opener.wipe()
+            boot.wipe()
+        }
+        armFirstFrameTimer()
+        VeyroLog.i(tag) { "Switched to session keys after pairOk" }
+    }
+
+    /** Initiator side of the pairing switch, after `pairOk` arrived (ADR-056 gate holds the read loop). */
+    public suspend fun switchToSession(newPairingSecret: ByteArray) {
+        sendMutex.withLock {
+            val boot = currentKeys
+            check(boot.mode != LinkMode.SESSION) { "not in a pairing phase" }
+            val session = ConnectionKeySchedule.afterPairing(boot, newPairingSecret)
+            val oldRecv = recv
+            val oldSealer = sealer
+            awaitingFirstFrame = true
+            recv = RecvState(SessionOpener(session.recvKey, session.peerId, recvDir), LinkMode.SESSION)
+            sealer = SessionSealer(session.sendKey, localDeviceId, sendDir)
+            currentKeys = session
+            expSecret = session.expSecret
+            oldSealer.wipe()
+            oldRecv.opener.wipe()
+            boot.wipe()
+        }
+        armFirstFrameTimer()
+        VeyroLog.i(tag) { "Switched to session keys after pairOk" }
         rekeyGate?.complete(Unit)
     }
 
@@ -273,6 +378,9 @@ public class PeerConnection(
         if (enableHeartbeat) {
             heartbeatJob = launch { heartbeat(onDead) }
         }
+        // FR-C3: in session mode and for the pairing responder the peer's first frame is due now.
+        // The pairing initiator is exempt: the responder is silent while its user decides.
+        if (recv.mode == LinkMode.SESSION || role == LinkRole.RESPONDER) armFirstFrameTimer()
         var closeTrigger = "unknown"
         try {
             for (frame in ws.incoming) {
@@ -280,165 +388,240 @@ public class PeerConnection(
                     val cr = (frame as? Frame.Close)?.readReason()
                     val code = cr?.code ?: -1
                     val known = cr?.knownReason?.name ?: "UNKNOWN"
-                    val msg = cr?.message ?: ""
-                    closeTrigger = "remote-close-frame(code=$code, known=$known, msg='$msg')"
-                    VeyroLog.i(tag) { "Received Frame.Close from peer: code=$code ($known), message='$msg'" }
+                    closeTrigger = "remote-close-frame(code=$code, known=$known)"
+                    VeyroLog.i(tag) { "Received Frame.Close from peer: code=$code ($known)" }
+                    setCause(CloseCause.PEER_CLOSED)
                     close(closeTrigger)
                     break
                 }
-                if (frame !is Frame.Text) continue
+                if (frame is Frame.Ping || frame is Frame.Pong) continue
+                if (frame !is Frame.Text) {
+                    closeTrigger = "non-text-frame"
+                    VeyroLog.w(tag) { "Binary frame on the link; closing" }
+                    fail(CloseCause.PROTOCOL, closeTrigger)
+                    break
+                }
                 if (frame.data.size > MAX_FRAME_SIZE_BYTES) {
                     closeTrigger = "oversized-frame(${frame.data.size} > $MAX_FRAME_SIZE_BYTES)"
-                    VeyroLog.w(tag) { "Oversized frame received (${frame.data.size} bytes > $MAX_FRAME_SIZE_BYTES); closing session" }
-                    close(closeTrigger)
+                    VeyroLog.w(tag) { "Oversized frame received (${frame.data.size} bytes); closing session" }
+                    fail(CloseCause.PROTOCOL, closeTrigger)
                     break
                 }
-                handleRaw(frame.readText())
-                // ADR-056: after a pairOk the next frame is under the session key; read it only
-                // once that key is in place. The frames wait in the socket meanwhile.
+                val establishing = handleRaw(frame.readText())
+                if (establishing == null) {
+                    closeTrigger = "bad-frame(${closeCause})"
+                    break
+                }
+                // After the frame that established the connection, wait until the owner claimed
+                // it, so frames that follow are not emitted before anyone can subscribe. Fails closed.
+                if (establishing) {
+                    if (withTimeoutOrNull(REKEY_WAIT_MS) { admitted.await() } == null) {
+                        VeyroLog.w(tag) { "Connection not admitted within ${REKEY_WAIT_MS}ms of establishment; closing" }
+                        closeTrigger = "not-admitted"
+                        fail(CloseCause.LOCAL, closeTrigger)
+                        break
+                    }
+                }
+                // ADR-056: after a pairOk the next frame is under the session keys; read it only
+                // once those keys are in place. The frames wait in the socket meanwhile.
                 rekeyGate?.let { gate ->
                     if (withTimeoutOrNull(REKEY_WAIT_MS) { gate.await() } == null) {
-                        VeyroLog.w(tag) { "No rekey within ${REKEY_WAIT_MS}ms of pairOk; reading on" }
+                        VeyroLog.w(tag) { "No key switch within ${REKEY_WAIT_MS}ms of pairOk; closing" }
+                        closeTrigger = "no-switch"
+                        fail(CloseCause.LOCAL, closeTrigger)
                     }
                     rekeyGate = null
                 }
+                if (isClosedFlag) break
             }
+            setCause(CloseCause.PEER_CLOSED)
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) {
-                closeTrigger = "coroutine-cancellation: ${t.message}"
-                VeyroLog.i(tag) { "Read loop cancelled: ${t.message}" }
+                closeTrigger = "coroutine-cancellation"
+                VeyroLog.i(tag) { "Read loop cancelled" }
+                setCause(CloseCause.LOCAL)
             } else {
-                closeTrigger = "exception: ${t.javaClass.simpleName}(${t.message})"
-                VeyroLog.w(tag, t) { "Read loop terminated with exception: ${t.javaClass.name}: ${t.message}" }
+                closeTrigger = "exception: ${t.javaClass.simpleName}"
+                VeyroLog.w(tag) { "Read loop terminated with ${t.javaClass.simpleName}" }
+                setCause(CloseCause.PEER_CLOSED)
             }
         } finally {
             isClosedFlag = true
             heartbeatJob?.cancel()
+            firstFrameTimer?.cancel()
             offerChannel.close()
             handshakeChannel.close()
             mailboxes.values.forEach { it.close() }
             mailboxes.clear()
-
-            val defaultWs = ws as? io.ktor.websocket.DefaultWebSocketSession
-            val underlyingReason = runCatching {
-                if (defaultWs != null && defaultWs.closeReason.isCompleted) {
-                    defaultWs.closeReason.getCompleted()
-                } else null
-            }.getOrNull()
-            VeyroLog.i(tag) {
-                "Read loop exit summary: trigger='$closeTrigger', ws.closeReason=code=${underlyingReason?.code} (${underlyingReason?.knownReason}), msg='${underlyingReason?.message}'"
-            }
+            closedSignal.complete(Unit)
+            wipeKeys()
+            VeyroLog.i(tag) { "Read loop exit summary: trigger='$closeTrigger', cause=$closeCause" }
             _closed.tryEmit(closeTrigger)
         }
     }
 
-    public suspend fun send(message: PeerMessage): Unit = sendInternal(message, encryptFrames)
+    public suspend fun send(message: PeerMessage) {
+        sendMutex.withLock { sendLocked(message) }
+    }
 
-    /**
-     * Sends one frame sealed regardless of session mode.
-     *
-     * Exists for `PairOk`, which carries the session secret while the conversation is still in
-     * plaintext pairing mode. The secret must not cross the network in the clear, and the bootstrap
-     * key is available to seal it with.
-     */
-    public suspend fun sendSealed(message: PeerMessage): Unit = sendInternal(message, encrypt = true)
+    /** Call under [sendMutex]: allocates the counter, seals and writes as one step (FR-F4). */
+    private suspend fun sendLocked(message: PeerMessage) {
+        if (isClosedFlag) throw java.io.IOException("connection closed")
+        val counter = sealer.nextCounter
+        lastOutboundAt = System.currentTimeMillis()
+        val envelope = LinkEnvelope(
+            msgId = UUID.randomUUID().toString(),
+            from = localDeviceId,
+            seq = counter + 1,
+            ts = lastOutboundAt,
+            payload = message,
+        )
+        val payloadJson = PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), envelope)
+        val wireText = try {
+            sealer.seal(payloadJson)
+        } catch (e: com.veyro.core.protocol.AeadStreamException) {
+            VeyroLog.w(tag) { "Send counter exhausted; closing" }
+            scope.launch { fail(CloseCause.LOCAL, "counter-exhausted") }
+            throw e
+        }
 
-    private suspend fun sendInternal(message: PeerMessage, encrypt: Boolean) {
-        sendMutex.withLock {
-            val seq = seqOut.incrementAndGet()
-            lastOutboundAt = System.currentTimeMillis()
-            val envelope = LinkEnvelope(
-                msgId = UUID.randomUUID().toString(),
-                from = localDeviceId,
-                seq = seq,
-                ts = lastOutboundAt,
-                payload = message,
-            )
-            val payloadJson = PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), envelope)
-            val sealed = FrameCrypto.seal(payloadJson, key, encrypt, localDeviceId)
-            val wireText = PeerMessageJson.codec.encodeToString(LinkWireFrame.serializer(), sealed.toWire())
-
-            // Sampled logging for outbound sends (first chunk, last chunk, or every 20 chunks)
-            if (message is PeerMessage.Chunk) {
-                if (message.chunkIndex == 0 || message.chunkIndex % 20 == 0) {
-                    val qSize = outboundQueueBytes() ?: -1L
-                    VeyroLog.i(tag) {
-                        "[diagnostics:sender-wire] transfer=${message.transferId} chunk #${message.chunkIndex} (seq=$seq, payloadBytes=${message.dataB64.length}, wireBytes=${wireText.length}, inFlightQueue=${qSize}B)"
-                    }
-                }
-            } else if (message !is PeerMessage.Ping && message !is PeerMessage.Pong) {
+        // Sampled logging for outbound sends (first chunk, last chunk, or every 20 chunks)
+        if (message is PeerMessage.Chunk) {
+            if (message.chunkIndex == 0 || message.chunkIndex % 20 == 0) {
+                val qSize = outboundQueueBytes() ?: -1L
                 VeyroLog.i(tag) {
-                    "[diagnostics:sender-ctrl] send ${message.javaClass.simpleName} (seq=$seq, wireBytes=${wireText.length})"
+                    "[diagnostics:sender-wire] transfer=${message.transferId} chunk #${message.chunkIndex} (payloadBytes=${message.dataB64.length}, wireBytes=${wireText.length}, inFlightQueue=${qSize}B)"
                 }
             }
-
-            ws.send(wireText)
+        } else if (message !is PeerMessage.Ping && message !is PeerMessage.Pong) {
+            VeyroLog.i(tag) {
+                "[diagnostics:sender-ctrl] send ${message.javaClass.simpleName} (wireBytes=${wireText.length})"
+            }
         }
+
+        ws.send(wireText)
     }
 
     public suspend fun close(reason: String = "normal") {
         if (isClosedFlag) return
         isClosedFlag = true
-        val caller = Thread.currentThread().stackTrace.getOrNull(3)?.let { "${it.className}.${it.methodName}:${it.lineNumber}" } ?: "unknown"
-        VeyroLog.i(tag) { "Session closing initiated: reason='$reason', caller=$caller" }
+        setCause(CloseCause.LOCAL)
+        VeyroLog.i(tag) { "Session closing initiated: reason='$reason'" }
         runCatching { ws.close(CloseReason(CloseReason.Codes.NORMAL, reason)) }
         scope.cancel()
         offerChannel.close()
         handshakeChannel.close()
         mailboxes.values.forEach { it.close() }
         mailboxes.clear()
+        closedSignal.complete(Unit)
         _closed.tryEmit(reason)
+    }
+
+    private fun setCause(cause: CloseCause) {
+        if (closeCause == null) closeCause = cause
+    }
+
+    private suspend fun fail(cause: CloseCause, reason: String) {
+        setCause(cause)
+        close(reason)
+    }
+
+    private fun armFirstFrameTimer() {
+        firstFrameTimer?.cancel()
+        firstFrameTimer = scope.launch {
+            delay(firstFrameTimeoutMs)
+            if (awaitingFirstFrame && !isClosedFlag) {
+                VeyroLog.w(tag) { "No authenticated frame within ${firstFrameTimeoutMs}ms; closing" }
+                fail(CloseCause.TIMEOUT, "first-frame-timeout")
+            }
+        }
+    }
+
+    /** Best effort: the keys of a closed connection are of no further use. */
+    private fun wipeKeys() {
+        expSecret = null
+        runCatching { recv.opener.wipe() }
+        runCatching { sealer.wipe() }
+        runCatching { currentKeys.wipe() }
     }
 
     // ── Receive ────────────────────────────────────────────────────────────────────────────
 
-    private suspend fun handleRaw(text: String) {
+    /**
+     * Opens and dispatches one frame. Returns null when the frame was rejected (the connection is
+     * then closed), true when it established the connection, false otherwise.
+     */
+    private suspend fun handleRaw(text: String): Boolean? {
         lastInboundAt = System.currentTimeMillis()
+        val state = recv
+        val counter = state.opener.nextCounter
 
-        val wire = try {
-            PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), text)
+        val json = try {
+            state.opener.open(text)
+        } catch (e: SessionFrameException) {
+            VeyroLog.w(tag) { if (e.authFailed) "Frame failed authentication; closing" else "Malformed frame; closing" }
+            fail(if (e.authFailed) CloseCause.AUTH_FAILED else CloseCause.PROTOCOL, if (e.authFailed) "auth-failed" else "malformed-frame")
+            return null
+        }
+        awaitingFirstFrame = false
+        firstFrameTimer?.cancel()
+
+        val obj = try {
+            PeerMessageJson.codec.parseToJsonElement(json).jsonObject
         } catch (t: Throwable) {
-            VeyroLog.d(tag) { "Bad wire JSON: ${t.message}" }
-            return
+            return protocolFault("malformed envelope")
         }
+        val v = (obj["v"] as? JsonPrimitive)?.intOrNull
+        val from = (obj["from"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        val seq = (obj["seq"] as? JsonPrimitive)?.longOrNull
+        if (v != LINK_PROTOCOL_VERSION || from != peerDeviceId || seq != counter + 1) {
+            return protocolFault("envelope header mismatch")
+        }
+        val type = ((obj["payload"] as? JsonObject)?.get("t") as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?: return protocolFault("envelope without a payload type")
 
-        // Reject a downgrade attempt before spending any crypto on it.
-        if (encryptFrames && wire.ciphertext == null) {
-            VeyroLog.w(tag) { "Plaintext frame in an encrypted session; dropped" }
-            return
-        }
+        val establishing = state.mode == LinkMode.SESSION && !_established.isCompleted
 
-        if (!nonceCache.checkAndStore(wire.nonce)) {
-            VeyroLog.w(tag) { "Replayed nonce rejected" }
-            return
+        if (type !in KNOWN_PAYLOAD_TYPES) {
+            if (establishing) _established.complete(Unit)
+            // Authenticated but from a newer build: consumed (its counter counted) and skipped.
+            if (type.length in 1..32 && type.all { it.isLetterOrDigit() && it.code < 0x80 }) {
+                VeyroLog.i(tag) { "Skipping unknown message type $type" }
+            }
+            return establishing
         }
-
-        val sealed = wire.toSealed() ?: run {
-            VeyroLog.d(tag) { "Malformed frame encoding" }
-            return
-        }
-
-        val json = FrameCrypto.open(sealed, key) ?: run {
-            // During pairing this is the normal signature of a wrong PIN.
-            VeyroLog.d(tag) { "Frame failed authentication; dropped" }
-            return
-        }
+        if (!allowed(type, state.mode)) return protocolFault("message type not allowed in this phase")
 
         val envelope = try {
-            PeerMessageJson.codec.decodeFromString(LinkEnvelope.serializer(), json)
+            PeerMessageJson.codec.decodeFromJsonElement(LinkEnvelope.serializer(), obj)
         } catch (t: Throwable) {
-            VeyroLog.d(tag) { "Envelope decode failed: ${t.message}" }
-            return
+            return protocolFault("known message failed to decode")
         }
+        if (establishing) _established.complete(Unit)
+        dispatch(envelope, state.mode)
+        return establishing
+    }
 
-        // Monotonic per sender. A repeat or out-of-order frame is dropped rather than processed.
-        val previous = lastSeqByPeer[envelope.from]
-        if (previous != null && envelope.seq <= previous) {
-            VeyroLog.w(tag) { "Stale seq from ${envelope.from} (${envelope.seq} <= $previous)" }
-            return
+    private suspend fun protocolFault(what: String): Boolean? {
+        VeyroLog.w(tag) { "Protocol fault ($what); closing" }
+        fail(CloseCause.PROTOCOL, "protocol-fault")
+        return null
+    }
+
+    /** The per-phase allowlist (04-PROTOCOL.md 5.3). */
+    private fun allowed(type: String, mode: LinkMode): Boolean {
+        if (mode == LinkMode.SESSION) return type !in PAIRING_TYPES
+        return when (role) {
+            LinkRole.RESPONDER -> when (type) {
+                "pairHello" -> if (sawPairHello) false else true.also { sawPairHello = true }
+                "pairFail", "ping", "pong" -> sawPairHello
+                else -> false
+            }
+            LinkRole.INITIATOR -> type == "pairOk" || type == "pairFail" || type == "ping" || type == "pong"
         }
-        lastSeqByPeer[envelope.from] = envelope.seq
+    }
 
+    private suspend fun dispatch(envelope: LinkEnvelope, mode: LinkMode) {
         if (envelope.payload is PeerMessage.Ping) {
             scope.launch {
                 runCatching {
@@ -454,7 +637,7 @@ public class PeerConnection(
             val count = acceptedPayloadFrames.incrementAndGet()
             if (chunk.chunkIndex == 0 || chunk.chunkIndex % 20 == 0) {
                 VeyroLog.i(tag) {
-                    "[diagnostics:receiver-link] transfer=${chunk.transferId} chunk #${chunk.chunkIndex} accepted (seq=${envelope.seq}, frameBytes=${text.length}, totalAcceptedPayloadFrames=$count)"
+                    "[diagnostics:receiver-link] transfer=${chunk.transferId} chunk #${chunk.chunkIndex} accepted (totalAcceptedPayloadFrames=$count)"
                 }
             }
         }
@@ -538,8 +721,8 @@ public class PeerConnection(
             }
 
             is PeerMessage.PairOk -> {
-                // Armed before the hand-off, so a rekey that follows at once is not missed.
-                if (!encryptFrames) rekeyGate = CompletableDeferred()
+                // Armed before the hand-off, so a switch that follows at once is not missed.
+                if (mode != LinkMode.SESSION) rekeyGate = CompletableDeferred()
                 handshakeChannel.trySend(envelope)
             }
 
@@ -553,7 +736,8 @@ public class PeerConnection(
             }
 
             is PeerMessage.Unpair -> {
-                if (peerDeviceId == null || envelope.from == peerDeviceId) _unpaired.complete(Unit)
+                // Session mode only (allowlist): the sender is the authenticated peer.
+                _unpaired.complete(Unit)
             }
 
             else -> Unit
@@ -583,9 +767,9 @@ public class PeerConnection(
                 if (unanswered >= HEARTBEAT_PONG_TIMEOUT_MS) {
                     // A device that left Wi-Fi range leaves the TCP connection looking open for
                     // minutes. Without this the UI shows a transfer that will never progress.
-                    VeyroLog.w(tag) { "Ping unanswered for ${unanswered}ms (lastInboundAt=$lastInboundAt); closing" }
+                    VeyroLog.w(tag) { "Ping unanswered for ${unanswered}ms; closing" }
                     onDead?.invoke()
-                    close("heartbeat-timeout")
+                    fail(CloseCause.TIMEOUT, "heartbeat-timeout")
                     return
                 }
                 wait = HEARTBEAT_PONG_TIMEOUT_MS - unanswered
@@ -612,53 +796,6 @@ public class PeerConnection(
 
 /** Legacy alias for backwards compatibility. */
 public typealias LinkSession = PeerConnection
-
-// ── wire encoding ──────────────────────────────────────────────────────────────────────────
-
-internal fun SealedFrame.toWire(): LinkWireFrame {
-    val n = Base64.getEncoder().encodeToString(nonce)
-    val m = Base64.getEncoder().encodeToString(mac)
-    return if (encrypted) {
-        LinkWireFrame(
-            from = fromDeviceId,
-            nonce = n,
-            ciphertext = Base64.getEncoder().encodeToString(body),
-            mac = m,
-        )
-    } else {
-        LinkWireFrame(
-            from = fromDeviceId,
-            nonce = n,
-            plaintext = String(body, Charsets.UTF_8),
-            mac = m,
-        )
-    }
-}
-
-internal fun LinkWireFrame.toSealed(): SealedFrame? {
-    val nonceBytes = decodeBase64(nonce) ?: return null
-    val macBytes = decodeBase64(mac) ?: return null
-    return when {
-        ciphertext != null -> SealedFrame(
-            nonce = nonceBytes,
-            body = decodeBase64(ciphertext) ?: return null,
-            mac = macBytes,
-            encrypted = true,
-            fromDeviceId = from,
-        )
-        plaintext != null -> SealedFrame(
-            nonce = nonceBytes,
-            body = plaintext.toByteArray(Charsets.UTF_8),
-            mac = macBytes,
-            encrypted = false,
-            fromDeviceId = from,
-        )
-        else -> null
-    }
-}
-
-private fun decodeBase64(value: String): ByteArray? =
-    runCatching { Base64.getDecoder().decode(value) }.getOrNull()
 
 /**
  * Dedicated per-transfer mailbox that routes incoming messages by type for a specific [transferId].

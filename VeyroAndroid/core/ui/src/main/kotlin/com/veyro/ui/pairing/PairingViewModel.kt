@@ -263,11 +263,13 @@ public class PairingViewModel(
         val discovered = _state.value.candidates.firstOrNull { it.deviceId == qr.deviceId }?.endpoints.orEmpty()
         val endpoints = (qr.endpoints + discovered).distinct()
         qrJob = viewModelScope.launch {
-            connectionManager.pairWithCode(
+            // ADR-058: the QR secret is wiped once the pairing flow ends, however it ends.
+            try {
+            connectionManager.pairWithQr(
                 peerDeviceId = qr.deviceId.value,
                 peerName = qr.name ?: "your PC",
                 endpoints = endpoints,
-                code = qr.code,
+                qrSecret = qr.secret,
             ).collect { progress ->
                 val next = when (progress) {
                     ConnectionManager.CodePairingProgress.Connecting -> QrPairingState.Connecting(qr.name)
@@ -282,6 +284,9 @@ public class PairingViewModel(
                         QrPairingState.Failed(QrPairingError.from(progress.failure))
                 }
                 _state.value = _state.value.copy(qr = next)
+            }
+            } finally {
+                qr.wipe()
             }
             connectionManager.clearEvent()
         }

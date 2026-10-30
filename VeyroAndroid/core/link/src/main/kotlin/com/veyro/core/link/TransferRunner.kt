@@ -21,6 +21,7 @@ import com.veyro.core.transfer.RollingSpeedCalculator
 import com.veyro.core.transfer.StoragePublishResult
 import com.veyro.core.transfer.TransferStoragePublisher
 import com.veyro.core.protocol.tcp.TcpFrame
+import com.veyro.core.protocol.tcp.Vtc3
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -406,6 +407,7 @@ public class TransferRunner(
                             authToken = authToken,
                             senderDeviceId = session.localDeviceId,
                             route = TransferRoute.WIFI_DIRECT,
+                            deriveKeys = Vtc3.keyDeriver(session::exportKey, transferId),
                         )
                     }.getOrDefault(false)
 
@@ -458,6 +460,7 @@ public class TransferRunner(
                         authToken = authToken,
                         senderDeviceId = session.localDeviceId,
                         route = TransferRoute.LAN_TCP,
+                        deriveKeys = Vtc3.keyDeriver(session::exportKey, transferId),
                     )
                     tcpConnected = true
                     activeRoute = TransferRoute.LAN_TCP
@@ -940,6 +943,7 @@ public class TransferRunner(
                 transferId = transferId,
                 expectedAuthToken = authToken,
                 expectedPeerDeviceId = session.peerDeviceId,
+                deriveKeys = Vtc3.keyDeriver(session::exportKey, transferId),
                 // Empty directories carry no data; the coordinator creates them after (ADR-064).
                 offerItems = domainItems.filterNot { it.isDirectory },
                 destinationDir = destinationDir,

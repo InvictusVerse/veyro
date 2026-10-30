@@ -4,9 +4,15 @@ import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.model.TransferRoute
 import com.veyro.core.protocol.tcp.TcpFrame
-import com.veyro.core.protocol.tcp.TcpFrameCodec
+import com.veyro.core.protocol.tcp.Vtc3
+import com.veyro.core.protocol.tcp.Vtc3Channel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -21,13 +27,17 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Sender-side raw TCP data engine.
  *
- * Implements a single ordered writer over the TCP socket stream, bounded chunk streaming,
- * monotonic frame sequencing, and connection lifecycle management.
+ * Implements a single ordered writer over the TCP socket stream, bounded chunk streaming and
+ * connection lifecycle management. Every record is sealed (VTC3, ADR-058): the [Vtc3Channel]
+ * owns the counters, so this class never numbers a frame itself.
+ *
+ * Lock order: [writeMutex] is always taken outside the `Vtc3Writer` lock and never while
+ * holding it.
  */
 public class TcpDataSender(
     private val dispatchers: AppDispatchers,
@@ -43,7 +53,13 @@ public class TcpDataSender(
     private var output: OutputStream? = null
     private var input: InputStream? = null
     private val writeMutex = Mutex()
-    private val seqGenerator = AtomicLong(1L)
+
+    /** Runs the one chunk write in flight ([sendChunk]); its jobs never outlive the socket. */
+    private val pipelineScope = CoroutineScope(SupervisorJob() + dispatchers.io)
+    private val pendingChunk = AtomicReference<Deferred<Unit>?>(null)
+
+    @Volatile
+    private var channel: Vtc3Channel? = null
 
     @Volatile
     public var activeRoute: TransferRoute? = null
@@ -63,19 +79,19 @@ public class TcpDataSender(
      * Reads what the receiver writes back on the data socket after [TcpFrame.AuthAck] and hands
      * each frame to [onFrame], until EOF or the socket closes.
      *
-     * The Windows receiver answers every `ItemEnd` with a VTC1 [TcpFrame.ItemResult] on this socket
+     * The Windows receiver answers every `ItemEnd` with a VTC3 [TcpFrame.ItemResult] on this socket
      * and sends nothing on the WebSocket, so a sender that only waited on the WebSocket timed out
      * on every item (the photo-fetch "spins forever" report). Reading here is what lets
      * [TransferRunner] accept the result from either channel.
      */
     public fun startInboundReader(scope: CoroutineScope, onFrame: suspend (TcpFrame) -> Unit): Job {
-        val inp = input ?: throw IOException("Socket not connected")
+        val reader = channel?.reader ?: throw IOException("Socket not connected")
         return scope.launch(dispatchers.io) {
             while (isActive && !isClosed) {
                 val frame = try {
-                    TcpFrameCodec.readFrameOrNull(inp)
+                    reader.readOrNull()
                 } catch (e: SocketTimeoutException) {
-                    // Idle while chunks stream the other way; keep listening.
+                    // Idle while chunks stream the other way (a timeout before a record starts).
                     continue
                 } catch (t: Throwable) {
                     break
@@ -97,9 +113,11 @@ public class TcpDataSender(
         authToken: String,
         senderDeviceId: String,
         route: TransferRoute,
+        /** `(saltA, saltB) -> 64 bytes` from the session exporter (`Vtc3.keyDeriver`). */
+        deriveKeys: (ByteArray, ByteArray) -> ByteArray,
     ): Boolean = withContext(dispatchers.io) {
         isClosed = false
-        seqGenerator.set(1L)
+        pendingChunk.set(null)
         val connectStartTime = System.currentTimeMillis()
         VeyroLog.i(TAG) { "[$transferId] [tcp-sender:connect-start] Dialing raw TCP ($route) at $host:$port (timeout: ${connectTimeoutMs}ms)..." }
 
@@ -122,13 +140,14 @@ public class TcpDataSender(
             output = out
             input = inp
 
-            val authSeq = seqGenerator.getAndIncrement()
-            VeyroLog.i(TAG) { "[$transferId] [tcp-sender:auth-send] Sending VTC1 Auth frame (seq=$authSeq, route=$route)..." }
+            // Fresh salts both ways, so this attempt's keys are new (ADR-058, 04-PROTOCOL.md 7.3).
+            val opened = Vtc3.openAsSender(inp, out, transferId, deriveKeys)
+            channel = opened
+            VeyroLog.i(TAG) { "[$transferId] [tcp-sender:auth-send] Sending VTC3 Auth frame (route=$route)..." }
             writeMutex.withLock {
-                TcpFrameCodec.writeFrame(
-                    out,
+                opened.writer.write(
                     TcpFrame.Auth(
-                        seq = authSeq,
+                        seq = 0L,
                         transferId = transferId,
                         authToken = authToken,
                         senderDeviceId = senderDeviceId,
@@ -138,7 +157,7 @@ public class TcpDataSender(
             }
 
             val authStartTime = System.currentTimeMillis()
-            val ackFrame = TcpFrameCodec.readFrame(inp)
+            val ackFrame = opened.reader.readOrNull() ?: throw java.io.EOFException("Receiver closed before AuthAck")
             val authElapsedMs = System.currentTimeMillis() - authStartTime
             if (ackFrame !is TcpFrame.AuthAck) {
                 throw IOException("Expected AuthAck but received: ${ackFrame.javaClass.simpleName}")
@@ -149,7 +168,7 @@ public class TcpDataSender(
 
             activeRoute = route
             VeyroLog.i(TAG) {
-                "[$transferId] [tcp-sender:auth-success] VTC1 AuthAck confirmed in ${authElapsedMs}ms (route=$route)"
+                "[$transferId] [tcp-sender:auth-success] VTC3 AuthAck confirmed in ${authElapsedMs}ms (route=$route)"
             }
             true
         } catch (t: Throwable) {
@@ -178,14 +197,13 @@ public class TcpDataSender(
         chunkCount: Int,
         chunkSize: Int,
     ): Unit = withContext(dispatchers.io) {
-        val out = output ?: throw IOException("Socket not connected")
-        val seq = seqGenerator.getAndIncrement()
-        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:item-begin-send] Item #$itemIndex (seq=$seq, size=$sizeBytes, chunks=$chunkCount)" }
+        awaitPendingChunk()
+        val writer = channel?.writer ?: throw IOException("Socket not connected")
+        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:item-begin-send] Item #$itemIndex (size=$sizeBytes, chunks=$chunkCount)" }
         writeMutex.withLock {
-            TcpFrameCodec.writeFrame(
-                out,
+            writer.write(
                 TcpFrame.ItemBegin(
-                    seq = seq,
+                    seq = 0L,
                     transferId = transferId,
                     itemIndex = itemIndex,
                     sizeBytes = sizeBytes,
@@ -204,37 +222,44 @@ public class TcpDataSender(
         flush: Boolean = false,
         metrics: TransferThroughputMetrics? = null,
     ): Unit = withContext(dispatchers.io) {
-        val out = output ?: throw IOException("Socket not connected")
-        val seq = seqGenerator.getAndIncrement()
-        writeMutex.withLock {
-            if (metrics != null) {
-                metrics.recordSocketWrite(data.size.toLong()) {
-                    TcpFrameCodec.writeFrame(
-                        out,
-                        TcpFrame.Chunk(
-                            seq = seq,
-                            transferId = transferId,
-                            itemIndex = itemIndex,
-                            chunkIndex = chunkIndex,
-                            data = data,
-                        ),
-                        autoFlush = flush,
-                    )
+        val writer = channel?.writer ?: throw IOException("Socket not connected")
+        val frame = TcpFrame.Chunk(
+            seq = 0L,
+            transferId = transferId,
+            itemIndex = itemIndex,
+            chunkIndex = chunkIndex,
+            data = data,
+        )
+        // Write-behind (NFR-3): chunk N is sealed and written while the caller reads and hashes
+        // chunk N+1. At most one chunk is in flight and the next call waits for it, so records
+        // keep their order; a failure surfaces on the next send. The caller gives up [data].
+        awaitPendingChunk()
+        pendingChunk.set(
+            pipelineScope.async {
+                writeMutex.withLock {
+                    if (metrics != null) {
+                        metrics.recordSocketWrite(data.size.toLong()) {
+                            writer.write(frame, flush = flush)
+                        }
+                        if (flush) metrics.recordFlush()
+                    } else {
+                        writer.write(frame, flush = flush)
+                    }
                 }
-                if (flush) metrics.recordFlush()
-            } else {
-                TcpFrameCodec.writeFrame(
-                    out,
-                    TcpFrame.Chunk(
-                        seq = seq,
-                        transferId = transferId,
-                        itemIndex = itemIndex,
-                        chunkIndex = chunkIndex,
-                        data = data,
-                    ),
-                    autoFlush = flush,
-                )
-            }
+            },
+        )
+    }
+
+    /** Waits for the chunk write in flight, if any, and rethrows its failure as an [IOException]. */
+    private suspend fun awaitPendingChunk() {
+        val pending = pendingChunk.get() ?: return
+        try {
+            pending.await()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw IOException("TCP chunk write was cancelled", e)
+        } finally {
+            pendingChunk.compareAndSet(pending, null)
         }
     }
 
@@ -244,19 +269,18 @@ public class TcpDataSender(
         sha256Hex: String,
         metrics: TransferThroughputMetrics? = null,
     ): Unit = withContext(dispatchers.io) {
-        val out = output ?: throw IOException("Socket not connected")
-        val seq = seqGenerator.getAndIncrement()
-        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:item-end-send] Item #$itemIndex (seq=$seq, sha256=$sha256Hex)" }
+        awaitPendingChunk()
+        val writer = channel?.writer ?: throw IOException("Socket not connected")
+        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:item-end-send] Item #$itemIndex" }
         writeMutex.withLock {
-            TcpFrameCodec.writeFrame(
-                out,
+            writer.write(
                 TcpFrame.ItemEnd(
-                    seq = seq,
+                    seq = 0L,
                     transferId = transferId,
                     itemIndex = itemIndex,
                     sha256Hex = sha256Hex,
                 ),
-                autoFlush = true,
+                flush = true,
             )
             metrics?.recordFlush()
         }
@@ -268,25 +292,24 @@ public class TcpDataSender(
         completed: Boolean,
         metrics: TransferThroughputMetrics? = null,
     ): Unit = withContext(dispatchers.io) {
-        val out = output ?: run {
-            VeyroLog.w(TAG) { "[$transferId] Output stream null; cannot send TransferEnd" }
+        awaitPendingChunk()
+        val writer = channel?.writer ?: run {
+            VeyroLog.w(TAG) { "[$transferId] Data channel not open; cannot send TransferEnd" }
             return@withContext
         }
-        val seq = seqGenerator.getAndIncrement()
-        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:transfer-end-send] Sending VTC1 TransferEnd (seq=$seq, completed=$completed)..." }
+        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:transfer-end-send] Sending VTC3 TransferEnd (completed=$completed)..." }
         writeMutex.withLock {
             try {
-                TcpFrameCodec.writeFrame(
-                    out,
+                writer.write(
                     TcpFrame.TransferEnd(
-                        seq = seq,
+                        seq = 0L,
                         transferId = transferId,
                         completed = completed,
                     ),
-                    autoFlush = true,
+                    flush = true,
                 )
                 metrics?.recordFlush()
-                VeyroLog.i(TAG) { "[$transferId] [tcp-sender:transfer-end-sent] TransferEnd flushed to socket (seq=$seq, completed=$completed)" }
+                VeyroLog.i(TAG) { "[$transferId] [tcp-sender:transfer-end-sent] TransferEnd flushed to socket (completed=$completed)" }
             } catch (t: Throwable) {
                 VeyroLog.e(TAG, t) { "[$transferId] [tcp-sender:transfer-end-failed] Failed to write TransferEnd: ${t.message}" }
                 throw t
@@ -303,6 +326,7 @@ public class TcpDataSender(
     public suspend fun gracefulShutdown(timeoutMs: Long = 2000L): Unit = withContext(dispatchers.io) {
         val s = socket ?: return@withContext
         try {
+            runCatching { awaitPendingChunk() }
             writeMutex.withLock {
                 runCatching { output?.flush() }
             }
@@ -343,20 +367,23 @@ public class TcpDataSender(
         transferId: String,
         reason: String,
     ): Unit = withContext(dispatchers.io) {
-        val out = output ?: return@withContext
-        val seq = seqGenerator.getAndIncrement()
-        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:cancel-send] Sending TCP Cancel frame (seq=$seq, reason=$reason)" }
+        try {
+            awaitPendingChunk()
+        } catch (e: IOException) {
+            // The chunk in flight failed; the Cancel below is best effort either way.
+        }
+        val writer = channel?.writer ?: return@withContext
+        VeyroLog.i(TAG) { "[$transferId] [tcp-sender:cancel-send] Sending TCP Cancel frame (reason=$reason)" }
         writeMutex.withLock {
             runCatching {
-                TcpFrameCodec.writeFrame(
-                    out,
+                writer.write(
                     TcpFrame.Cancel(
-                        seq = seq,
+                        seq = 0L,
                         transferId = transferId,
                         reason = reason,
                     ),
+                    flush = true,
                 )
-                out.flush()
             }
         }
     }
@@ -374,10 +401,15 @@ public class TcpDataSender(
         if (isClosed) return
         isClosed = true
         VeyroLog.i(TAG) { "[tcp-sender:socket-close] Initiating socket close ($reason)" }
+        // A chunk write still in flight may be blocked on a full socket while holding the stream:
+        // close the socket first so it fails at once, instead of flushing behind it.
+        if (pendingChunk.getAndSet(null)?.isActive == true) runCatching { socket?.close() }
         runCatching { output?.flush() }
         runCatching { output?.close() }
         runCatching { input?.close() }
         runCatching { socket?.close() }
+        runCatching { channel?.close() }
+        channel = null
         output = null
         input = null
         socket = null
