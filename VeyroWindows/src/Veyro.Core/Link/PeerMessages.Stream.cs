@@ -17,7 +17,10 @@ namespace Veyro.Core.Link;
 [JsonDerivedType(typeof(StreamStop), "streamStop")]
 public abstract partial record PeerMessage
 {
-    /// <summary>Phone to PC, after hello and whenever a value changes. Untrusted: check with <see cref="StreamRules"/>.</summary>
+    /// <summary>
+    /// Phone to PC, after hello and whenever a value changes. Untrusted: check with <see cref="StreamRules"/>.
+    /// <c>Audio</c>: the phone can capture its internal audio (what apps play, Android 10+), never the microphone.
+    /// </summary>
     public sealed record StreamCaps(
         [property: JsonPropertyName("allowed")] bool Allowed = false,
         [property: JsonPropertyName("screen")] StreamScreen? Screen = null,
@@ -36,7 +39,11 @@ public abstract partial record PeerMessage
         [property: JsonPropertyName("maxH")] int MaxH,
         [property: JsonPropertyName("fps")] int Fps);
 
-    /// <summary>PC to phone: start mirroring with exactly these settings.</summary>
+    /// <summary>
+    /// PC to phone: start mirroring with exactly these settings. <c>Audio</c> requests the phone's
+    /// internal audio (playback capture only). The phone may need Android's audio permission for
+    /// it once; if refused it streams video alone and reports <c>audio: false</c> in StreamState.
+    /// </summary>
     public sealed record StreamStart(
         [property: JsonPropertyName("sid")] string Sid,
         [property: JsonPropertyName("source")] string Source,

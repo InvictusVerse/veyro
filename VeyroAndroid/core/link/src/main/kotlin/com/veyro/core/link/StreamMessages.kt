@@ -21,7 +21,10 @@ public data class StreamCaps(
     val screen: StreamScreen? = null,
     /** Every usable encoder, hardware and software; the PC picks one. */
     val encoders: List<StreamEncoder> = emptyList(),
-    /** Playback audio can be captured (Android 10+, permission granted or askable). */
+    /**
+     * This phone can capture its internal audio, what apps play (Android 10+ playback capture).
+     * Never the microphone. Whether to send it is the PC's choice ([StreamStart.audio]).
+     */
     val audio: Boolean = false,
 ) : PeerMessage
 
@@ -44,6 +47,12 @@ public data class StreamStart(
     val maxLong: Int,
     val fps: Int,
     val bitrate: Int,
+    /**
+     * The PC asks for the phone's internal audio (playback capture only, never the microphone).
+     * Android grants playback capture only with its audio permission, which it labels
+     * "Microphone"; the phone asks for it the first time the PC requests audio, and streams
+     * video alone (reporting `audio: false`) if the user refuses.
+     */
     val audio: Boolean = false,
     /** Where the PC listens for this session's VMS1 socket. */
     val host: String,

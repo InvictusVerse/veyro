@@ -15,6 +15,7 @@ public sealed record MirrorQuality(
     bool HardwareEncode = true,
     bool HardwareDecode = true,
     bool PreferHevc = false,
+    /// <summary>Request the phone's internal audio (what apps play). Never the microphone.</summary>
     bool Audio = true)
 {
     public static readonly MirrorQuality BatterySaver = new(1280, 30, 4_000_000);
