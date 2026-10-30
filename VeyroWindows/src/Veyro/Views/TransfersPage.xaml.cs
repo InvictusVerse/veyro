@@ -26,6 +26,13 @@ public sealed partial class TransfersPage : Page
     private void OpenReceived_Click(object sender, RoutedEventArgs e)
     {
         if (ExistingTarget(sender) is not { } target) return;
+        // A received program, script or shortcut is never started from here: it is selected in
+        // Explorer, where the user decides (it came from another device and has no Mark of the Web).
+        if (!ReceivedHistory.CanOpenDirectly(target))
+        {
+            ShowReceivedInFolder_Click(sender, e);
+            return;
+        }
         try { Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = true }); }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
         {

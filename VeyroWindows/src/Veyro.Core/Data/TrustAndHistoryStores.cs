@@ -213,17 +213,46 @@ public sealed class FileTransferHistoryStore : ITransferHistoryStore
     public IReadOnlyList<TransferRecord> GetHistory()
         => _records.OrderByDescending(r => r.Timestamp).ToList();
 
+    /// <summary>Newest entries kept; older ones are dropped when a new one is added.</summary>
+    public const int MaxRecords = 500;
+
+    // One save at a time: a send and a receive that end together would otherwise both write
+    // history.json.tmp. Edits to the list happen under the same lock.
+    private readonly SemaphoreSlim _saveLock = new(1, 1);
+
     public async Task UpsertAsync(TransferRecord record)
     {
-        _records.RemoveAll(r => r.TransferId == record.TransferId);
-        _records.Insert(0, record);
-        await SaveAsync().ConfigureAwait(false);
+        await _saveLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _records.RemoveAll(r => r.TransferId == record.TransferId);
+            _records.Insert(0, record);
+            if (_records.Count > MaxRecords)
+            {
+                var keep = _records.OrderByDescending(r => r.Timestamp).Take(MaxRecords).ToList();
+                _records.Clear();
+                _records.AddRange(keep);
+            }
+            await SaveAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _saveLock.Release();
+        }
     }
 
     public async Task ClearAsync()
     {
-        _records.Clear();
-        await SaveAsync().ConfigureAwait(false);
+        await _saveLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _records.Clear();
+            await SaveAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _saveLock.Release();
+        }
     }
 
     private async Task SaveAsync()

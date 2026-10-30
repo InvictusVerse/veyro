@@ -52,6 +52,28 @@ public static class ReceivedHistory
     }
 
     /// <summary>
+    /// File types Windows runs rather than shows: programs, installers, scripts, shortcuts and
+    /// settings files. A file from a phone is untrusted (a phone can be compromised, or the user
+    /// can be tricked into sending one), and received files carry no Mark of the Web, so
+    /// SmartScreen would not warn. Open selects these in Explorer instead of starting them.
+    /// </summary>
+    private static readonly HashSet<string> RunnableExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".com", ".scr", ".pif", ".cpl", ".msi", ".msp", ".msix", ".msixbundle", ".appx", ".appxbundle",
+        ".appinstaller", ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".hta", ".lnk", ".url", ".reg", ".inf", ".jar", ".application", ".gadget", ".msc", ".scf", ".chm", ".dll", ".sys",
+    };
+
+    /// <summary>True when Open may hand <paramref name="path"/> to the shell; false for a runnable type.</summary>
+    public static bool CanOpenDirectly(string path)
+    {
+        if (Directory.Exists(path)) return true;
+        // Trailing dots and spaces are stripped by Windows when it resolves the name.
+        string name = Path.GetFileName(path).TrimEnd('.', ' ');
+        return !RunnableExtensions.Contains(Path.GetExtension(name));
+    }
+
+    /// <summary>
     /// What Open and Show in folder use for a received entry: the saved folder for a folder, else
     /// the first saved file. Null for a send, or when nothing was saved or the path is not inside
     /// the record's received-files folder.

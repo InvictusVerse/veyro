@@ -229,4 +229,53 @@ public sealed class ReceivedHistoryTests : IAsyncLifetime
         Assert.Equal("Trip", stored.FolderName);
         Assert.Equal(VerificationOutcome.Declined, stored.Verification);
     }
+
+    /// <summary>Open never starts a received program, script or shortcut; it selects it in Explorer.</summary>
+    [Theory]
+    [InlineData("setup.exe", false)]
+    [InlineData("SETUP.EXE", false)]
+    [InlineData("run.cmd", false)]
+    [InlineData("tool.ps1", false)]
+    [InlineData("link.lnk", false)]
+    [InlineData("site.url", false)]
+    [InlineData("installer.msi", false)]
+    [InlineData("app.msix", false)]
+    [InlineData("evil.exe.", false)]
+    [InlineData("evil.exe ", false)]
+    [InlineData("photo.jpg", true)]
+    [InlineData("report.pdf", true)]
+    [InlineData("song.mp3", true)]
+    [InlineData("notes.txt", true)]
+    [InlineData("README", true)]
+    public void Open_NeverStartsARunnableFile(string name, bool canOpen)
+    {
+        Assert.Equal(canOpen, ReceivedHistory.CanOpenDirectly(Path.Combine(_root, "dl", name)));
+    }
+
+    [Fact]
+    public void Open_AFolderIsAlwaysShown()
+    {
+        string folder = Path.Combine(_root, "dl", "Trip.exe");
+        Directory.CreateDirectory(folder);
+        Assert.True(ReceivedHistory.CanOpenDirectly(folder));
+    }
+
+    [Fact]
+    public async Task HistoryStore_KeepsTheNewestEntriesAndSavesOneAtATime()
+    {
+        string data = Path.Combine(_root, "cap");
+        Directory.CreateDirectory(data);
+        var store = new FileTransferHistoryStore(data);
+        DateTimeOffset start = DateTimeOffset.UtcNow.AddDays(-1);
+        // Many saves at once: none may fail on the shared temp file, and the cap holds.
+        var saves = Enumerable.Range(0, FileTransferHistoryStore.MaxRecords + 20).Select(i =>
+            Task.Run(() => store.UpsertAsync(new TransferRecord($"t{i}", "p", "Phone", false, start.AddSeconds(i), 1,
+                VerificationOutcome.Verified, []))));
+        await Task.WhenAll(saves);
+
+        IReadOnlyList<TransferRecord> reloaded = new FileTransferHistoryStore(data).GetHistory();
+        Assert.Equal(FileTransferHistoryStore.MaxRecords, reloaded.Count);
+        Assert.Equal($"t{FileTransferHistoryStore.MaxRecords + 19}", reloaded[0].TransferId);
+        Assert.DoesNotContain(reloaded, r => r.TransferId == "t0");
+    }
 }
