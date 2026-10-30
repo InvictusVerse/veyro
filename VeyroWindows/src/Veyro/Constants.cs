@@ -3,7 +3,7 @@ namespace Veyro;
 public static class Constants
 {
     public const string AppDisplayName = "Veyro";
-    public const string ProtocolVersionText = "VLP v1 (VTC1 TCP + WebSocket)";
+    public const string ProtocolVersionText = "VLP link v3 (VTC3 TCP + WebSocket)";
 
     public static string LocalAppDataDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Veyro");

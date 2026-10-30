@@ -12,6 +12,11 @@ public interface IOutboundTransferChannel : IDisposable
 
     /// <summary>Sends on the session this channel is bound to (not a newer one that replaced it).</summary>
     Task SendAsync(PeerMessage message, CancellationToken ct = default);
+    /// <summary>
+    /// The key exporter of that same session (04-PROTOCOL.md 5.4, ADR-058): the VTC3 data socket
+    /// derives its keys from it, so only the session that carried the offer can open its data.
+    /// </summary>
+    byte[] ExportKey(string label, byte[] context, int length);
 
     /// <summary>
     /// Completes with the phone's decision. A <c>cancel</c> before the decision completes it as a
@@ -41,10 +46,10 @@ public sealed class TransferMailbox
     private bool _closed;
 
     /// <summary>Starts routing messages for <paramref name="transferId"/> to the returned entry.</summary>
-    public Entry Register(string transferId, Func<PeerMessage, CancellationToken, Task> send)
+    public Entry Register(string transferId, Func<PeerMessage, CancellationToken, Task> send, Func<string, byte[], int, byte[]>? exportKey = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(transferId);
-        var entry = new Entry(this, transferId, send);
+        var entry = new Entry(this, transferId, send, exportKey);
         lock (_gate)
         {
             if (_closed) throw new InvalidOperationException("The peer has no live session.");
@@ -104,15 +109,17 @@ public sealed class TransferMailbox
     {
         private readonly TransferMailbox _owner;
         private readonly Func<PeerMessage, CancellationToken, Task> _send;
+        private readonly Func<string, byte[], int, byte[]>? _exportKey;
         private readonly TaskCompletionSource<PeerMessage.TransferDecision> _decision =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CancellationTokenSource _aborted = new();
         private int _disposed;
 
-        internal Entry(TransferMailbox owner, string transferId, Func<PeerMessage, CancellationToken, Task> send)
+        internal Entry(TransferMailbox owner, string transferId, Func<PeerMessage, CancellationToken, Task> send, Func<string, byte[], int, byte[]>? exportKey = null)
         {
             _owner = owner;
             _send = send;
+            _exportKey = exportKey;
             TransferId = transferId;
         }
 
@@ -123,6 +130,10 @@ public sealed class TransferMailbox
         public PeerMessage.TransferEnd? End { get; private set; }
 
         public Task SendAsync(PeerMessage message, CancellationToken ct = default) => _send(message, ct);
+
+        /// <summary>The carrying session's key exporter (04-PROTOCOL.md 5.4).</summary>
+        public byte[] ExportKey(string label, byte[] context, int length)
+            => (_exportKey ?? throw new InvalidOperationException("This session exports no keys."))(label, context, length);
 
         public async Task<PeerMessage.TransferDecision> WaitForDecisionAsync(TimeSpan timeout, CancellationToken ct = default)
             => await _decision.Task.WaitAsync(timeout, ct).ConfigureAwait(false);

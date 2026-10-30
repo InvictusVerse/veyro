@@ -170,6 +170,10 @@ public partial class App : Application
         {
             await VeyroContainer.Instance.LinkServer.StartAsync();
         }
+        catch (PlatformNotSupportedException)
+        {
+            ReportAeadMissing();
+        }
         catch (Exception error)
         {
             VeyroContainer.Instance.StartupError = $"PC listener unavailable: {error.Message}";
@@ -186,6 +190,48 @@ public partial class App : Application
     public static bool TryEnterDialog() => DialogGate.Wait(0);
 
     public static void ExitDialog() => DialogGate.Release();
+
+    // ADR-058: Windows 11 (build 22000) is the minimum; the link needs the platform ChaCha20-Poly1305.
+    internal const string AeadMissingTitle = "Veyro cannot connect on this PC";
+    internal const string AeadMissingBody =
+        "Veyro needs Windows 11 to encrypt the connection to your phone. This version of Windows does not provide the ChaCha20-Poly1305 cipher, so Veyro will not connect. Update to Windows 11 to use Veyro.";
+    private static bool _aeadMissingShown;
+
+    /// <summary>
+    /// The listener refused to start without ChaCha20-Poly1305. The pairing screen shows
+    /// <see cref="VeyroContainer.StartupError"/>; the dialog appears once if the window is on screen.
+    /// Fixed text, not the exception message.
+    /// </summary>
+    private static void ReportAeadMissing()
+    {
+        VeyroContainer.Instance.StartupError = AeadMissingBody;
+        VeyroTrace.Error("The link cannot start: ChaCha20-Poly1305 is not available on this version of Windows");
+        if (_aeadMissingShown) return;
+        _ = MainWindow.DispatcherQueue.TryEnqueue(async () =>
+        {
+            if (_aeadMissingShown || !IsWindowOnScreen(MainWindow) || MainWindow.Content?.XamlRoot is not { } root) return;
+            if (!TryEnterDialog()) return;
+            _aeadMissingShown = true;
+            try
+            {
+                await new ContentDialog
+                {
+                    Title = AeadMissingTitle,
+                    Content = AeadMissingBody,
+                    CloseButtonText = "OK",
+                    XamlRoot = root
+                }.ShowAsync();
+            }
+            catch (Exception error)
+            {
+                VeyroTrace.Warn($"Windows version dialog could not be shown: {error.GetType().Name}");
+            }
+            finally
+            {
+                ExitDialog();
+            }
+        });
+    }
 
     /// <summary>Shown and not minimised: a dialog in it would be seen. UI thread.</summary>
     public static bool IsWindowOnScreen(Window window)
@@ -255,7 +301,15 @@ public partial class App : Application
         {
             if (SyncPaused)
             {
-                await container.LinkServer.StartAsync();
+                try
+                {
+                    await container.LinkServer.StartAsync();
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    ReportAeadMissing();
+                    return;
+                }
                 await container.DeviceManager.RefreshDiscoveryAsync();
                 SyncPaused = false;
                 VeyroTrace.Info("Sync resumed from the tray");

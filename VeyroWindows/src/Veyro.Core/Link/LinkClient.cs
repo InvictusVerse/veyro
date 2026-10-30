@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
+using Veyro.Core.Crypto;
 using Veyro.Core.Models;
 using Veyro.Core.Protocol;
 using Veyro.Core.Transfer;
@@ -137,7 +138,8 @@ public sealed class LinkClient
         await session.SendAsync(plan.Offer, ct).ConfigureAwait(false);
 
         PeerMessage.TransferDecision decision = await ReceiveDecisionAsync(session, plan.TransferId, ct).ConfigureAwait(false);
-        return await RunDataPlaneAsync(plan, decision, progress, ct).ConfigureAwait(false);
+        // ADR-058: the data socket's keys come from this session's exporter.
+        return await RunDataPlaneAsync(plan, decision, Vtc3.KeyDeriver(session.ExportKey, plan.TransferId), progress, ct).ConfigureAwait(false);
     }
 
     /// <summary>Bounds connect, preamble and Hello of a dialled persistent session.</summary>
@@ -156,8 +158,10 @@ public sealed class LinkClient
     /// connected (the phone could not reconnect: app killed, battery saver). Preamble with the
     /// stored session secret, encrypted Hello with this PC's full capabilities, then the session
     /// is handed to <paramref name="runner"/>, which registers it exactly like an inbound one and
-    /// keeps it running until it closes or the listener stops. Returns true once it is registered;
-    /// false when the phone connected on its own during the handshake (nothing is replaced then).
+    /// keeps it running until it closes or the listener stops. Returns true once it is registered,
+    /// which (ADR-058) happens only after the phone's first frame opened under this connection's
+    /// keys; false when the phone connected on its own during the handshake (nothing is replaced
+    /// then) or never authenticated.
     /// The endpoint comes from discovery and is untrusted; the session secret authenticates the
     /// phone. Throws when the phone refuses or cannot be reached.
     /// </summary>
@@ -198,10 +202,11 @@ public sealed class LinkClient
         IPAddress? remote = IPAddress.TryParse(endpoint.Host, out IPAddress? parsed) ? parsed : null;
         var addresses = new SessionAddresses(remote, remote is null ? null : LocalAddressFor(remote));
         Task run;
+        var registered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             // The session lives as long as the listener, not as long as this call.
-            run = runner.RunOutboundSessionAsync(session, trustedPeer, addresses, CancellationToken.None);
+            run = runner.RunOutboundSessionAsync(session, trustedPeer, addresses, CancellationToken.None, registered);
         }
         catch
         {
@@ -210,32 +215,42 @@ public sealed class LinkClient
         }
         _ = run.ContinueWith(_ => session.DisposeAsync().AsTask(), CancellationToken.None,
             TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
-        return true;
+        return await registered.Task.WaitAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Connect, preamble, and the encrypted session under the stored secret (shared by the
-    /// one-transfer fallback and the persistent dial). The returned session owns the socket.
+    /// Connect, preamble, ack and this connection's session keys (04-PROTOCOL.md 4.2): a fresh
+    /// ephemeral X25519 exchange mixed with the stored pairing secret over the transcript of the
+    /// exact preamble and ack bytes. Shared by the one-transfer fallback and the persistent dial.
+    /// The returned session owns the socket.
     /// </summary>
     private async Task<SecureLinkSession> ConnectAuthenticatedAsync(
         PeerEndpoint endpoint, TrustedPeer trustedPeer, CancellationToken ct, TimeSpan? ackTimeout = null)
     {
+        string peerId = Models.DeviceId.ParseOrNull(trustedPeer.DeviceId)?.Value
+            ?? throw new CryptographicException("Stored peer id is malformed.");
         byte[] secret;
         try { secret = Convert.FromBase64String(trustedPeer.PairingSecretBase64); }
         catch (FormatException ex) { throw new CryptographicException("Stored peer secret is malformed.", ex); }
         if (secret.Length != 32) throw new CryptographicException("Stored peer secret has invalid length.");
 
         var socket = new ClientWebSocket { Options = { KeepAliveInterval = TimeSpan.FromSeconds(20) } };
+        using EphemeralKey eph = EphemeralKey.Generate();
+        LinkKeys keys;
         try
         {
             await socket.ConnectAsync(new Uri($"ws://{endpoint.Host}:{endpoint.Port}/veyro"), ct).ConfigureAwait(false);
-            await SendTextAsync(socket, PeerMessageJson.Encode(new LinkPreamble(_localDeviceId, _localName, "windows")), ct).ConfigureAwait(false);
+            byte[] preambleBytes = Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(
+                _localDeviceId, _localName, "windows",
+                Cn: Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                Epk: Convert.ToBase64String(eph.PublicKey))));
+            await socket.SendAsync(preambleBytes, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
 
-            string reply;
+            byte[] reply;
             using (var ackWait = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
                 if (ackTimeout is { } limit) ackWait.CancelAfter(limit);
-                try { reply = await ReceiveTextAsync(socket, ackWait.Token).ConfigureAwait(false); }
+                try { reply = await ReceiveFrameAsync(socket, ackWait.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (ackWait.IsCancellationRequested && !ct.IsCancellationRequested)
                 {
                     // A phone that trusts this PC answers at once; one that does not holds the
@@ -243,17 +258,27 @@ public sealed class LinkClient
                     throw new SessionRefusedException("no-answer");
                 }
             }
-            LinkPreambleAck ack = PeerMessageJson.Decode<LinkPreambleAck>(reply)
+            LinkPreambleAck ack = PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(reply))
                 ?? throw new InvalidDataException("Peer returned an invalid VLP preamble response.");
             if (!string.Equals(ack.Mode, LinkPreambleAck.ModeSession, StringComparison.Ordinal))
                 throw new SessionRefusedException(ack.Reason ?? ack.Mode, isBusy: string.Equals(ack.Mode, "busy", StringComparison.Ordinal));
+            byte[] peerEpk = FrameCrypto.DecodeKey32(ack.Epk) ?? throw new InvalidDataException("Peer ack has no valid epk.");
+            if (FrameCrypto.DecodeKey32(ack.Cn) is null) throw new InvalidDataException("Peer ack has no valid cn.");
+            byte[] transcript = ConnectionKeySchedule.Transcript(preambleBytes, reply);
+            byte[] dh = eph.Agree(peerEpk);
+            try { keys = ConnectionKeySchedule.Session(LinkRole.Initiator, _localDeviceId, peerId, transcript, dh, secret); }
+            finally { CryptographicOperations.ZeroMemory(dh); }
         }
         catch
         {
             socket.Dispose();
             throw;
         }
-        return new SecureLinkSession(socket, _localDeviceId, secret, encrypt: true, trustedPeer.DeviceId);
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secret);
+        }
+        return new SecureLinkSession(socket, keys);
     }
 
     /// <summary>
@@ -300,7 +325,8 @@ public sealed class LinkClient
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, channel.PeerAborted);
         try
         {
-            return await RunDataPlaneAsync(plan, decision, progress, linked.Token).ConfigureAwait(false);
+            // ADR-058: only the session that carried the offer can derive the data socket's keys.
+            return await RunDataPlaneAsync(plan, decision, Vtc3.KeyDeriver(channel.ExportKey, plan.TransferId), progress, linked.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is OperationCanceledException or IOException or System.Net.Sockets.SocketException
                                           or InvalidDataException &&
@@ -377,10 +403,11 @@ public sealed class LinkClient
         return new TransferPlan(transferId, items, offer);
     }
 
-    /// <summary>Validates the decision and runs VTC1 to the endpoint it names.</summary>
+    /// <summary>Validates the decision and runs VTC3 to the endpoint it names.</summary>
     private async Task<BulkTransferResult> RunDataPlaneAsync(
         TransferPlan plan,
         PeerMessage.TransferDecision decision,
+        Func<byte[], byte[], byte[]> deriveKeys,
         IProgress<long>? progress,
         CancellationToken ct)
     {
@@ -401,6 +428,7 @@ public sealed class LinkClient
             decision.AuthToken,
             _localDeviceId,
             plan.Items.Select(item => new OutboundTransferItem(item.Index, item.Path, item.RelativePath)).ToList(),
+            deriveKeys,
             resume: decision.Resume,
             progress: progress,
             ct: ct).ConfigureAwait(false);
@@ -451,15 +479,13 @@ public sealed class LinkClient
         }
     }
 
-    private static async Task SendTextAsync(ClientWebSocket socket, string text, CancellationToken ct)
-        => await socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
-
-    private static async Task<string> ReceiveTextAsync(ClientWebSocket socket, CancellationToken ct)
+    /// <summary>One complete text frame, as raw bytes: the transcript hashes exactly these.</summary>
+    private static async Task<byte[]> ReceiveFrameAsync(ClientWebSocket socket, CancellationToken ct)
     {
         byte[] buffer = new byte[MaxPreambleBytes];
         WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
         if (result.MessageType != WebSocketMessageType.Text || !result.EndOfMessage || result.Count > MaxPreambleBytes)
             throw new InvalidDataException("Invalid VLP preamble frame.");
-        return Encoding.UTF8.GetString(buffer, 0, result.Count);
+        return buffer.AsSpan(0, result.Count).ToArray();
     }
 }

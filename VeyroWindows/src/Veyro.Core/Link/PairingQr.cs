@@ -12,37 +12,39 @@ public sealed record PairingQrPayload(
     string DeviceId,
     string Name,
     IReadOnlyList<IPEndPoint> Endpoints,
-    string Code,
+    byte[] Secret,
     long ExpiresAtUnixSeconds)
 {
     /// <summary>The phone's rule: reject when <c>now &gt; e + 600</c>, which tolerates clock skew.</summary>
     public bool IsExpired(DateTimeOffset now)
         => now.ToUnixTimeSeconds() > ExpiresAtUnixSeconds + PairingQr.ClockSkewSeconds;
 
-    /// <summary>Never print the code: records would otherwise leak it into any log line.</summary>
+    /// <summary>Never print the secret: records would otherwise leak it into any log line.</summary>
     public override string ToString() => $"PairingQrPayload(id={DeviceId}, endpoints={Endpoints.Count})";
 }
 
 /// <summary>
-/// Builds and parses <c>veyro:pair?v=1&amp;id=..&amp;n=..&amp;a=..&amp;c=..&amp;e=..</c>.
-/// Out of band, not on the wire: the code feeds the existing PIN bootstrap unchanged, so
-/// <c>VLP_VERSION</c> does not move. The content holds the pairing code and is never logged.
+/// Builds and parses <c>veyro:pair?v=2&amp;id=..&amp;n=..&amp;a=..&amp;s=..&amp;e=..</c> (format 2, ADR-058).
+/// Out of band, not on the wire. <c>s</c> is a 128-bit secret as 22 characters of unpadded
+/// base64url; the phone proves it holds it and the secret enters the pairing keys. Mirrors
+/// com.veyro.core.protocol.PairingQrCode. The content holds the secret and is never logged.
 /// </summary>
 public static class PairingQr
 {
     public const string Prefix = "veyro:pair?";
-    public const int FormatVersion = 1;
+    public const int FormatVersion = Protocol.ProtocolConstants.QrFormatVersion;
     public const int MaxNameBytes = 64;
     public const int MaxEndpoints = 4;
     public const long ClockSkewSeconds = 600;
-    public const int CodeLength = 6;
+    public const int SecretSize = 16;
+    public const int SecretLength = 22;
 
     public static string Build(PairingQrPayload payload)
     {
         if (Models.DeviceId.ParseOrNull(payload.DeviceId) is not { } id)
             throw new ArgumentException("Invalid device id.", nameof(payload));
-        if (!IsValidCode(payload.Code))
-            throw new ArgumentException("The pairing code must be exactly 6 digits.", nameof(payload));
+        if (payload.Secret is not { Length: SecretSize })
+            throw new ArgumentException("The pairing secret must be 16 bytes.", nameof(payload));
         List<IPEndPoint> endpoints = payload.Endpoints.Take(MaxEndpoints).ToList();
         if (endpoints.Count == 0)
             throw new ArgumentException("At least one endpoint is required.", nameof(payload));
@@ -60,7 +62,7 @@ public static class PairingQr
         builder.Append("&n=").Append(Uri.EscapeDataString(TruncateName(name)));
         builder.Append("&a=").Append(string.Join(',', endpoints.Select(e =>
             $"{e.Address}:{e.Port.ToString(CultureInfo.InvariantCulture)}")));
-        builder.Append("&c=").Append(payload.Code);
+        builder.Append("&s=").Append(EncodeSecret(payload.Secret));
         builder.Append("&e=").Append(payload.ExpiresAtUnixSeconds.ToString(CultureInfo.InvariantCulture));
         return builder.ToString();
     }
@@ -82,9 +84,9 @@ public static class PairingQr
             if (!fields.TryAdd(part[..eq], part[(eq + 1)..])) return null;
         }
 
-        if (!fields.TryGetValue("v", out string? v) || v != "1") return null;
+        if (!fields.TryGetValue("v", out string? v) || v != FormatVersion.ToString(CultureInfo.InvariantCulture)) return null;
         if (!fields.TryGetValue("id", out string? rawId) || Models.DeviceId.ParseOrNull(rawId) is not { } id) return null;
-        if (!fields.TryGetValue("c", out string? code) || !IsValidCode(code)) return null;
+        if (!fields.TryGetValue("s", out string? rawSecret) || DecodeSecret(rawSecret) is not { } secret) return null;
         if (!fields.TryGetValue("e", out string? rawExpiry) ||
             !long.TryParse(rawExpiry, NumberStyles.None, CultureInfo.InvariantCulture, out long expiry)) return null;
         if (!fields.TryGetValue("a", out string? rawEndpoints)) return null;
@@ -107,7 +109,7 @@ public static class PairingQr
             if (Encoding.UTF8.GetByteCount(name) > MaxNameBytes) return null;
         }
 
-        return new PairingQrPayload(id.Value, name, endpoints, code, expiry);
+        return new PairingQrPayload(id.Value, name, endpoints, secret, expiry);
     }
 
     /// <summary>
@@ -131,8 +133,35 @@ public static class PairingQr
         return builder.ToString();
     }
 
-    public static bool IsValidCode(string? code)
-        => code is { Length: CodeLength } && code.All(char.IsAsciiDigit);
+    /// <summary>Unpadded base64url of the 16-byte secret: 22 characters.</summary>
+    public static string EncodeSecret(byte[] secret)
+        => Convert.ToBase64String(secret).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    /// <summary>
+    /// Strict: exactly 22 characters of <c>[A-Za-z0-9_-]</c> whose last character has its low
+    /// 4 bits zero (canonical). Null otherwise.
+    /// </summary>
+    public static byte[]? DecodeSecret(string? text)
+    {
+        if (text is not { Length: SecretLength }) return null;
+        foreach (char c in text)
+        {
+            if (!(char.IsAsciiLetterOrDigit(c) || c == '-' || c == '_')) return null;
+        }
+        int last = Base64UrlValue(text[^1]);
+        if ((last & 0x0F) != 0) return null;
+        try { return Convert.FromBase64String(text.Replace('-', '+').Replace('_', '/') + "=="); }
+        catch (FormatException) { return null; }
+    }
+
+    private static int Base64UrlValue(char c) => c switch
+    {
+        >= 'A' and <= 'Z' => c - 'A',
+        >= 'a' and <= 'z' => c - 'a' + 26,
+        >= '0' and <= '9' => c - '0' + 52,
+        '-' => 62,
+        _ => 63
+    };
 
     /// <summary>Private (10/8, 172.16/12, 192.168/16) or link-local (169.254/16) IPv4 only.</summary>
     public static bool IsAdvertisable(IPAddress address)
