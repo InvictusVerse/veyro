@@ -592,14 +592,11 @@ public sealed class SmsCallsSessionTests
 
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/veyro"), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(phoneId, "Phone", "android"))),
-                WebSocketMessageType.Text, true, ct);
-            byte[] buffer = new byte[4096];
-            WebSocketReceiveResult ackFrame = await socket.ReceiveAsync(buffer, ct);
-            Assert.Equal(LinkPreambleAck.ModeSession,
-                PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ackFrame.Count))?.Mode);
+            var v3dial = new V3Dialer(phoneId);
+            LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Phone", ct);
+            Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
 
-            await using var phone = new SecureLinkSession(socket, phoneId, secret, encrypt: true, expectedPeerId: pcId);
+            await using var phone = new SecureLinkSession(socket, v3dial.SessionKeys(pcId, secret));
             const int family = PeerCapabilities.Messaging | PeerCapabilities.Calls;
             await phone.SendAsync(new PeerMessage.Hello(phoneId, "Phone", "android", Capabilities: PeerCapabilities.FileTransfer | family), ct);
             var helloAck = Assert.IsType<PeerMessage.HelloAck>((await phone.ReceiveAsync(ct))!.Envelope.Payload);

@@ -44,34 +44,36 @@ class ControlMessageVectorTest {
         val encoded = json.encodeToString(LinkPreamble(id = deviceId, name = "Test Phone"))
         // encodeDefaults = true, so platform and protocolVersion appear even at their defaults.
         requireKeys(encoded, "id", "name", "platform", "protocolVersion")
-        forbidKeys(encoded, "pair", "pk")
+        forbidKeys(encoded, "pair", "pk", "cn", "epk")
 
-        val decoded = json.decodeFromString<LinkPreamble>(
-            """{"id":"$deviceId","name":"Test Phone","platform":"android","protocolVersion":2}""",
-        )
-        assertEquals(deviceId, decoded.id)
+        val v3 = V3Vectors.load("link/connection-schedule-v3.json").arr("vectors")[0].let { it as JsonObject }.obj("input")
+        val decoded = json.decodeFromString<LinkPreamble>(v3.str("preamble"))
+        assertEquals("2C9VV72DFSF1A2SC0TN6QBAPEC", decoded.id)
         assertEquals("android", decoded.platform)
-        assertEquals(2, decoded.protocolVersion)
-        assertEquals(2, LINK_PROTOCOL_VERSION)
+        assertEquals(3, decoded.protocolVersion)
+        assertEquals(3, LINK_PROTOCOL_VERSION)
+        assertEquals(32, FrameCrypto.decodeKey32(decoded.cn)?.size)
+        assertEquals(32, FrameCrypto.decodeKey32(decoded.epk)?.size)
+        requireKeys(json.encodeToString(decoded), "id", "name", "platform", "protocolVersion", "cn", "epk")
+        val ack = json.decodeFromString<LinkPreambleAck>(v3.str("ack"))
+        assertEquals(LinkPreambleAck.MODE_SESSION, ack.mode)
+        requireKeys(json.encodeToString(ack), "mode", "cn", "epk")
     }
 
     @Test
     fun `vector - confirm pairing preamble, ack and nonce`() {
         val pkA = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="
-        val preamble = json.decodeFromString<LinkPreamble>(
-            """{"id":"2C9VV72DFSF1A2SC0TN6QBAPEC","name":"Test Phone","platform":"android","protocolVersion":2,"pair":"confirm","pk":"$pkA"}""",
-        )
+        val confirm = V3Vectors.load("link/pairing-schedule-v3.json").obj("confirm").obj("input")
+        val preamble = json.decodeFromString<LinkPreamble>(confirm.str("preamble"))
         assertEquals(LinkPreamble.PAIR_CONFIRM, preamble.pair)
         assertEquals(pkA, preamble.pk)
-        requireKeys(json.encodeToString(preamble), "id", "name", "platform", "protocolVersion", "pair", "pk")
+        requireKeys(json.encodeToString(preamble), "id", "name", "platform", "protocolVersion", "pair", "pk", "cn", "epk")
 
-        val ack = json.decodeFromString<LinkPreambleAck>(
-            """{"mode":"pairing-confirm","pk":"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=","commit":"SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM="}""",
-        )
+        val ack = json.decodeFromString<LinkPreambleAck>(confirm.str("ack"))
         assertEquals(LinkPreambleAck.MODE_PAIRING_CONFIRM, ack.mode)
         assertEquals("SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=", ack.commit)
         val reEncoded = json.encodeToString(ack)
-        requireKeys(reEncoded, "mode", "pk", "commit")
+        requireKeys(reEncoded, "mode", "pk", "commit", "cn", "epk")
         forbidKeys(reEncoded, "reason")
 
         val nonce = json.decodeFromString<LinkPairNonce>(
@@ -105,42 +107,30 @@ class ControlMessageVectorTest {
     // ── Wire frame ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `vector - session frame carries c and not p`() {
-        val frame = LinkWireFrame(
-            from = deviceId,
-            nonce = "AAECAwQFBgcICQoL",
-            ciphertext = "Y2lwaGVydGV4dA==",
-            mac = "bWFj",
-        )
+    fun `vector - v3 frame carries exactly f and c`() {
+        val frame = LinkWireFrame(from = deviceId, ciphertext = "Y2lwaGVydGV4dA==")
         val encoded = json.encodeToString(frame)
-        requireKeys(encoded, "f", "n", "c", "m")
-        forbidKeys(encoded, "p")
-
+        requireKeys(encoded, "f", "c")
+        forbidKeys(encoded, "n", "p", "m")
         assertEquals(frame, json.decodeFromString<LinkWireFrame>(encoded))
     }
 
     @Test
-    fun `vector - pairing frame carries p and not c`() {
-        val frame = LinkWireFrame(
-            from = deviceId,
-            nonce = "AAECAwQFBgcICQoL",
-            plaintext = "cGxhaW50ZXh0",
-            mac = "bWFj",
-        )
-        val encoded = json.encodeToString(frame)
-        requireKeys(encoded, "f", "n", "p", "m")
-        forbidKeys(encoded, "c")
+    fun `vector - pairHello carries qrProof only for QR pairing`() {
+        val qr = PeerMessage.PairHello(deviceId, "n", "android", "1", publicKeyB64 = "a", qrProof = "b")
+        assertTrue("qrProof" in keysOf(json.encodeToString<PeerMessage>(qr)))
+        assertFalse("qrProof" in keysOf(json.encodeToString<PeerMessage>(qr.copy(qrProof = null))))
     }
 
     // ── Envelope ───────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `vector - envelope wrapping a ping`() {
-        val text = """{"v":2,"msgId":"m-1","from":"$deviceId","seq":7,"ts":1760000000000,""" +
+        val text = """{"v":3,"msgId":"m-1","from":"$deviceId","seq":7,"ts":1760000000000,""" +
             """"payload":{"t":"ping","nonce":"abc"}}"""
 
         val env = json.decodeFromString<LinkEnvelope>(text)
-        assertEquals(2, env.v)
+        assertEquals(3, env.v)
         assertEquals(7L, env.seq)
         assertEquals(1760000000000L, env.ts)
 

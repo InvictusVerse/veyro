@@ -6,6 +6,7 @@ using System.Text;
 using Veyro.Core.Data;
 using Veyro.Core.Link;
 using Veyro.Core.Models;
+using Veyro.Core.Protocol;
 using Veyro.Core.Transfer;
 using Xunit;
 
@@ -57,12 +58,10 @@ public sealed class FolderTransferTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Phone", "android"))),
-            WebSocketMessageType.Text, true, Ct);
-        byte[] buffer = new byte[4096];
-        WebSocketReceiveResult ack = await socket.ReceiveAsync(buffer, Ct);
-        Assert.Equal(LinkPreambleAck.ModeSession, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
-        var phone = new SessionTransferTests.FakePhone(socket, new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId));
+        var v3dial = new V3Dialer(PhoneId);
+        LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Phone", Ct);
+        Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
+        var phone = new SessionTransferTests.FakePhone(socket, new SecureLinkSession(socket, v3dial.SessionKeys(PcId, _secret)));
         await phone.Session.SendAsync(new PeerMessage.Hello(PhoneId, "Phone", "android", capabilities), Ct);
         var helloAck = await phone.ReceiveAsync<PeerMessage.HelloAck>(Ct);
         // The PC says it takes folders (ADR-064).
@@ -105,7 +104,8 @@ public sealed class FolderTransferTests : IAsyncLifetime
         var files = offer.Items.Where(i => !i.IsDir).Select(i => new InboundTransferItem(i.Index, i.RelPath, i.Size)).ToList();
         Task<BulkTransferResult> receive = Task.Run(async () =>
         {
-            try { return await BulkTransfer.ReceiveAsync(tcp, offer.TransferId, token, PcId, phoneInbox, files, ct: Ct); }
+            try { return await BulkTransfer.ReceiveAsync(tcp, offer.TransferId, token, PcId, phoneInbox, files,
+                Vtc3.KeyDeriver(phone.Session.ExportKey, offer.TransferId), ct: Ct); }
             finally { tcp.Stop(); }
         }, Ct);
         await phone.Session.SendAsync(new PeerMessage.TransferDecision(offer.TransferId, true, Route: "LAN_TCP",
@@ -144,7 +144,7 @@ public sealed class FolderTransferTests : IAsyncLifetime
         Assert.True(decision.Accept, decision.Reason);
         await BulkTransfer.SendAsync(decision.TcpHost!, decision.TcpPort!.Value, transferId, decision.AuthToken!, PhoneId,
             [new OutboundTransferItem(0, a, "Trip/a.txt"), new OutboundTransferItem(1, b, "Trip/Day 2/b.bin")],
-            resume: decision.Resume, ct: Ct);
+            Vtc3.KeyDeriver(phone.Session.ExportKey, transferId), resume: decision.Resume, ct: Ct);
         return await phone.ReceiveAsync<PeerMessage.TransferEnd>(Ct);
     }
 

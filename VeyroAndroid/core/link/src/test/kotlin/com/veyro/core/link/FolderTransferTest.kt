@@ -78,7 +78,7 @@ class FolderTransferTest {
 
     /** The phone's end and the PC's end of one session. */
     private fun pair(): Pair<PeerConnection, PeerConnection> {
-        val key = FrameCrypto.sessionKeyFromBytes(ByteArray(32) { 42 })
+        val key = TestKeyPairing(ByteArray(32) { 42 })
         val toPc = Channel<Frame>(Channel.UNLIMITED)
         val toPhone = Channel<Frame>(Channel.UNLIMITED)
         fun end(inbox: Channel<Frame>, outbox: Channel<Frame>, local: String, peer: String, tag: String) = PeerConnection(
@@ -86,16 +86,16 @@ class FolderTransferTest {
                 override val incoming: ReceiveChannel<Frame> = inbox
                 override val outgoing: SendChannel<Frame> = outbox
             },
-            initialKey = key,
-            initialEncrypt = true,
+            keys = key.forLocal(local, peer),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = local,
             tag = tag,
             dispatcher = Dispatchers.IO,
-            peerDeviceId = peer,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
-        ).apply { start() }
+        ).apply { start(); admit() }
         return end(toPhone, toPc, phoneId, pcId.value, "Phone") to end(toPc, toPhone, pcId.value, phoneId, "PC")
     }
 

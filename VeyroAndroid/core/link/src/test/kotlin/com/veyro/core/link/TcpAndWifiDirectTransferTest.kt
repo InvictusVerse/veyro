@@ -123,8 +123,7 @@ public class TcpAndWifiDirectTransferTest {
         receiverId: String = "receiver-dev",
     ): Pair<PeerConnection, PeerConnection> {
         val secret = ByteArray(32) { 77 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val initToRecv = Channel<Frame>(Channel.UNLIMITED)
         val recvToInit = Channel<Frame>(Channel.UNLIMITED)
 
@@ -140,12 +139,12 @@ public class TcpAndWifiDirectTransferTest {
 
         val initiator = PeerConnection(
             ws = initWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(initiatorId, receiverId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = initiatorId,
             tag = "TestSender",
             dispatcher = testDispatcher,
-            peerDeviceId = receiverId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
@@ -153,12 +152,12 @@ public class TcpAndWifiDirectTransferTest {
 
         val receiver = PeerConnection(
             ws = recvWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(receiverId, initiatorId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = receiverId,
             tag = "TestReceiver",
             dispatcher = testDispatcher,
-            peerDeviceId = initiatorId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
@@ -166,6 +165,8 @@ public class TcpAndWifiDirectTransferTest {
 
         initiator.start()
         receiver.start()
+        initiator.admit()
+        receiver.admit()
 
         return Pair(initiator, receiver)
     }
@@ -355,6 +356,7 @@ public class TcpAndWifiDirectTransferTest {
                 transferId = tid,
                 expectedAuthToken = correctToken,
                 expectedPeerDeviceId = "trusted-peer-1",
+                deriveKeys = TestLinkKeys.deriver(tid),
                 offerItems = emptyList(),
                 destinationDir = tempDir.newFolder("auth_reject_dest"),
                 chunkSize = 256 * 1024,
@@ -368,10 +370,10 @@ public class TcpAndWifiDirectTransferTest {
         val out = BufferedOutputStream(socket.getOutputStream())
         val input = BufferedInputStream(socket.getInputStream())
 
-        TcpFrameCodec.writeFrame(
-            out,
+        val channel = com.veyro.core.protocol.tcp.Vtc3.openAsSender(input, out, tid, TestLinkKeys.deriver(tid))
+        channel.writer.write(
             TcpFrame.Auth(
-                seq = 1L,
+                seq = 0L,
                 transferId = tid,
                 senderDeviceId = "trusted-peer-1",
                 authToken = "WRONG-TOKEN-ABC",
@@ -379,7 +381,7 @@ public class TcpAndWifiDirectTransferTest {
             ),
         )
 
-        val ackFrame = TcpFrameCodec.readFrame(input)
+        val ackFrame = channel.reader.readOrNull()
         assertTrue("Receiver must send AuthAck", ackFrame is TcpFrame.AuthAck)
         val ack = ackFrame as TcpFrame.AuthAck
         assertFalse("AuthAck ok must be false for invalid token", ack.ok)

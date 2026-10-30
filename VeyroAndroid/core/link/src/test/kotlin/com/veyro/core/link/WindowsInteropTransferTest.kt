@@ -66,7 +66,7 @@ class WindowsInteropTransferTest {
     }
 
     private fun pair(): Pair<PeerConnection, PeerConnection> {
-        val key = FrameCrypto.sessionKeyFromBytes(ByteArray(32) { 21 })
+        val key = TestKeyPairing(ByteArray(32) { 21 })
         val toPc = Channel<Frame>(Channel.UNLIMITED)
         val toPhone = Channel<Frame>(Channel.UNLIMITED)
         val phoneWs = object : TestWebSocketSession() {
@@ -78,17 +78,19 @@ class WindowsInteropTransferTest {
             override val outgoing: SendChannel<Frame> = toPhone
         }
         val phone = PeerConnection(
-            ws = phoneWs, initialKey = key, initialEncrypt = true, localDeviceId = PHONE,
-            tag = "Phone", dispatcher = Dispatchers.IO, peerDeviceId = PC, enableHeartbeat = false,
+            ws = phoneWs, keys = key.forLocal(PHONE, PC), localDeviceId = PHONE, firstFrameTimeoutMs = Long.MAX_VALUE,
+            tag = "Phone", dispatcher = Dispatchers.IO, enableHeartbeat = false,
             remoteHost = "127.0.0.1", localHost = "127.0.0.1",
         )
         val pc = PeerConnection(
-            ws = pcWs, initialKey = key, initialEncrypt = true, localDeviceId = PC,
-            tag = "PC", dispatcher = Dispatchers.IO, peerDeviceId = PHONE, enableHeartbeat = false,
+            ws = pcWs, keys = key.forLocal(PC, PHONE), localDeviceId = PC, firstFrameTimeoutMs = Long.MAX_VALUE,
+            tag = "PC", dispatcher = Dispatchers.IO, enableHeartbeat = false,
             remoteHost = "127.0.0.1", localHost = "127.0.0.1",
         )
         phone.start()
         pc.start()
+        phone.admit()
+        pc.admit()
         return phone to pc
     }
 
@@ -120,15 +122,16 @@ class WindowsInteropTransferTest {
             server.accept().use { socket ->
                 val input = BufferedInputStream(socket.getInputStream())
                 val output = BufferedOutputStream(socket.getOutputStream())
-                val auth = TcpFrameCodec.readFrame(input) as TcpFrame.Auth
+                val channel = Vtc3TestPeer.asReceiver(input, output, offer.transferId, pc)
+                val auth = channel.reader.readOrNull() as TcpFrame.Auth
                 assertEquals(token, auth.authToken)
                 assertEquals(PHONE, auth.senderDeviceId)
-                TcpFrameCodec.writeFrame(output, TcpFrame.AuthAck(1, offer.transferId, true, null))
+                channel.writer.write(TcpFrame.AuthAck(0, offer.transferId, true, null))
                 var data = ByteArray(0)
                 var chunkSize = 0
                 val indices = mutableListOf<Int>()
                 while (true) {
-                    when (val frame = TcpFrameCodec.readFrame(input)) {
+                    when (val frame = channel.reader.readOrNull() ?: error("stream ended")) {
                         is TcpFrame.ItemBegin -> {
                             data = ByteArray(frame.sizeBytes.toInt())
                             chunkSize = frame.chunkSize
@@ -137,9 +140,8 @@ class WindowsInteropTransferTest {
                             indices += frame.chunkIndex
                             System.arraycopy(frame.data, 0, data, frame.chunkIndex * chunkSize, frame.data.size)
                         }
-                        is TcpFrame.ItemEnd -> TcpFrameCodec.writeFrame(
-                            output,
-                            TcpFrame.ItemResult(frame.seq + 1, offer.transferId, frame.itemIndex, ok = true),
+                        is TcpFrame.ItemEnd -> channel.writer.write(
+                            TcpFrame.ItemResult(0, offer.transferId, frame.itemIndex, ok = true),
                         )
                         is TcpFrame.TransferEnd -> break
                         else -> error("unexpected ${frame.javaClass.simpleName}")
@@ -312,15 +314,15 @@ class WindowsInteropTransferTest {
                 socket.soTimeout = 10_000
                 val input = BufferedInputStream(socket.getInputStream())
                 val output = BufferedOutputStream(socket.getOutputStream())
-                var seq = 1L
-                TcpFrameCodec.writeFrame(output, TcpFrame.Auth(seq++, "u-1", decision.authToken!!, PC, TransferRoute.LAN_TCP))
-                assertTrue((TcpFrameCodec.readFrame(input) as TcpFrame.AuthAck).ok)
+                val channel = Vtc3TestPeer.asSender(input, output, "u-1", pc)
+                channel.writer.write(TcpFrame.Auth(0L, "u-1", decision.authToken!!, PC, TransferRoute.LAN_TCP))
+                assertTrue((channel.reader.readOrNull() as TcpFrame.AuthAck).ok)
                 val chunk = 4 * 1024 * 1024
-                TcpFrameCodec.writeFrame(output, TcpFrame.ItemBegin(seq++, "u-1", 0, bytes.size.toLong(), 1, chunk))
-                TcpFrameCodec.writeFrame(output, TcpFrame.Chunk(seq++, "u-1", 0, 0, bytes), autoFlush = true)
-                TcpFrameCodec.writeFrame(output, TcpFrame.ItemEnd(seq++, "u-1", 0, sha256(bytes)))
-                val result = TcpFrameCodec.readFrame(input) as TcpFrame.ItemResult
-                TcpFrameCodec.writeFrame(output, TcpFrame.TransferEnd(seq, "u-1", true))
+                channel.writer.write(TcpFrame.ItemBegin(0L, "u-1", 0, bytes.size.toLong(), 1, chunk))
+                channel.writer.write(TcpFrame.Chunk(0L, "u-1", 0, 0, bytes), flush = true)
+                channel.writer.write(TcpFrame.ItemEnd(0L, "u-1", 0, sha256(bytes)))
+                val result = channel.reader.readOrNull() as TcpFrame.ItemResult
+                channel.writer.write(TcpFrame.TransferEnd(0L, "u-1", true))
                 result
             }
         }

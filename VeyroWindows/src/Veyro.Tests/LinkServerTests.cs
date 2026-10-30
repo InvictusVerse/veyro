@@ -2,6 +2,7 @@ using Veyro.Core.Crypto;
 using Veyro.Core.Data;
 using Veyro.Core.Link;
 using Veyro.Core.Models;
+using Veyro.Core.Protocol;
 using Veyro.Core.Transfer;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
@@ -114,14 +115,11 @@ public sealed class LinkServerTests
 
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/veyro"), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(phoneId, "Phone", "android"))),
-                WebSocketMessageType.Text, true, ct);
-            byte[] buffer = new byte[4096];
-            WebSocketReceiveResult ackFrame = await socket.ReceiveAsync(buffer, ct);
-            LinkPreambleAck? ack = PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ackFrame.Count));
-            Assert.Equal(LinkPreambleAck.ModeSession, ack?.Mode);
+            var v3dial = new V3Dialer(phoneId);
+            LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Phone", ct);
+            Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
 
-            await using var phone = new SecureLinkSession(socket, phoneId, secret, encrypt: true, expectedPeerId: pcId);
+            await using var phone = new SecureLinkSession(socket, v3dial.SessionKeys(pcId, secret));
 
             // Hello -> HelloAck advertising notification mirroring.
             await phone.SendAsync(new PeerMessage.Hello(phoneId, "Phone", "android",
@@ -155,7 +153,8 @@ public sealed class LinkServerTests
             Assert.True(decision.Accept);
             await BulkTransfer.SendAsync(
                 decision.TcpHost!, decision.TcpPort!.Value, transferId, decision.AuthToken!, phoneId,
-                [new OutboundTransferItem(0, source, "hello.bin")], resume: decision.Resume, ct: ct);
+                [new OutboundTransferItem(0, source, "hello.bin")], Vtc3.KeyDeriver(phone.ExportKey, transferId),
+                resume: decision.Resume, ct: ct);
             // ADR-036: the receiver reports each item on the session too (Android's sender waits for it).
             var itemResult = Assert.IsType<PeerMessage.ItemResult>((await phone.ReceiveAsync(ct))!.Envelope.Payload);
             Assert.Equal(new PeerMessage.ItemResult(transferId, 0, true), itemResult);
@@ -164,22 +163,11 @@ public sealed class LinkServerTests
             Assert.Equal(payload, await File.ReadAllBytesAsync(Path.Combine(received, "hello.bin"), ct));
 
             // An authenticated frame of a type this build does not know is skipped, not fatal.
-            byte[] sessionKey = FrameCrypto.SessionKeyFromBytes(secret);
-            async Task SendRawAsync(long seq, string payloadJson)
-            {
-                string envelope = $"{{\"v\":1,\"msgId\":\"m{seq}\",\"from\":\"{phoneId}\",\"seq\":{seq},\"ts\":1,\"payload\":{payloadJson}}}";
-                SealedFrame frame = FrameCrypto.Seal(envelope, sessionKey, encrypt: true, phoneId);
-                string wire = PeerMessageJson.Encode(new LinkWireFrame
-                {
-                    From = frame.FromDeviceId,
-                    Nonce = Convert.ToBase64String(frame.Nonce),
-                    Ciphertext = Convert.ToBase64String(frame.Body),
-                    Mac = Convert.ToBase64String(frame.Mac)
-                });
-                await socket.SendAsync(Encoding.UTF8.GetBytes(wire), WebSocketMessageType.Text, true, ct);
-            }
-            await SendRawAsync(10_000, "{\"t\":\"futureFeature\",\"x\":1}");
-            await SendRawAsync(10_001, "{\"t\":\"ping\",\"nonce\":\"n2\"}");
+            // It is sealed with the phone's own send key and the next counter, as a newer build would.
+            Task SendRawAsync(string payloadJson) => phone.SendRawEnvelopeForTestAsync(seq =>
+                $"{{\"v\":{LinkProtocol.Version},\"msgId\":\"m{seq}\",\"from\":\"{phoneId}\",\"seq\":{seq},\"ts\":1,\"payload\":{payloadJson}}}", ct);
+            await SendRawAsync("{\"t\":\"futureFeature\",\"x\":1}");
+            await SendRawAsync("{\"t\":\"ping\",\"nonce\":\"n2\"}");
             Assert.Equal(new PeerMessage.Pong("n2"), (await phone.ReceiveAsync(ct))!.Envelope.Payload);
 
             // Peer close ends the session cleanly and is reported.
@@ -237,14 +225,11 @@ public sealed class LinkServerTests
 
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/veyro"), ct);
-            await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(phoneId, "Phone", "android"))),
-                WebSocketMessageType.Text, true, ct);
-            byte[] buffer = new byte[4096];
-            WebSocketReceiveResult ackFrame = await socket.ReceiveAsync(buffer, ct);
-            Assert.Equal(LinkPreambleAck.ModeSession,
-                PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ackFrame.Count))?.Mode);
+            var v3dial = new V3Dialer(phoneId);
+            LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Phone", ct);
+            Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
 
-            await using var phone = new SecureLinkSession(socket, phoneId, secret, encrypt: true, expectedPeerId: pcId);
+            await using var phone = new SecureLinkSession(socket, v3dial.SessionKeys(pcId, secret));
             const int companion = PeerCapabilities.NotificationMirror | PeerCapabilities.MediaControl | PeerCapabilities.DeviceStatus;
             await phone.SendAsync(new PeerMessage.Hello(phoneId, "Phone", "android",
                 Capabilities: PeerCapabilities.FileTransfer | companion), ct);

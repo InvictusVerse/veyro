@@ -78,12 +78,10 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(phone.Id, phone.Name, "android"))),
-            WebSocketMessageType.Text, true, Ct);
-        byte[] buffer = new byte[4096];
-        WebSocketReceiveResult ack = await socket.ReceiveAsync(buffer, Ct);
-        Assert.Equal(LinkPreambleAck.ModeSession, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
-        var fake = new FakePhone(socket, new SecureLinkSession(socket, phone.Id, phone.Secret, encrypt: true, expectedPeerId: PcId));
+        var v3dial = new V3Dialer(phone.Id);
+        LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, phone.Name, Ct);
+        Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
+        var fake = new FakePhone(socket, new SecureLinkSession(socket, v3dial.SessionKeys(PcId, phone.Secret)));
         await fake.Session.SendAsync(new PeerMessage.Hello(phone.Id, phone.Name, "android", capabilities), Ct);
         await fake.ReceiveAsync<PeerMessage.HelloAck>(Ct);
         return fake;
@@ -172,8 +170,8 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// A phone that removed this PC answers a dial with a refusal, or holds the answer while it
-    /// asks its user to pair. The dial gives up quickly either way and registers nothing.
+    /// A phone that removed this PC answers a dial with a refusal at once. Since ADR-058 there is
+    /// no PIN prompt to hold the answer. The dial gives up and registers nothing.
     /// </summary>
     [Fact]
     public async Task DialToAPhoneThatNoLongerTrustsThePc_IsRefusedQuickly()
@@ -189,17 +187,62 @@ public sealed class MultiPhoneSessionTests : IAsyncLifetime
         var declined = await Assert.ThrowsAsync<SessionRefusedException>(() =>
             new LinkClient(PcId, "Test PC").OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct));
         Assert.False(declined.IsBusy);
+        Assert.Equal("not-paired", declined.Reason);
 
-        var prompt = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        listener.PairingAuthorizer = _ => prompt.Task;
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        var unanswered = await Assert.ThrowsAsync<SessionRefusedException>(() =>
-            new LinkClient(PcId, "Test PC") { PreambleAckTimeout = TimeSpan.FromMilliseconds(300) }
-                .OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct));
-        Assert.Equal("no-answer", unanswered.Reason);
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10));
+        // ADR-058 removed the PIN prompt: nothing holds the answer and no prompt is shown.
+        bool prompted = false;
+        listener.PairingAuthorizer = _ => { prompted = true; return Task.FromResult(false); };
+        var again = await Assert.ThrowsAsync<SessionRefusedException>(() =>
+            new LinkClient(PcId, "Test PC").OpenPersistentSessionAsync(endpoint, trusted, _server, _registry, Ct));
+        Assert.Equal("not-paired", again.Reason);
+        Assert.False(prompted);
         Assert.False(_registry.IsConnected(_one.Id));
-        prompt.TrySetResult(false);
+    }
+
+    /// <summary>
+    /// ADR-058 establishment: a dialler that repeats a live phone's preamble but cannot produce an
+    /// authenticated first frame never replaces the live session, whether it sends a forged frame
+    /// or nothing at all.
+    /// </summary>
+    [Fact]
+    public async Task UnauthenticatedDialWithALivePhonesId_DoesNotReplaceItsSession()
+    {
+        _server.FirstFrameTimeout = TimeSpan.FromMilliseconds(400);
+        int opened = 0, closed = 0;
+        _registry.SessionOpened += peer => { if (peer == _one.Id) Interlocked.Increment(ref opened); };
+        _registry.SessionClosed += peer => { if (peer == _one.Id) Interlocked.Increment(ref closed); };
+        await using FakePhone live = await ConnectAsync(_one);
+        Assert.Equal(1, opened);
+
+        // A forged first frame under a key without the pairing secret.
+        using (var forged = new ClientWebSocket())
+        {
+            await forged.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
+            using var dialer = new V3Dialer(_one.Id);
+            Assert.Equal(LinkPreambleAck.ModeSession, (await dialer.SendPreambleAsync(forged, _one.Name, Ct)).Mode);
+            await using var forger = new SecureLinkSession(forged, dialer.SessionKeys(PcId, RandomNumberGenerator.GetBytes(32)));
+            await forger.SendAsync(new PeerMessage.Hello(_one.Id, _one.Name, "android", AllCompanion), Ct);
+            await Assert.ThrowsAnyAsync<Exception>(() => forger.ReceiveAsync(Ct));
+        }
+
+        // A preamble and then silence: the first-frame timer closes it (FR-C3).
+        using (var silent = new ClientWebSocket())
+        {
+            await silent.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
+            using var dialer = new V3Dialer(_one.Id);
+            Assert.Equal(LinkPreambleAck.ModeSession, (await dialer.SendPreambleAsync(silent, _one.Name, Ct)).Mode);
+            byte[] buffer = new byte[1024];
+            await Assert.ThrowsAnyAsync<Exception>(async () =>
+            {
+                WebSocketReceiveResult result = await silent.ReceiveAsync(buffer, Ct);
+                if (result.MessageType == WebSocketMessageType.Close) throw new WebSocketException("closed");
+            });
+        }
+
+        await BarrierAsync(live);
+        Assert.True(_registry.IsConnected(_one.Id));
+        Assert.Equal(1, opened);
+        Assert.Equal(0, closed);
     }
 
     [Fact]

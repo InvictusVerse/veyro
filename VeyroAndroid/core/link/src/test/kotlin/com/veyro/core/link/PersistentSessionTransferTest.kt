@@ -18,6 +18,7 @@ import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -121,28 +122,33 @@ class PersistentSessionTransferTest {
         return Phone(manager, coordinator, inbox)
     }
 
-    /** The PC's end of a session, started once the phone's unauthenticated text frame was read. */
-    private suspend fun pcSession(wire: Wire): PeerConnection {
-        withTimeout(5_000) { (wire.toPc.receive() as Frame.Text).readText() } // preamble or ack
+    /** The PC's end of a session with this connection's v3 [keys]; it sends its hello at once. */
+    private suspend fun pcSession(wire: Wire, keys: com.veyro.core.crypto.LinkKeys): PeerConnection {
         return PeerConnection(
             ws = wire.pcEnd,
-            initialKey = FrameCrypto.sessionKeyFromBytes(secret),
-            initialEncrypt = true,
+            keys = keys,
             localDeviceId = pcId.value,
             tag = "PC",
             dispatcher = Dispatchers.IO,
-            peerDeviceId = phoneId,
             enableHeartbeat = false,
             remoteHost = "127.0.0.1",
             localHost = "127.0.0.1",
-        ).also { it.start() }
+        ).also {
+            it.start()
+            it.admit()
+            it.send(PeerMessage.HelloAck(pcId.value, "Office PC", "windows"))
+        }
     }
 
     /** The phone dials the PC and the PC answers in session mode: the persistent companion session. */
     private suspend fun phoneDialledSession(phone: Phone, wire: Wire): Pair<PeerConnection, PeerConnection> {
-        wire.toPhone.send(Frame.Text("""{"mode":"session"}"""))
+        val pcSide = V3TestPeer(pcId.value)
+        val answered = scope.async {
+            wire.toPhone.send(pcSide.answerSession(withTimeout(5_000) { wire.toPc.receive() }, secret))
+            pcSide.keys!!
+        }
         assertTrue(phone.manager.connect(pcId.value, "Office PC", listOf(Endpoint("127.0.0.1", 5150))))
-        val pcEnd = pcSession(wire)
+        val pcEnd = pcSession(wire, answered.await())
         val phoneEnd = withTimeout(5_000) { phone.manager.activeConnection.filterNotNull().first() }
         return phoneEnd to pcEnd
     }
@@ -230,13 +236,13 @@ class PersistentSessionTransferTest {
 
         // The PC dials a second connection just for this transfer.
         val transferWire = Wire()
-        transferWire.toPhone.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(pcId.value, "Office PC", platform = "windows"))),
-        )
+        val pcDialler = V3TestPeer(pcId.value)
+        transferWire.toPhone.send(pcDialler.preamble())
         val inboundJob = scope.launch {
             phone.manager.handleInbound(transferWire.phoneEnd, remoteHost = "127.0.0.1", localHost = "127.0.0.1")
         }
-        val pcTransfer = pcSession(transferWire)
+        pcDialler.readAck(withTimeout(5_000) { transferWire.toPc.receive() }, phoneId, secret)
+        val pcTransfer = pcSession(transferWire, pcDialler.keys!!)
 
         val outcome = pcSends(pcTransfer, "parallel.txt", "via a second connection", "pc-par-1")
         assertTrue("transfer on the second connection: $outcome", outcome is TransferRunner.SendOutcome.Done)

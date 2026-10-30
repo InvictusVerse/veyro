@@ -159,31 +159,21 @@ class RemovalNoticeTest {
         val (attacker, pcEnd) = PipeSession.pair()
         wires.launch { pcManager.handleInbound(pcEnd) }
 
-        // Claims the phone's id, then sends a hello sealed under a key it does not have.
-        attacker.outgoingChannel.send(
-            Frame.Text(PeerMessageJson.codec.encodeToString(LinkPreamble.serializer(), LinkPreamble(phone.id, "Pixel"))),
-        )
-        val ack = PeerMessageJson.codec.decodeFromString(
-            LinkPreambleAck.serializer(),
-            (attacker.incomingChannel.receive() as Frame.Text).readText(),
-        )
+        // Claims the phone's id, then sends a hello sealed under keys built from a secret it does
+        // not have (ADR-058: the connection keys mix the pairing secret, so they do not match).
+        val forger = V3TestPeer(phone.id)
+        attacker.outgoingChannel.send(forger.preamble("Pixel", "android"))
+        val ack = forger.readAck(attacker.incomingChannel.receive(), pc.id, ByteArray(32) { 7 })
         assertEquals(LinkPreambleAck.MODE_SESSION, ack.mode)
-        val forger = PeerConnection(
-            ws = attacker,
-            initialKey = FrameCrypto.sessionKeyFromBytes(ByteArray(32) { 7 }),
-            initialEncrypt = true,
-            localDeviceId = phone.id,
-            tag = "Forger",
-            dispatcher = testDispatcher,
-            peerDeviceId = pc.id,
-            enableHeartbeat = false,
-        ).also { it.start() }
-        forger.send(PeerMessage.Hello(phone.id, "Pixel", "android", 0))
+        attacker.outgoingChannel.send(forger.seal(PeerMessage.Hello(phone.id, "Pixel", "android", 0)))
         delay(500)
 
-        assertTrue("nothing reached the forger after the ack", attacker.incomingChannel.isEmpty)
-        assertFalse("no unpair was sent", forger.unpaired.isCompleted)
-        forger.close()
+        // The PC's own hello may sit in the pipe; no unpair may follow it.
+        val received = generateSequence { attacker.incomingChannel.tryReceive().getOrNull() }
+            .filterIsInstance<Frame.Text>().toList()
+        assertTrue("at most the PC's hello reached the forger", received.size <= 1)
+        assertTrue("finding 10: a wrong secret keeps the notice", pc.owed.containsKey(phone.id))
+        assertTrue("nothing was told", pc.told.isEmpty())
     }
 
     @Test

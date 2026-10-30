@@ -142,35 +142,12 @@ class WireMessagesTest {
     }
 
     @Test
-    fun `sealed frame conversions to and from wire format work correctly`() {
-        val nonce = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
-        val body = "hello world payload".toByteArray(Charsets.UTF_8)
-        val mac = ByteArray(32) { 0x42 }
-
-        val sealedEncrypted = SealedFrame(
-            nonce = nonce,
-            body = body,
-            mac = mac,
-            encrypted = true,
-            fromDeviceId = "dev-alice",
-        )
-        val wireEncrypted = sealedEncrypted.toWire()
-        assertNotNull(wireEncrypted.ciphertext)
-        assertEquals(null, wireEncrypted.plaintext)
-        val recoveredEncrypted = wireEncrypted.toSealed()
-        assertEquals(sealedEncrypted, recoveredEncrypted)
-
-        val sealedPlain = SealedFrame(
-            nonce = nonce,
-            body = body,
-            mac = mac,
-            encrypted = false,
-            fromDeviceId = "dev-bob",
-        )
-        val wirePlain = sealedPlain.toWire()
-        assertEquals("hello world payload", wirePlain.plaintext)
-        assertEquals(null, wirePlain.ciphertext)
-        val recoveredPlain = wirePlain.toSealed()
-        assertEquals(sealedPlain, recoveredPlain)
+    fun `a sealed v3 wire frame round trips through the sealer and opener`() {
+        val (keysI, keysR) = TestLinkKeys.sessionPair("dev-alice", "dev-bob")
+        val wire = SessionSealer(keysI.sendKey, "dev-alice", FrameCrypto.DIR_I2R).seal("hello world payload")
+        val frame = PeerMessageJson.codec.decodeFromString(LinkWireFrame.serializer(), wire)
+        assertEquals("dev-alice", frame.from)
+        assertNotNull(FrameCrypto.decodeStrictBase64(frame.ciphertext))
+        assertEquals("hello world payload", SessionOpener(keysR.recvKey, "dev-alice", FrameCrypto.DIR_I2R).open(wire))
     }
 }

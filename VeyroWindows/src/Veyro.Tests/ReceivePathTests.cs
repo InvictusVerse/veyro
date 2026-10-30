@@ -72,12 +72,10 @@ public sealed class ReceivePathTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Pixel", "android"))),
-            WebSocketMessageType.Text, true, Ct);
-        byte[] buffer = new byte[4096];
-        WebSocketReceiveResult ack = await socket.ReceiveAsync(buffer, Ct);
-        Assert.Equal(LinkPreambleAck.ModeSession, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
-        var phone = new SessionTransferTests.FakePhone(socket, new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId));
+        var v3dial = new V3Dialer(PhoneId);
+        LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Pixel", Ct);
+        Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
+        var phone = new SessionTransferTests.FakePhone(socket, new SecureLinkSession(socket, v3dial.SessionKeys(PcId, _secret)));
         await phone.Session.SendAsync(new PeerMessage.Hello(PhoneId, "Pixel", "android",
             PeerCapabilities.FileTransfer | PeerCapabilities.Photos), Ct);
         await phone.ReceiveAsync<PeerMessage.HelloAck>(Ct);
@@ -102,22 +100,24 @@ public sealed class ReceivePathTests : IAsyncLifetime
         using var tcp = new TcpClient();
         await tcp.ConnectAsync(decision.TcpHost!, decision.TcpPort!.Value, Ct);
         NetworkStream stream = tcp.GetStream();
+        // ADR-058: VTC3, keyed from this session's exporter and both stream-open salts.
+        using Vtc3Channel vtc = await Vtc3.OpenAsSenderAsync(stream, transferId, Vtc3.KeyDeriver(phone.Session.ExportKey, transferId), Ct);
         long seq = 1;
-        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.Auth(seq++, transferId, decision.AuthToken!, PhoneId, TransferRoute.LanTcp), ct: Ct);
-        Assert.True(Assert.IsType<TcpFrame.AuthAck>(await TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct)).Ok);
+        await vtc.Writer.WriteAsync(new TcpFrame.Auth(seq++, transferId, decision.AuthToken!, PhoneId, TransferRoute.LanTcp), ct: Ct);
+        Assert.True(Assert.IsType<TcpFrame.AuthAck>(await vtc.Reader.ReadOrNullAsync(Ct)).Ok);
 
         int chunkCount = (payload.Length + AndroidChunk - 1) / AndroidChunk;
-        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemBegin(seq++, transferId, 0, payload.Length, chunkCount, AndroidChunk), ct: Ct);
+        await vtc.Writer.WriteAsync(new TcpFrame.ItemBegin(seq++, transferId, 0, payload.Length, chunkCount, AndroidChunk), ct: Ct);
         await phone.Session.SendAsync(new PeerMessage.ItemBegin(transferId, 0, payload.Length, chunkCount, AndroidChunk), Ct);
         for (int chunk = 0; chunk < chunkCount; chunk++)
         {
             int offset = chunk * AndroidChunk;
             byte[] data = payload.AsSpan(offset, Math.Min(AndroidChunk, payload.Length - offset)).ToArray();
-            await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.Chunk(seq++, transferId, 0, chunk, data),
-                autoFlush: chunk % 4 == 0 || chunk == chunkCount - 1, ct: Ct);
+            await vtc.Writer.WriteAsync(new TcpFrame.Chunk(seq++, transferId, 0, chunk, data),
+                flush: chunk % 4 == 0 || chunk == chunkCount - 1, ct: Ct);
         }
         string sha = Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
-        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.ItemEnd(seq++, transferId, 0, sha), ct: Ct);
+        await vtc.Writer.WriteAsync(new TcpFrame.ItemEnd(seq++, transferId, 0, sha), ct: Ct);
         await phone.Session.SendAsync(new PeerMessage.ItemEnd(transferId, 0, sha), Ct);
 
         // mailbox.awaitItemResult: the session message, with Android's step timeout (shortened).
@@ -139,7 +139,7 @@ public sealed class ReceivePathTests : IAsyncLifetime
             }
         }
 
-        await TcpFrameCodec.WriteFrameAsync(stream, new TcpFrame.TransferEnd(seq, transferId, itemResult.Ok), ct: Ct);
+        await vtc.Writer.WriteAsync(new TcpFrame.TransferEnd(seq, transferId, itemResult.Ok), ct: Ct);
         await phone.Session.SendAsync(new PeerMessage.TransferEnd(transferId, itemResult.Ok), Ct);
         tcp.Client.Shutdown(SocketShutdown.Send);
         var end = await phone.ReceiveAsync<PeerMessage.TransferEnd>(Ct);

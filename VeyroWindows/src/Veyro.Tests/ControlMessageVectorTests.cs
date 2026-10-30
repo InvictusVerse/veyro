@@ -87,17 +87,21 @@ public sealed class ControlMessageVectorTests
     public void Preamble_MatchesVector()
     {
         using var doc = LoadVectors();
-        var v = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray().First();
+        var v = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray()
+            .Single(e => e.TryGetProperty("name", out var n) && n.GetString() == "LinkPreamble v3");
 
         var decoded = PeerMessageJson.Decode<LinkPreamble>(v.GetProperty("json").GetString()!);
         Assert.NotNull(decoded);
-        Assert.Equal("6JE8415YZQQYQMBD34569HVYX4", decoded!.Id);
+        Assert.Equal("2C9VV72DFSF1A2SC0TN6QBAPEC", decoded!.Id);
         Assert.Equal("android", decoded.Platform);
-        Assert.Equal(2, decoded.ProtocolVersion);
-        Assert.Equal(2, LinkProtocol.Version);
+        Assert.Equal(3, decoded.ProtocolVersion);
+        Assert.Equal(3, LinkProtocol.Version);
+        Assert.Equal(32, Convert.FromBase64String(decoded.Cn!).Length);
+        Assert.Equal(32, Convert.FromBase64String(decoded.Epk!).Length);
+        AssertKeyPolicy(v, PeerMessageJson.Encode(decoded));
 
         // encodeDefaults: platform and protocolVersion must be emitted even at their defaults.
-        string emitted = PeerMessageJson.Encode(new LinkPreamble("X", "Y"));
+        string emitted = PeerMessageJson.Encode(new LinkPreamble("X", "Y", Cn: decoded.Cn, Epk: decoded.Epk));
         var keys = KeysOf(emitted);
         Assert.Contains("platform", keys);
         Assert.Contains("protocolVersion", keys);
@@ -111,13 +115,13 @@ public sealed class ControlMessageVectorTests
         var vectors = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray().ToList();
         JsonElement Named(string name) => vectors.Single(v => v.TryGetProperty("name", out var n) && n.GetString() == name);
 
-        var preambleVector = Named("LinkPreamble for confirm pairing");
+        var preambleVector = Named("LinkPreamble for confirm pairing v3");
         var preamble = PeerMessageJson.Decode<LinkPreamble>(preambleVector.GetProperty("json").GetString()!)!;
         Assert.Equal(LinkPreamble.PairConfirm, preamble.Pair);
         Assert.Equal("hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=", preamble.Pk);
         AssertKeyPolicy(preambleVector, PeerMessageJson.Encode(preamble));
 
-        var ackVector = Named("LinkPreambleAck for confirm pairing");
+        var ackVector = Named("LinkPreambleAck for confirm pairing v3");
         var ack = PeerMessageJson.Decode<LinkPreambleAck>(ackVector.GetProperty("json").GetString()!)!;
         Assert.Equal(LinkPreambleAck.ModePairingConfirm, ack.Mode);
         Assert.Equal("SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=", ack.Commit);
@@ -163,27 +167,49 @@ public sealed class ControlMessageVectorTests
     }
 
     [Fact]
-    public void WireFrame_SessionCarriesCipher_PairingCarriesPlaintext()
+    public void QrPairingFrames_MatchVectors()
     {
         using var doc = LoadVectors();
-        var vectors = doc.RootElement.GetProperty("wireFrameVectors").EnumerateArray().ToList();
+        var vectors = doc.RootElement.GetProperty("handshakeVectors").EnumerateArray().ToList();
+        JsonElement Named(string name) => vectors.Single(v => v.TryGetProperty("name", out var n) && n.GetString() == name);
 
-        var session = PeerMessageJson.Decode<LinkWireFrame>(vectors[0].GetProperty("json").GetString()!);
-        Assert.NotNull(session!.Ciphertext);
-        Assert.Null(session.Plaintext);
-        AssertKeyPolicy(vectors[0], PeerMessageJson.Encode(session));
+        var preambleVector = Named("LinkPreamble for QR pairing v3");
+        var preamble = PeerMessageJson.Decode<LinkPreamble>(preambleVector.GetProperty("json").GetString()!)!;
+        Assert.Equal(LinkPreamble.PairQr, preamble.Pair);
+        AssertKeyPolicy(preambleVector, PeerMessageJson.Encode(preamble));
 
-        var pairing = PeerMessageJson.Decode<LinkWireFrame>(vectors[1].GetProperty("json").GetString()!);
-        Assert.NotNull(pairing!.Plaintext);
-        Assert.Null(pairing.Ciphertext);
-        AssertKeyPolicy(vectors[1], PeerMessageJson.Encode(pairing));
+        var ackVector = Named("LinkPreambleAck for QR pairing v3");
+        var ack = PeerMessageJson.Decode<LinkPreambleAck>(ackVector.GetProperty("json").GetString()!)!;
+        Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
+        AssertKeyPolicy(ackVector, PeerMessageJson.Encode(ack));
+
+        var sessionAck = Named("LinkPreambleAck accepting a session v3");
+        var accepted = PeerMessageJson.Decode<LinkPreambleAck>(sessionAck.GetProperty("json").GetString()!)!;
+        Assert.Equal(LinkPreambleAck.ModeSession, accepted.Mode);
+        AssertKeyPolicy(sessionAck, PeerMessageJson.Encode(accepted));
+    }
+
+    [Fact]
+    public void WireFrame_V3CarriesExactlyFromAndCiphertext()
+    {
+        using var doc = LoadVectors();
+        var vector = doc.RootElement.GetProperty("wireFrameVectors").EnumerateArray()
+            .Single(v => !v.TryGetProperty("retiredIn", out _));
+
+        var frame = PeerMessageJson.Decode<LinkWireFrame>(vector.GetProperty("json").GetString()!);
+        Assert.Equal("6JE8415YZQQYQMBD34569HVYX4", frame!.From);
+        Assert.Equal("Y2lwaGVydGV4dA==", frame.Ciphertext);
+        string emitted = PeerMessageJson.Encode(frame);
+        Assert.Equal(new HashSet<string>(["f", "c"]), KeysOf(emitted));
+        AssertKeyPolicy(vector, emitted);
     }
 
     [Fact]
     public void Envelope_RoundTripsWithPayload()
     {
         using var doc = LoadVectors();
-        var v = doc.RootElement.GetProperty("envelopeVectors").EnumerateArray().First();
+        var v = doc.RootElement.GetProperty("envelopeVectors").EnumerateArray()
+            .Single(e => !e.TryGetProperty("retiredIn", out _));
 
         var env = PeerMessageJson.Decode<LinkEnvelope>(v.GetProperty("json").GetString()!);
         Assert.NotNull(env);

@@ -75,12 +75,10 @@ public sealed class SessionTransferTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_server.Port}/veyro"), Ct);
-        await socket.SendAsync(Encoding.UTF8.GetBytes(PeerMessageJson.Encode(new LinkPreamble(PhoneId, "Phone", "android"))),
-            WebSocketMessageType.Text, true, Ct);
-        byte[] buffer = new byte[4096];
-        WebSocketReceiveResult ack = await socket.ReceiveAsync(buffer, Ct);
-        Assert.Equal(LinkPreambleAck.ModeSession, PeerMessageJson.Decode<LinkPreambleAck>(Encoding.UTF8.GetString(buffer, 0, ack.Count))?.Mode);
-        var phone = new FakePhone(socket, new SecureLinkSession(socket, PhoneId, _secret, encrypt: true, expectedPeerId: PcId));
+        var v3dial = new V3Dialer(PhoneId);
+        LinkPreambleAck v3ack = await v3dial.SendPreambleAsync(socket, "Phone", Ct);
+        Assert.Equal(LinkPreambleAck.ModeSession, v3ack.Mode);
+        var phone = new FakePhone(socket, new SecureLinkSession(socket, v3dial.SessionKeys(PcId, _secret)));
         await phone.Session.SendAsync(new PeerMessage.Hello(PhoneId, "Phone", "android", capabilities), Ct);
         var helloAck = await phone.ReceiveAsync<PeerMessage.HelloAck>(Ct);
         Assert.NotEqual(0, helloAck.Capabilities & PeerCapabilities.Photos);
@@ -107,7 +105,8 @@ public sealed class SessionTransferTests : IAsyncLifetime
         var items = offer.Items.Select(i => new InboundTransferItem(i.Index, i.RelPath, i.Size)).ToList();
         Task<BulkTransferResult> receive = Task.Run(async () =>
         {
-            try { return await BulkTransfer.ReceiveAsync(tcp, offer.TransferId, token, pcId, destination, items, ct: ct); }
+            try { return await BulkTransfer.ReceiveAsync(tcp, offer.TransferId, token, pcId, destination, items,
+                Veyro.Core.Protocol.Vtc3.KeyDeriver(phone.Session.ExportKey, offer.TransferId), ct: ct); }
             finally { tcp.Stop(); }
         }, ct);
         var decision = new PeerMessage.TransferDecision(offer.TransferId, true, Route: "LAN_TCP",
@@ -207,11 +206,12 @@ public sealed class SessionTransferTests : IAsyncLifetime
         using (TcpClient data = await tcp.AcceptTcpClientAsync(Ct))
         {
             NetworkStream stream = data.GetStream();
-            Assert.IsType<Veyro.Core.Protocol.TcpFrame.Auth>(await Veyro.Core.Protocol.TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct));
-            await Veyro.Core.Protocol.TcpFrameCodec.WriteFrameAsync(
-                stream, new Veyro.Core.Protocol.TcpFrame.AuthAck(1, offer.TransferId, true), ct: Ct);
-            await Veyro.Core.Protocol.TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct); // ItemBegin
-            await Veyro.Core.Protocol.TcpFrameCodec.ReadFrameOrNullAsync(stream, Ct); // the first chunk; then the user cancels
+            using Veyro.Core.Protocol.Vtc3Channel vtc = await Veyro.Core.Protocol.Vtc3.OpenAsReceiverAsync(
+                stream, offer.TransferId, Veyro.Core.Protocol.Vtc3.KeyDeriver(phone.Session.ExportKey, offer.TransferId), Ct);
+            Assert.IsType<Veyro.Core.Protocol.TcpFrame.Auth>(await vtc.Reader.ReadOrNullAsync(Ct));
+            await vtc.Writer.WriteAsync(new Veyro.Core.Protocol.TcpFrame.AuthAck(1, offer.TransferId, true), ct: Ct);
+            await vtc.Reader.ReadOrNullAsync(Ct); // ItemBegin
+            await vtc.Reader.ReadOrNullAsync(Ct); // the first chunk; then the user cancels
         }
         tcp.Stop();
         await Task.Delay(300, Ct);
@@ -351,7 +351,8 @@ public sealed class SessionTransferTests : IAsyncLifetime
             var decision = await ReceiveAsync<PeerMessage.TransferDecision>(ct);
             Assert.True(decision.Accept, decision.Reason);
             await BulkTransfer.SendAsync(decision.TcpHost!, decision.TcpPort!.Value, transferId, decision.AuthToken!, phoneId,
-                [new OutboundTransferItem(0, source, relPath)], resume: decision.Resume, ct: ct);
+                [new OutboundTransferItem(0, source, relPath)], Veyro.Core.Protocol.Vtc3.KeyDeriver(Session.ExportKey, transferId),
+                resume: decision.Resume, ct: ct);
             return await ReceiveAsync<PeerMessage.TransferEnd>(ct);
         }
 

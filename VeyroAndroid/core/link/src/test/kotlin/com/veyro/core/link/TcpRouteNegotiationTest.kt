@@ -56,8 +56,7 @@ public class TcpRouteNegotiationTest {
         receiverLocalHost: String? = "127.0.0.1",
     ): Pair<PeerConnection, PeerConnection> {
         val secret = ByteArray(32) { 99 }
-        val sessionKey = FrameCrypto.sessionKeyFromBytes(secret)
-
+        val sessionKey = TestKeyPairing(secret)
         val initToRecv = Channel<Frame>(Channel.UNLIMITED)
         val recvToInit = Channel<Frame>(Channel.UNLIMITED)
 
@@ -73,12 +72,12 @@ public class TcpRouteNegotiationTest {
 
         val initiator = PeerConnection(
             ws = initWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(initiatorId, receiverId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = initiatorId,
             tag = "TestSender",
             dispatcher = testDispatcher,
-            peerDeviceId = receiverId,
             enableHeartbeat = false,
             remoteHost = initiatorRemoteHost,
             localHost = initiatorLocalHost,
@@ -86,12 +85,12 @@ public class TcpRouteNegotiationTest {
 
         val receiver = PeerConnection(
             ws = recvWs,
-            initialKey = sessionKey,
-            initialEncrypt = true,
+            keys = sessionKey.forLocal(receiverId, initiatorId),
+            // Virtual time in these tests would fire the 10 s first-frame timer (FR-C3) while real I/O runs.
+            firstFrameTimeoutMs = Long.MAX_VALUE,
             localDeviceId = receiverId,
             tag = "TestReceiver",
             dispatcher = testDispatcher,
-            peerDeviceId = initiatorId,
             enableHeartbeat = false,
             remoteHost = receiverRemoteHost,
             localHost = receiverLocalHost,
@@ -99,6 +98,8 @@ public class TcpRouteNegotiationTest {
 
         initiator.start()
         receiver.start()
+        initiator.admit()
+        receiver.admit()
 
         return Pair(initiator, receiver)
     }
@@ -415,6 +416,7 @@ public class TcpRouteNegotiationTest {
                 authToken = "some-token",
                 senderDeviceId = "sender-id",
                 route = TransferRoute.LAN_TCP,
+                deriveKeys = TestLinkKeys.deriver("refuse-test"),
             )
         } catch (t: Throwable) {
             thrown = t
