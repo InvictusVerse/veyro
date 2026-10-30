@@ -42,7 +42,14 @@ public sealed record AppSettings(
     bool TrayHintShown = false,
     // ADR-063: phone apps that sent a notification and what each does on this PC (Show, Feed
     // only, Hide), for every paired phone. Package names and labels only, never contents.
-    IReadOnlyList<NotificationAppRule>? NotificationApps = null
+    IReadOnlyList<NotificationAppRule>? NotificationApps = null,
+    // ADR-066: screen mirroring quality, chosen on this PC only (the phone only allows capture).
+    // "battery", "balanced" (default), "high" or "4k".
+    string MirrorQualityPreset = "balanced",
+    // ADR-066: ask for the phone's internal sound (never its microphone).
+    bool MirrorAudio = true,
+    // ADR-066: ask the phone for a hardware encoder (on by default; software only as a fallback).
+    bool MirrorHardwareEncode = true
 );
 
 public interface ISettingsStore

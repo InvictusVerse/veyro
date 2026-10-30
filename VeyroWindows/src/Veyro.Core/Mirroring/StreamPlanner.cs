@@ -23,6 +23,19 @@ public sealed record MirrorQuality(
     public static readonly MirrorQuality High = new(2560, 60, 16_000_000);
     public static readonly MirrorQuality UltraHd = new(3840, 60, 30_000_000);
     public static MirrorQuality Default => Balanced;
+
+    /// <summary>The presets by their settings key, in menu order.</summary>
+    public static readonly IReadOnlyList<(string Key, string Label, MirrorQuality Quality)> Presets =
+    [
+        ("battery", "Battery saver (1280 px, 30 fps)", BatterySaver),
+        ("balanced", "Balanced (1920 px, 60 fps)", Balanced),
+        ("high", "High (2560 px, 60 fps)", High),
+        ("4k", "4K (3840 px, 60 fps)", UltraHd),
+    ];
+
+    /// <summary>The preset for <paramref name="key"/> with the user's switches, Balanced for an unknown key.</summary>
+    public static MirrorQuality FromSettings(string? key, bool audio, bool hardwareEncode) =>
+        (Presets.FirstOrDefault(p => p.Key == key).Quality ?? Balanced) with { Audio = audio, HardwareEncode = hardwareEncode };
 }
 
 /// <summary>A decoder this PC has (from the Media Foundation probe).</summary>

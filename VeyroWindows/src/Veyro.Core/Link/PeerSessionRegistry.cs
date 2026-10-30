@@ -60,6 +60,18 @@ public interface IPeerSessionRegistry
     /// </summary>
     string? GetPeerName(string peerId) => null;
 
+    /// <summary>
+    /// ADR-066 phone-to-PC screen mirroring messages: <c>streamCaps</c>, <c>streamState</c>,
+    /// <c>streamStop</c> (unvalidated; check with <see cref="StreamRules"/>).
+    /// </summary>
+    event Action<string, PeerMessage>? StreamMessageReceived { add { } remove { } }
+
+    /// <summary>The live session's key exporter (ADR-058), for a media socket's keys; null when not connected.</summary>
+    Func<string, byte[], int, byte[]>? GetExportKey(string peerId) => null;
+
+    /// <summary>This PC's IPv4 address the peer can reach (as for a transfer's tcpHost), or null.</summary>
+    string? GetAdvertisableHost(string peerId) => null;
+
     /// <summary>Sends over the peer's live session. Throws if the peer has no session.</summary>
     Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default);
 
@@ -113,6 +125,30 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         lock (_gate) return _sessions.TryGetValue(peerId, out var registration) ? registration.PeerName : null;
     }
 
+    public event Action<string, PeerMessage>? StreamMessageReceived;
+
+    public Func<string, byte[], int, byte[]>? GetExportKey(string peerId)
+    {
+        lock (_gate) return _sessions.TryGetValue(peerId, out var registration) ? registration.ExportKey : null;
+    }
+
+    public string? GetAdvertisableHost(string peerId)
+    {
+        SessionAddresses? addresses;
+        lock (_gate) addresses = _sessions.TryGetValue(peerId, out var registration) ? registration.Addresses : null;
+        if (addresses is null) return null;
+        try { return LinkServer.FindAdvertisableAddress(addresses); }
+        catch (InvalidOperationException) { return null; }
+    }
+
+    /// <summary>Routes an ADR-066 phone-to-PC stream message. Returns false for any other type.</summary>
+    internal bool PublishStream(string peerId, PeerMessage message)
+    {
+        if (message is not (PeerMessage.StreamCaps or PeerMessage.StreamState or PeerMessage.StreamStop)) return false;
+        Publish(StreamMessageReceived, peerId, message, nameof(StreamMessageReceived));
+        return true;
+    }
+
     public async Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default)
     {
         Registration? registration;
@@ -141,9 +177,10 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         string peerId,
         Func<PeerMessage, CancellationToken, Task> send,
         Func<string, byte[], int, byte[]>? exportKey = null,
-        Action? onReplaced = null)
+        Action? onReplaced = null,
+        SessionAddresses? addresses = null)
     {
-        var registration = new Registration(this, peerId, send, onReplaced, exportKey);
+        var registration = new Registration(this, peerId, send, onReplaced, exportKey) { Addresses = addresses };
         Registration? replaced;
         lock (_gate)
         {
@@ -271,6 +308,9 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
 
         /// <summary>The session's key exporter (04-PROTOCOL.md 5.4); data sockets derive their keys from it.</summary>
         public Func<string, byte[], int, byte[]> ExportKey { get; }
+
+        /// <summary>Both ends of the session's socket, for choosing the address a media socket is dialled on.</summary>
+        public SessionAddresses? Addresses { get; init; }
 
         /// <summary>
         /// A newer session from the same peer took over. The loop stops publishing companion

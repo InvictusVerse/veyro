@@ -106,7 +106,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         PeerCapabilities.Clipboard |
         PeerCapabilities.MediaControl | PeerCapabilities.DeviceStatus |
         PeerCapabilities.Messaging | PeerCapabilities.Calls | PeerCapabilities.Photos |
-        PeerCapabilities.Wallpaper | PeerCapabilities.PhoneControls | PeerCapabilities.DeviceInfo;
+        PeerCapabilities.Wallpaper | PeerCapabilities.PhoneControls | PeerCapabilities.DeviceInfo |
+        PeerCapabilities.ScreenView;
 
     /// <summary>ADR-059: this PC was renamed in Settings. Sessions that are already open hear it as deviceInfo.</summary>
     public void SetLocalName(string name)
@@ -1128,7 +1129,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         }
 
         using PeerSessionRegistry.Registration registration = _sessions.Open(
-            peer.DeviceId, secure.SendAsync, secure.ExportKey, onReplaced: () => _ = CloseReplacedAsync(secure, sessionStop));
+            peer.DeviceId, secure.SendAsync, secure.ExportKey, onReplaced: () => _ = CloseReplacedAsync(secure, sessionStop),
+            addresses: addresses);
         registered?.TrySetResult(true);
         VeyroTrace.Info($"Session opened for peer {peer.DeviceId}");
         Task? activeTransfer = null;
@@ -1298,6 +1300,11 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                     case PeerMessage.CallState or PeerMessage.CallLog:
                         registration.Capabilities |= PeerCapabilities.Calls;
                         _sessions.PublishMessagingOrCall(peer.DeviceId, message.Envelope.Payload);
+                        break;
+                    // ADR-066. Screen frames never travel here; these are control messages only.
+                    case PeerMessage.StreamCaps or PeerMessage.StreamState or PeerMessage.StreamStop:
+                        registration.Capabilities |= PeerCapabilities.ScreenSource;
+                        _sessions.PublishStream(peer.DeviceId, message.Envelope.Payload);
                         break;
                     default:
                         VeyroTrace.Info($"Ignoring {message.Envelope.Payload.GetType().Name} in session");
@@ -1540,7 +1547,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         throw new IOException($"No Veyro control port available in {PortRangeStart}-{PortRangeEnd}.");
     }
 
-    private static string FindAdvertisableAddress(SessionAddresses session)
+    internal static string FindAdvertisableAddress(SessionAddresses session)
     {
         var candidates = NetworkInterface.GetAllNetworkInterfaces()
             .Where(network => network.OperationalStatus == OperationalStatus.Up)
