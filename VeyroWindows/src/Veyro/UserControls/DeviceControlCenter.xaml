@@ -304,16 +304,6 @@
                         <FontIcon FontSize="14" Glyph="&#xE72C;" />
                     </Button>
 
-                    <!--  ADR-067: the phone's camera as a webcam  -->
-                    <Button
-                        AutomationProperties.Name="Use the phone as a webcam"
-                        Click="PhoneCamera_Click"
-                        IsEnabled="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay}"
-                        Style="{StaticResource PillIconButtonStyle}"
-                        ToolTipService.ToolTip="Use the phone as a webcam">
-                        <FontIcon FontSize="14" Glyph="&#xE960;" />
-                    </Button>
-
                     <!--  ADR-038: Send files opens the file picker directly, no screen in between.  -->
                     <Button
                         AutomationProperties.Name="Send files"
@@ -331,6 +321,15 @@
                         <FontIcon FontSize="14" Glyph="&#xE712;" />
                         <Button.Flyout>
                             <MenuFlyout x:Name="DeviceActionsFlyout" Placement="Bottom">
+                                <!--  ADR-067: in the menu, so the action row fits the sidebar.  -->
+                                <MenuFlyoutItem
+                                    Click="PhoneCamera_Click"
+                                    IsEnabled="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay}"
+                                    Text="Use phone as webcam">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE960;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutItem Click="SendFilesAction_Click" Text="Send files">
                                     <MenuFlyoutItem.Icon>
                                         <FontIcon Glyph="&#xE898;" />
