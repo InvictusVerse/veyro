@@ -190,7 +190,10 @@ public sealed class VeyroContainer
             if (settings.DownloadDirectory != LinkServer.DestinationRoot) LinkServer.SetDestinationRoot(settings.DownloadDirectory);
         };
         // ADR-034: sends over the phone's live session; dials only when there is none.
-        FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
+        var fileTransfers = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
+        FileTransferService = fileTransfers;
+        // Files and folders the phone sends go into the same Transfers history as sends.
+        LinkServer.InboundTransferFinished += fileTransfers.RecordReceived;
         // ADR-047: what Veyro may do in the background (polling, EcoQoS), from three facts.
         BackgroundPower = new BackgroundPower(
             PeerSessions, LinkServer, FileTransferService, PcMediaSource, PcWallpaperSource, PcNetworkSource,

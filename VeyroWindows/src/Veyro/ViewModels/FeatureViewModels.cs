@@ -181,12 +181,18 @@ public sealed class TransferHistoryItemViewModel(TransferRecord record)
 {
     public TransferRecord Record { get; } = record;
 
-    public string Title => Record.Items.Count switch
-    {
-        0 => "No files",
-        1 => Record.Items[0].RelativePath,
-        _ => $"{Record.Items[0].RelativePath} and {Record.Items.Count - 1} more"
-    };
+    public string Title => Record.FolderName is { } folder
+        ? OutgoingPlan.FolderSummary(folder, Record.Items.Count)
+        : Record.Items.Count switch
+        {
+            0 => "No files",
+            1 => Record.Items[0].RelativePath,
+            _ => $"{Record.Items[0].RelativePath} and {Record.Items.Count - 1} more"
+        };
+
+    /// <summary>A received entry's saved file or folder, for Open and Show in folder; null otherwise.</summary>
+    public string? SavedTarget { get; } = ReceivedHistory.SavedTarget(record);
+    public bool HasSavedTarget => SavedTarget is not null;
 
     public string Detail
     {
@@ -202,11 +208,18 @@ public sealed class TransferHistoryItemViewModel(TransferRecord record)
     {
         VerificationOutcome.Verified => "Verified",
         VerificationOutcome.Failed => "Failed",
+        VerificationOutcome.Cancelled => "Cancelled",
+        VerificationOutcome.Declined => "Declined",
         _ => "Not verified"
     };
 
     public string Glyph => Record.IsIncoming ? "\uE896" : "\uE898";
-    public string OutcomeGlyph => Record.Verification == VerificationOutcome.Verified ? "\uE73E" : "\uE783";
+    public string OutcomeGlyph => Record.Verification switch
+    {
+        VerificationOutcome.Verified => "\uE73E",
+        VerificationOutcome.Cancelled or VerificationOutcome.Declined => "\uE711",
+        _ => "\uE783"
+    };
     public string ErrorText => Record.ErrorMessage ?? string.Empty;
     public bool HasError => !string.IsNullOrEmpty(Record.ErrorMessage);
 }

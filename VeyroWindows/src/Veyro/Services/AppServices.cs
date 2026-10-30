@@ -278,10 +278,25 @@ public sealed class FileTransferService : IFileTransferService
         _settingsStore = settingsStore;
         _deviceManager = deviceManager;
         _sessions = sessions;
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
         foreach (var item in _historyStore.GetHistory())
         {
             History.Add(item);
         }
+    }
+
+    private readonly DispatcherQueue? _dispatcher;
+
+    /// <summary>
+    /// A file or folder the phone sent ended (LinkServer.InboundTransferFinished, server thread).
+    /// Recorded like a send, on the UI thread, so the Transfers tab shows it at once.
+    /// </summary>
+    public void RecordReceived(InboundTransferReport report)
+    {
+        string peerName = _trustStore.GetPeer(report.PeerDeviceId)?.ShownName ?? "Unknown device";
+        TransferRecord record = ReceivedHistory.ToRecord(report, peerName, DateTimeOffset.UtcNow);
+        if (_dispatcher is null || _dispatcher.HasThreadAccess) _ = SaveRecordAsync(record);
+        else _dispatcher.TryEnqueue(() => _ = SaveRecordAsync(record));
     }
 
     private static bool IsFinished(ActiveTransfer transfer)
@@ -447,6 +462,11 @@ public sealed class FileTransferService : IFileTransferService
             outcome,
             transfer.Items,
             ErrorMessage: outcome == VerificationOutcome.Failed ? transfer.ErrorMessage : null);
+        await SaveRecordAsync(record).ConfigureAwait(true);
+    }
+
+    private async Task SaveRecordAsync(TransferRecord record)
+    {
         try
         {
             await _historyStore.UpsertAsync(record).ConfigureAwait(true);
@@ -455,6 +475,8 @@ public sealed class FileTransferService : IFileTransferService
         {
             VeyroTrace.Warn($"Saving transfer history failed: {error.GetType().Name}");
         }
+        // The store replaced a record with the same id (a phone retrying a transfer); so does the list.
+        if (History.FirstOrDefault(existing => existing.TransferId == record.TransferId) is { } replaced) History.Remove(replaced);
         History.Insert(0, record);
     }
 }
