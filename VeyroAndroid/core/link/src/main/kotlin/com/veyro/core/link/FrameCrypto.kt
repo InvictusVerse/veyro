@@ -89,9 +89,23 @@ internal class SessionSealer(key: ByteArray, private val localDeviceId: String, 
 
     val nextCounter: Long get() = framer.nextCounter
 
-    /** Returns the wire text. Throws [AeadStreamException] when the counter is exhausted. */
-    fun seal(envelopeJson: String): String {
+    private val idBytes = localDeviceId.toByteArray(Charsets.UTF_8).size
+
+    /** The UTF-8 length of the wire text [seal] returns for a plaintext of [plainBytes] bytes. */
+    fun wireLength(plainBytes: Int): Long =
+        "{\"f\":\"\",\"c\":\"\"}".length + idBytes + 4L * ((plainBytes.toLong() + 16 + 2) / 3)
+
+    /**
+     * Returns the wire text. Throws [AeadStreamException] when the counter is exhausted, and
+     * [IllegalArgumentException] when the frame would be longer than [maxWireBytes]; that check
+     * runs before sealing, so no counter is spent (review issue 14, ADR-058).
+     */
+    fun seal(envelopeJson: String, maxWireBytes: Long = Long.MAX_VALUE): String {
         val plain = envelopeJson.toByteArray(Charsets.UTF_8)
+        if (wireLength(plain.size) > maxWireBytes) {
+            plain.fill(0)
+            throw IllegalArgumentException("control frame exceeds the protocol limit")
+        }
         val aad = FrameCrypto.aad(localDeviceId, dir, framer.nextCounter)
         val sealed = ByteArray(plain.size + 16)
         framer.seal(aad, aad.size, plain, 0, plain.size, sealed, 0)

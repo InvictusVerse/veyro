@@ -192,6 +192,9 @@ public class PeerConnection(
     @Volatile
     private var isClosedFlag: Boolean = false
 
+    /** A sealed frame did not reach the socket; its counter is spent (review issue 1). Guarded by [sendMutex]. */
+    private var sendFailed: Boolean = false
+
     /**
      * While true the heartbeat neither pings nor declares the peer dead.
      *
@@ -466,7 +469,7 @@ public class PeerConnection(
 
     /** Call under [sendMutex]: allocates the counter, seals and writes as one step (FR-F4). */
     private suspend fun sendLocked(message: PeerMessage) {
-        if (isClosedFlag) throw java.io.IOException("connection closed")
+        if (isClosedFlag || sendFailed) throw java.io.IOException("connection closed")
         val counter = sealer.nextCounter
         lastOutboundAt = System.currentTimeMillis()
         val envelope = LinkEnvelope(
@@ -478,7 +481,8 @@ public class PeerConnection(
         )
         val payloadJson = PeerMessageJson.codec.encodeToString(LinkEnvelope.serializer(), envelope)
         val wireText = try {
-            sealer.seal(payloadJson)
+            // An oversized message fails alone, before a counter is spent (review issue 14).
+            sealer.seal(payloadJson, MAX_FRAME_SIZE_BYTES)
         } catch (e: com.veyro.core.protocol.AeadStreamException) {
             VeyroLog.w(tag) { "Send counter exhausted; closing" }
             scope.launch { fail(CloseCause.LOCAL, "counter-exhausted") }
@@ -499,7 +503,16 @@ public class PeerConnection(
             }
         }
 
-        ws.send(wireText)
+        try {
+            ws.send(wireText)
+        } catch (t: Throwable) {
+            // The counter is spent whether or not the frame left: a later frame would no longer
+            // open at the peer, so nothing more is sent and the connection closes (review issue 1).
+            sendFailed = true
+            VeyroLog.w(tag) { "Send failed after sealing (${t.javaClass.simpleName}); closing" }
+            scope.launch { fail(CloseCause.LOCAL, "send-failed") }
+            throw t
+        }
     }
 
     public suspend fun close(reason: String = "normal") {

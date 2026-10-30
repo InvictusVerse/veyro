@@ -163,6 +163,65 @@ class PeerConnectionV3Test {
     }
 
     @Test
+    fun `an oversized control frame fails only that message and the connection goes on (review issue 14)`() = runBlocking {
+        val (p, q) = establishedPair()
+        val mailbox = q.mailbox("t-1")
+        val huge = "a".repeat(PeerConnection.MAX_FRAME_SIZE_BYTES.toInt())
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { p.send(PeerMessage.Ping(huge)) } }
+        p.send(PeerMessage.TransferProgressNotice("t-1", 1L, 1L))
+        assertTrue(withTimeout(5_000) { mailbox.payloadChannel.receive() } is PeerMessage.TransferProgressNotice)
+        assertTrue("the peer did not close the connection", q.isConnected && p.isConnected)
+        p.close(); q.close()
+    }
+
+    @Test
+    fun `the size check before sealing predicts the wire length exactly`() {
+        val (k, _) = TestLinkKeys.sessionPair(phone, pc)
+        val sealer = SessionSealer(k.sendKey, phone, FrameCrypto.DIR_I2R)
+        for (n in listOf(0, 1, 2, 3, 1000, 65_537)) {
+            val predicted = sealer.wireLength(n)
+            assertEquals("plaintext $n", predicted, sealer.seal("x".repeat(n)).toByteArray().size.toLong())
+        }
+        val counter = sealer.nextCounter
+        assertThrows(IllegalArgumentException::class.java) { sealer.seal("x".repeat(100), maxWireBytes = sealer.wireLength(100) - 1) }
+        assertEquals("a refused frame spends no counter", counter, sealer.nextCounter)
+    }
+
+    @Test
+    fun `a write that fails after sealing fails the connection (review issue 1)`() = runBlocking {
+        val (phoneKeys, pcKeys) = TestLinkKeys.sessionPair(phone, pc)
+        val (a, b) = wire()
+        var failNext = false
+        var writes = 0
+        val flaky = object : SendChannel<Frame> by a.outbox {
+            override suspend fun send(element: Frame) {
+                if (failNext) {
+                    failNext = false
+                    throw java.io.IOException("simulated socket failure after sealing")
+                }
+                if (element is Frame.Text) writes++
+                a.outbox.send(element)
+            }
+        }
+        val flakyWs = object : TestWebSocketSession() {
+            override val incoming: ReceiveChannel<Frame> = a.inbox
+            override val outgoing: SendChannel<Frame> = flaky
+        }
+        val p = PeerConnection(flakyWs, phoneKeys, phone, "Test-flaky", Dispatchers.IO, enableHeartbeat = false).also { it.start() }
+        val q = connection(b, pcKeys).also { it.start() }
+        establishPair(p, q)
+
+        failNext = true
+        assertThrows(java.io.IOException::class.java) { runBlocking { p.send(PeerMessage.Ping("lost")) } }
+        val before = writes
+        assertThrows(java.io.IOException::class.java) { runBlocking { p.send(PeerMessage.Ping("next")) } }
+        assertEquals("nothing is written one counter ahead of the peer", before, writes)
+        withTimeout(5_000) { p.closed.first() }
+        assertFalse(p.isConnected)
+        q.close()
+    }
+
+    @Test
     fun `the known type set comes from the serializer and includes main's additions`() {
         assertTrue(PeerConnection.KNOWN_PAYLOAD_TYPES.containsAll(setOf("hello", "helloAck", "pairHello", "pairOk", "pairFail", "unpair", "deviceInfo", "ping")))
         assertFalse("futureThing" in PeerConnection.KNOWN_PAYLOAD_TYPES)
