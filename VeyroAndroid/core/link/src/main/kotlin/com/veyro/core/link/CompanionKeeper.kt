@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToLong
+import kotlin.random.Random
 
 /** A paired PC the background connection is kept to. */
 public data class KeepTarget(val deviceId: String, val name: String)
@@ -44,6 +46,12 @@ public sealed interface KeeperState {
  * discovery) is shared: it cuts every loop's sleep short and resets its backoff, which is when a
  * retry is likely to work.
  *
+ * ADR-061: every backoff sleep gets +/-[JITTER] random jitter from [random], so several phones
+ * (or a phone and its PC) that lost the network together do not retry in lockstep. A session that
+ * dies within [FLAP_MS] of connecting does not reset the backoff: the next attempt waits the next
+ * backoff step instead of dialling at once, so a connect-drop-connect loop slows down. A session
+ * that lasted longer resets it, and the first retry after it is immediate as before.
+ *
  * Pure Kotlin over flows and lambdas, so the policy is JVM-tested without a device.
  */
 public class CompanionKeeper(
@@ -56,6 +64,10 @@ public class CompanionKeeper(
     private val backoffMs: (failures: Int) -> Long = ::defaultBackoff,
     /** How long a successful attempt gets to show up in [connectedPeerIds] before retrying. */
     private val settleMs: Long = SETTLE_MS,
+    /** The jitter source; injected so tests are deterministic. */
+    private val random: Random = Random.Default,
+    /** A monotonic clock in milliseconds, for how long a session lasted. */
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
 
     public companion object {
@@ -66,8 +78,23 @@ public class CompanionKeeper(
         public const val SETTLE_MS: Long = 15_000L
         private const val WAKE_SETTLE_MS = 1_000L
 
+        /** A backoff sleep is its step times a factor in [1 - JITTER, 1 + JITTER). */
+        public const val JITTER: Double = 0.2
+
+        /** A session shorter than this counts as flapping: the backoff keeps growing. */
+        public const val FLAP_MS: Long = 15_000L
+
         public fun defaultBackoff(failures: Int): Long =
             BACKOFF_MS.getOrElse(failures) { MAX_BACKOFF_MS }
+
+        /** [baseMs] scaled by a factor in [1 - JITTER, 1 + JITTER); [unit] is in [0, 1). */
+        public fun jittered(baseMs: Long, unit: Double): Long =
+            (baseMs * (1.0 + JITTER * (2.0 * unit - 1.0))).roundToLong().coerceAtLeast(0L)
+    }
+
+    /** Consecutive failures for one target, kept across short sessions. */
+    private class Streak {
+        var failures = 0
     }
 
     private val _states = MutableStateFlow<Map<String, KeeperState>>(emptyMap())
@@ -106,23 +133,34 @@ public class CompanionKeeper(
     }
 
     private suspend fun keep(t: KeepTarget, wake: Channel<Unit>) {
+        val streak = Streak()
+        var connectedAt = -1L
         connectedPeerIds
             .map { t.deviceId in it }
             .distinctUntilChanged()
             .collectLatest { connected ->
                 if (connected) {
+                    connectedAt = nowMs()
                     _states.update { it + (t.deviceId to KeeperState.Connected(t)) }
                 } else {
                     _states.update { it + (t.deviceId to KeeperState.Looking(t)) }
+                    // A session that died young is flapping: wait the next step before dialling.
+                    val flapping = connectedAt >= 0 && nowMs() - connectedAt < FLAP_MS
+                    if (connectedAt >= 0 && !flapping) streak.failures = 0
+                    connectedAt = -1L
                     // Signals from before this disconnect say nothing about now.
                     wake.tryReceive()
-                    keepTrying(t, wake)
+                    keepTrying(t, wake, streak, waitFirst = flapping)
                 }
             }
     }
 
-    private suspend fun keepTrying(t: KeepTarget, wake: Channel<Unit>) {
-        var failures = 0
+    private suspend fun keepTrying(t: KeepTarget, wake: Channel<Unit>, streak: Streak, waitFirst: Boolean) {
+        if (waitFirst) {
+            val wait = jittered(backoffMs(streak.failures++), random.nextDouble())
+            VeyroLog.i(TAG) { "Session dropped soon after connecting; next try in ${wait / 1000}s unless the network changes" }
+            sleepOrWake(wait, wake, streak)
+        }
         while (true) {
             val ok = try {
                 attempt(t)
@@ -134,15 +172,20 @@ public class CompanionKeeper(
             }
             // On success the session normally appears within [settleMs] and collectLatest
             // cancels this loop; if it never does, try again.
-            val wait = if (ok) settleMs else backoffMs(failures++)
+            val wait = if (ok) settleMs else jittered(backoffMs(streak.failures++), random.nextDouble())
             if (!ok) VeyroLog.i(TAG) { "Reconnect failed; next try in ${wait / 1000}s unless the network changes" }
-            val woke = withTimeoutOrNull(wait) { wake.receive() } != null
-            if (woke) {
-                failures = 0
-                // Let a burst of network callbacks settle before dialling.
-                delay(WAKE_SETTLE_MS)
-                wake.tryReceive()
-            }
+            sleepOrWake(wait, wake, streak)
+        }
+    }
+
+    /** Sleeps [waitMs], or less when [wake] fires; a wake resets the backoff. */
+    private suspend fun sleepOrWake(waitMs: Long, wake: Channel<Unit>, streak: Streak) {
+        val woke = withTimeoutOrNull(waitMs) { wake.receive() } != null
+        if (woke) {
+            streak.failures = 0
+            // Let a burst of network callbacks settle before dialling.
+            delay(WAKE_SETTLE_MS)
+            wake.tryReceive()
         }
     }
 }
