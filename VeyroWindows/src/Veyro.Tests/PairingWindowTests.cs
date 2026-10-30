@@ -319,6 +319,7 @@ public sealed class LinkServerPairingWindowTests
         public string PcId => Pc.DeviceId.Value;
         public string PhoneId => DeviceId.FromPublicKey(PhonePublicKey).Value;
         public FileTrustStore TrustStore { get; }
+        public HookedTrustStore Hooks { get; }
         public LinkServer Server { get; }
         public List<InboundPairingRequest> Prompts { get; } = [];
 
@@ -327,7 +328,8 @@ public sealed class LinkServerPairingWindowTests
             PhonePublicKey = X25519Crypto.FromSeed(PhoneSeed).PublicKey;
             Directory.CreateDirectory(Root);
             TrustStore = new FileTrustStore(Root, new byte[32]);
-            Server = new LinkServer(PcId, "Test PC", TrustStore, Path.Combine(Root, "received"), Pc.PublicKey.Span,
+            Hooks = new HookedTrustStore(TrustStore);
+            Server = new LinkServer(PcId, "Test PC", Hooks, Path.Combine(Root, "received"), Pc.PublicKey.Span,
                 _ => Task.FromResult(false),
                 deriveSharedKey: (peerKey, salt, info) => Pc.DeriveSharedKey(peerKey, salt, info));
             Server.PairingAuthorizer = request =>
@@ -417,6 +419,46 @@ public sealed class LinkServerPairingWindowTests
             Assert.Empty(f.Prompts);
 
             await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", ct);
+        }
+    }
+
+    /// <summary>
+    /// Review issue 2 (ADR-058): when pairOk cannot be sent after the trust write (here the
+    /// listener stops at that moment), the record is deleted again, nothing is reported paired,
+    /// and the attempt counts as a window failure.
+    /// </summary>
+    [Fact]
+    public async Task OpenWindow_PairOkThatCannotBeSent_LeavesNoTrustAndCountsAsAFailure()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        await using var f = new Fixture();
+        bool completed = false;
+        f.Server.PairingCompleted += _ => completed = true;
+        await f.Server.StartAsync();
+        f.Server.PairingWindow.Open();
+        byte[] qrSecret = f.WindowSecret();
+        Task? stopping = null;
+        f.Hooks.AfterUpsert = _ =>
+        {
+            stopping = f.Server.StopAsync();
+            return Task.CompletedTask;
+        };
+
+        var (socket, dialer, ack) = await f.ConnectQrAsync(ct);
+        using (socket)
+        using (dialer)
+        {
+            Assert.Equal(LinkPreambleAck.ModePairing, ack.Mode);
+            var (keys, proof) = f.PhoneQrKeys(dialer, qrSecret);
+            await using var phone = new SecureLinkSession(socket, keys);
+            await phone.SendAsync(f.Hello(proof), ct);
+            await Assert.ThrowsAnyAsync<Exception>(() => phone.ReceiveAsync(ct));
+            await WaitUntilAsync(() => stopping is not null, ct);
+            await stopping!.WaitAsync(ct);
+            Assert.Null(f.TrustStore.GetPeer(f.PhoneId));
+            Assert.Equal(1, f.Server.PairingWindow.Failures);
+            Assert.False(completed);
         }
     }
 

@@ -113,6 +113,20 @@ public sealed class PairConfirmVectorTests
     }
 }
 
+/// <summary>A trust store that runs a test hook right after each upsert (review issue 2).</summary>
+internal sealed class HookedTrustStore(ITrustStore inner) : ITrustStore
+{
+    public Func<TrustedPeer, Task>? AfterUpsert { get; set; }
+    public IReadOnlyList<TrustedPeer> GetTrustedPeers() => inner.GetTrustedPeers();
+    public TrustedPeer? GetPeer(string deviceId) => inner.GetPeer(deviceId);
+    public async Task UpsertAsync(TrustedPeer peer)
+    {
+        await inner.UpsertAsync(peer);
+        if (AfterUpsert is { } hook) await hook(peer);
+    }
+    public Task RemoveAsync(string deviceId) => inner.RemoveAsync(deviceId);
+}
+
 internal sealed class MemorySeedStore(byte[]? seed = null) : ISeedStore
 {
     private byte[]? _seed = seed;
@@ -146,6 +160,7 @@ public sealed class LinkServerConfirmPairingTests
         public string Root { get; } = Path.Combine(AppContext.BaseDirectory, "veyro-confirm-" + Guid.NewGuid().ToString("N"));
         public DefaultIdentityManager Pc { get; } = new(new MemorySeedStore());
         public FileTrustStore TrustStore { get; }
+        public HookedTrustStore Hooks { get; }
         public LinkServer Server { get; }
         public List<InboundPairingRequest> Prompts { get; } = [];
         public TaskCompletionSource<bool> Answer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -154,8 +169,9 @@ public sealed class LinkServerConfirmPairingTests
         {
             Directory.CreateDirectory(Root);
             TrustStore = new FileTrustStore(Root, new byte[32]);
+            Hooks = new HookedTrustStore(TrustStore);
             Server = new LinkServer(
-                Pc.DeviceId.Value, "Test PC", TrustStore, Path.Combine(Root, "received"), Pc.PublicKey.Span,
+                Pc.DeviceId.Value, "Test PC", Hooks, Path.Combine(Root, "received"), Pc.PublicKey.Span,
                 _ => Task.FromResult(false),
                 deriveSharedKey: (peerKey, salt, info) => Pc.DeriveSharedKey(peerKey, salt, info));
             Server.PairingAuthorizer = request =>
@@ -275,6 +291,43 @@ public sealed class LinkServerConfirmPairingTests
             Assert.Equal(Convert.ToBase64String(phone.PublicKey), stored.PublicKeyBase64);
             Assert.Equal(pairOk.SessionSecretB64, stored.PairingSecretBase64);
             Assert.False(prompt.Abandoned.IsCancellationRequested);
+        }
+    }
+
+    /// <summary>
+    /// Review issue 2 (ADR-058): when pairOk cannot be sent after the trust write, the record is
+    /// deleted again and no pairing is reported, so the PC never trusts a phone without the secret.
+    /// </summary>
+    [Fact]
+    public async Task Accept_WhenPairOkCannotBeSent_LeavesNoTrustRecord()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        await using var f = new Fixture();
+        var phone = new TestPhone();
+        bool completed = false;
+        f.Server.PairingCompleted += _ => completed = true;
+        await f.Server.StartAsync();
+
+        PhoneSide side = await PairUntilPromptAsync(f, phone, ct);
+        await using (side.Secure)
+        {
+            await WaitForPromptAsync(f, ct);
+            var upserted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Between the trust write and pairOk the session fails: the phone sends a second
+            // pairHello, which the PC's outstanding read refuses (04-PROTOCOL.md 5.3).
+            f.Hooks.AfterUpsert = async _ =>
+            {
+                await side.Secure.SendAsync(new PeerMessage.PairHello(phone.Id, "Phone", "android", "1.0",
+                    PublicKeyB64: Convert.ToBase64String(phone.PublicKey)), ct);
+                await Task.Delay(500, ct);
+                upserted.TrySetResult();
+            };
+            f.Answer.SetResult(true);
+            await upserted.Task.WaitAsync(ct);
+            await Assert.ThrowsAnyAsync<Exception>(() => side.Secure.ReceiveAsync(ct));
+            Assert.Null(f.TrustStore.GetPeer(phone.Id));
+            Assert.False(completed);
         }
     }
 

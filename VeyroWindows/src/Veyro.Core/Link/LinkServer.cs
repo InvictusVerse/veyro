@@ -518,12 +518,23 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             try
             {
                 await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
-                await secure.SendPairOkAndSwitchAsync(new PeerMessage.PairOk(
-                    _localDeviceId,
-                    _localName,
-                    "windows",
-                    Convert.ToBase64String(sessionSecret),
-                    Convert.ToBase64String(_localPublicKey)), sessionSecret, ct).ConfigureAwait(false);
+                try
+                {
+                    await secure.SendPairOkAndSwitchAsync(new PeerMessage.PairOk(
+                        _localDeviceId,
+                        _localName,
+                        "windows",
+                        Convert.ToBase64String(sessionSecret),
+                        Convert.ToBase64String(_localPublicKey)), sessionSecret, ct).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Review issue 2 (ADR-058): the phone never learnt the secret, so this PC must
+                    // not keep trusting it; the failed attempt counts against the window.
+                    await ForgetUndeliveredPairingAsync(phoneId).ConfigureAwait(false);
+                    PairingWindow.RecordFailure(attempt);
+                    throw;
+                }
             }
             finally
             {
@@ -536,6 +547,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         }
         finally
         {
+            // attempt.Secret is this attempt's own clone (PairingWindow.TryBeginAttempt), so
+            // zeroing it here and above never touches the window's secret.
             CryptographicOperations.ZeroMemory(attempt.Secret);
         }
     }
@@ -658,12 +671,21 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             await _trustStore.UpsertAsync(trusted).ConfigureAwait(false);
             // The receive keys switch before pairOk leaves, so the phone's first session frame
             // can never be read under the bootstrap keys (04-PROTOCOL.md 4.3).
-            await secure.SendPairOkAndSwitchAsync(new PeerMessage.PairOk(
-                _localDeviceId,
-                _localName,
-                "windows",
-                Convert.ToBase64String(sessionSecret),
-                Convert.ToBase64String(_localPublicKey)), sessionSecret, ct).ConfigureAwait(false);
+            try
+            {
+                await secure.SendPairOkAndSwitchAsync(new PeerMessage.PairOk(
+                    _localDeviceId,
+                    _localName,
+                    "windows",
+                    Convert.ToBase64String(sessionSecret),
+                    Convert.ToBase64String(_localPublicKey)), sessionSecret, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Review issue 2 (ADR-058): the phone never learnt the secret; keep no trust.
+                await ForgetUndeliveredPairingAsync(idA).ConfigureAwait(false);
+                throw;
+            }
         }
         finally
         {
@@ -850,6 +872,20 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         {
             // Owned by the running session once handed off; otherwise closed here.
             if (!handedOff) socket.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Review issue 2 (ADR-058): the trust record was written but <c>pairOk</c> did not leave, so
+    /// the phone holds no secret. The record is deleted again; nothing is reported paired.
+    /// </summary>
+    private async Task ForgetUndeliveredPairingAsync(string peerId)
+    {
+        VeyroTrace.Warn($"Pairing with {peerId} did not complete: pairOk was not sent; trust removed");
+        try { await _trustStore.RemoveAsync(peerId).ConfigureAwait(false); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            VeyroTrace.Error("Removing the undelivered pairing failed", error);
         }
     }
 

@@ -125,7 +125,11 @@ public class ConnectionManager(
      * [forgetTrustedPeer].
      */
     private val removeTrustedPeer: suspend (peerDeviceId: String) -> Unit = forgetTrustedPeer,
-    /** ADR-057: the kept secret of a device removed here and not yet told, or null. */
+    /**
+     * ADR-057: the kept secret of a device removed here and not yet told, or null. Must return a
+     * fresh copy the caller owns: this class zeroes it after use (review issue 12;
+     * `FileTrustStore.pendingUnpairSecret` returns `copyOf()`).
+     */
     private val pendingUnpairSecret: suspend (peerDeviceId: String) -> ByteArray? = { null },
     /** ADR-057: that device was told, or does not hold the old pairing any more: drop the secret. */
     private val unpairDelivered: suspend (peerDeviceId: String) -> Unit = {},
@@ -1489,7 +1493,7 @@ public class ConnectionManager(
             _events.value = ConnectionEvent.Failed("Could not save pairing on this device")
             return
         }
-        try {
+        val sent = try {
             session.sendPairOkAndSwitch(
                 PeerMessage.PairOk(
                     deviceId = localDeviceId(),
@@ -1500,17 +1504,34 @@ public class ConnectionManager(
                 ),
                 secret,
             )
+            true
         } catch (e: CancellationException) {
+            withContext(NonCancellable) { forgetUndeliveredPairing(peerDeviceId, connId) }
             throw e
         } catch (t: Throwable) {
             VeyroLog.w(TAG) { "[$connId] Sending pairOk failed (${t.javaClass.simpleName})" }
+            false
         } finally {
             secret.fill(0)
+        }
+        if (!sent) {
+            // Review issue 2 (ADR-058): the peer never learnt the secret. Keeping the record would
+            // leave this side trusting a device that cannot open a session, with no way back.
+            forgetUndeliveredPairing(peerDeviceId, connId)
+            session.close("pair-ok-failed")
+            _events.value = ConnectionEvent.Failed("Pairing with ${hello.deviceName} did not complete")
+            return
         }
         session.heartbeatPaused = false
         VeyroLog.i(TAG) { "[$connId] Confirm pairing completed with ${hello.deviceName}" }
         _events.value = ConnectionEvent.Paired(peer)
         runAfterPairing(session, readJob, inbound = true, connId = connId, peerName = hello.deviceName)
+    }
+
+    /** The trust record was written but `pairOk` did not leave: delete it again (review issue 2). */
+    private suspend fun forgetUndeliveredPairing(peerDeviceId: DeviceId, connId: String) {
+        runCatching { forgetTrustedPeer(peerDeviceId.value) }
+            .onFailure { VeyroLog.w(TAG) { "[$connId] Removing the undelivered pairing failed: ${it.javaClass.simpleName}" } }
     }
 
     /** Null on timeout, a closed socket, or anything that is not a well-formed 32-byte nonce. */

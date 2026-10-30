@@ -72,6 +72,7 @@ class ConfirmPairingTest {
             },
             localPublicKey = { self.pk },
             deriveSharedKey = { peerPk, salt, info -> Hkdf.deriveKey(X25519.agree(self.sk, peerPk), salt, info, 32) },
+            forgetTrustedPeer = { id -> self.saved.removeAll { it.deviceId.value == id } },
         )
 
     private suspend fun <T : Any> awaitValue(what: String, read: () -> T?): T {
@@ -138,6 +139,27 @@ class ConfirmPairingTest {
         phoneManager.disconnect()
         pcManager.disconnect()
         inbound.cancel()
+    }
+
+    @Test
+    fun `Accept when pairOk cannot be sent keeps no trust record and reports no pairing (review issue 2)`() = runTest(testDispatcher) {
+        val (phoneEnd, pcEnd) = PipeSession.pair()
+        val phoneManager = manager(phone, "Phone", phoneEnd)
+        val pcManager = manager(pc, "Office PC")
+        val inbound = launch { pcManager.handleInbound(pcEnd) }
+        val outbound = launch { phoneManager.pairWithConfirm(pc.id, "Office PC", endpoints).collect {} }
+
+        awaitValue("the PC prompt") { pcManager.pendingInbound.value?.confirmCode }
+        // The way back to the phone breaks while the user decides: pairOk cannot be written.
+        pcEnd.outgoingChannel.close()
+        pcManager.respondToInbound(true)
+        inbound.join()
+
+        assertTrue("no trust is kept for a peer that never got the secret: ${pc.saved}", pc.saved.isEmpty())
+        assertTrue("not reported Paired: ${pcManager.events.value}", pcManager.events.value is ConnectionManager.ConnectionEvent.Failed)
+        assertNull(pcManager.connectionFor(phone.id))
+        phoneManager.cancelOutboundPairing()
+        outbound.join()
     }
 
     @Test
