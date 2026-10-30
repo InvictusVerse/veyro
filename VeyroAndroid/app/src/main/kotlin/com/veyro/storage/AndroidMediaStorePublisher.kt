@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import com.veyro.ui.format.ReceiveTree
 import com.veyro.ui.format.ReceivedFolders
 import android.webkit.MimeTypeMap
 import com.veyro.core.common.VeyroLog
@@ -38,11 +39,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Uses `IS_PENDING = 1` during writing and clears it upon completion.
  * Handles insert, stream-open, write, and close failures explicitly by deleting abandoned pending rows.
- * If a custom destination directory was configured by the user, files are moved there instead.
+ *
+ * ADR-072: when the user picked a folder in Settings, files go there instead, through the
+ * persisted SAF tree grant ([ReceiveTreeAccess]): the same type subfolders and folder structure,
+ * written as `<name>.veyropart` and renamed once verified. If the grant is gone or the folder was
+ * deleted, that receive goes to Download/Veyro and [onReceiveFolderLost] is told.
  */
 public class AndroidMediaStorePublisher(
     private val context: Context,
-    private val customDestinationDir: (suspend () -> File?)? = null,
+    /** The tree URI chosen in Settings; null for Download/Veyro. */
+    private val receiveFolderUri: (suspend () -> String?)? = null,
+    /** A receive fell back to Download/Veyro because the chosen folder is not usable. */
+    private val onReceiveFolderLost: suspend () -> Unit = {},
 ) : TransferStoragePublisher {
 
     public companion object {
@@ -60,15 +68,9 @@ public class AndroidMediaStorePublisher(
         // File names are user data: never logged, here or in a failure reason.
         VeyroLog.i(TAG) { "Publishing an item ($sizeBytes bytes, mime=$resolvedMimeType) to destination" }
 
-        // If user specified custom destination folder, write there instead of MediaStore
-        val customDir = customDestinationDir?.invoke()
-        if (customDir != null && customDir.exists()) {
-            // The same subfolders inside the chosen folder, so it stays as tidy as the default;
-            // an item of a received folder keeps that folder's structure (ADR-064).
-            val parent = relativePath.substringBeforeLast('/', missingDelimiterValue = "")
-            val sorted = insideOrNull(customDir, parent.ifEmpty { ReceivedFolders.subfolder(fileName, resolvedMimeType) })
-                ?: return@withContext StoragePublishResult.Failed("PATH_REJECTED")
-            return@withContext publishToCustomDir(sourceFile, sorted, fileName, resolvedMimeType)
+        // ADR-072: the folder chosen in Settings, when it is still usable.
+        chosenTree()?.let { tree ->
+            return@withContext publishToTree(tree, sourceFile, relativePath, resolvedMimeType, sizeBytes)
         }
 
         publishToMediaStore(sourceFile, fileName, resolvedMimeType, sizeBytes, ReceivedFolders.dirFor(relativePath, resolvedMimeType))
@@ -81,10 +83,7 @@ public class AndroidMediaStorePublisher(
      */
     override suspend fun folderExists(name: String): Boolean = withContext(Dispatchers.IO) {
         if (ReceivedFolders.isTypeFolder(name)) return@withContext true
-        val customDir = customDestinationDir?.invoke()
-        if (customDir != null && customDir.exists()) {
-            return@withContext insideOrNull(customDir, name)?.exists() != false
-        }
+        chosenTree()?.let { tree -> return@withContext tree.rootHas(name) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && sharedVeyroDir()?.let { File(it, name).exists() } == true) {
             return@withContext true
         }
@@ -111,9 +110,11 @@ public class AndroidMediaStorePublisher(
      * app may create directories without a permission. Android 10 cannot; it is counted instead.
      */
     override suspend fun createDirectory(relativePath: String): Boolean = withContext(Dispatchers.IO) {
-        val customDir = customDestinationDir?.invoke()
+        chosenTree()?.let { tree ->
+            val segments = ReceiveTree.segments(relativePath) ?: return@withContext false
+            return@withContext tree.dir(segments, create = true) != null
+        }
         val root = when {
-            customDir != null && customDir.exists() -> customDir
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> sharedVeyroDir()
             else -> null
         } ?: return@withContext false
@@ -178,15 +179,17 @@ public class AndroidMediaStorePublisher(
      * ADR-049: a pending MediaStore entry in its final folder, written in place while the file
      * arrives. Pending means hidden from other apps and Gallery until [MediaStoreTarget.commit],
      * which only runs after the whole-file hash matched; so nothing is copied after the last byte.
-     * Null (receive into a staging file instead) when the user picked their own folder, or if
-     * MediaStore refuses.
+     * In the folder chosen in Settings (ADR-072) it is a `<name>.veyropart` document written the
+     * same way. Null (receive into a staging file instead) if MediaStore or the folder's provider
+     * refuses, or the provider's file cannot be written at a position.
      */
     override suspend fun openDirect(relativePath: String, mimeType: String?, sizeBytes: Long): DirectReceiveTarget? =
         withContext(Dispatchers.IO) {
-            val customDir = customDestinationDir?.invoke()
-            if (customDir != null && customDir.exists()) return@withContext null // staged there, then renamed
             val fileName = relativePath.substringAfterLast('/')
             val resolvedMimeType = mimeType ?: detectMimeType(fileName)
+            chosenTree()?.let { tree ->
+                return@withContext openTreeDirect(tree, relativePath, fileName, resolvedMimeType, sizeBytes)
+            }
             // A received folder keeps its structure (ADR-064); a loose file goes by type.
             val relativeDir = ReceivedFolders.dirFor(relativePath, resolvedMimeType)
             val resolver = context.contentResolver
@@ -414,40 +417,143 @@ public class AndroidMediaStorePublisher(
         }
     }
 
-    private fun publishToCustomDir(
-        sourceFile: File,
-        targetDir: File,
-        fileName: String,
-        mimeType: String,
-    ): StoragePublishResult {
-        targetDir.mkdirs()
-        val targetFile = resolveCollision(File(targetDir, fileName))
-        return try {
-            if (!sourceFile.renameTo(targetFile)) {
-                sourceFile.copyTo(targetFile, overwrite = false)
-                sourceFile.delete()
+    /**
+     * The folder chosen in Settings when Veyro still holds its grant and it still exists; null for
+     * Download/Veyro (nothing chosen, or the folder is gone, which [onReceiveFolderLost] hears).
+     */
+    private suspend fun chosenTree(): ReceiveTreeAccess? {
+        val chosen = runCatching { receiveFolderUri?.invoke() }.getOrNull() ?: return null
+        val access = runCatching { ReceiveTreeAccess(context, Uri.parse(chosen)) }.getOrNull()
+        val granted = access?.granted() == true
+        val target = ReceiveTree.target(chosen, granted, granted && access?.reachable() == true)
+        return when (target) {
+            ReceiveTree.Target.CHOSEN -> access
+            ReceiveTree.Target.DEFAULT -> null
+            ReceiveTree.Target.FALLBACK -> {
+                VeyroLog.w(TAG) { "Chosen folder not available; this receive goes to ${ReceivedFolders.ROOT}" }
+                runCatching { onReceiveFolderLost() }
+                null
             }
-            StoragePublishResult.Success(
-                destinationUri = targetFile.toURI().toString(),
-                displayName = targetFile.name,
-                mimeType = mimeType,
-                bytesWritten = targetFile.length(),
-            )
-        } catch (t: Throwable) {
-            StoragePublishResult.Failed("Failed to publish to custom dir: ${t.message}", t)
         }
     }
 
-    private fun resolveCollision(target: File): File {
-        if (!target.exists()) return target
-        val name = target.name
-        val dot = name.lastIndexOf('.')
-        val stem = if (dot > 0) name.substring(0, dot) else name
-        val extension = if (dot > 0) name.substring(dot) else ""
-        for (counter in 1..9999) {
-            val candidate = File(target.parentFile, "$stem ($counter)$extension")
-            if (!candidate.exists()) return candidate
+    /** ADR-072: a `<name>.veyropart` document written at positions, like [MediaStoreTarget]. */
+    private fun openTreeDirect(
+        tree: ReceiveTreeAccess,
+        relativePath: String,
+        fileName: String,
+        mimeType: String,
+        sizeBytes: Long,
+    ): DirectReceiveTarget? {
+        val dirs = ReceiveTree.dirSegments(relativePath, mimeType) ?: return null
+        val dirId = tree.dir(dirs, create = true) ?: return null
+        val part = tree.createPart(dirId, fileName, mimeType) ?: return null
+        val pfd = tree.open(part.uri, "rw")
+        if (pfd == null || !ReceiveTreeAccess.isRegularFile(pfd)) {
+            // A cloud provider's pipe: stage it, then stream it in once verified (publish).
+            runCatching { pfd?.close() }
+            tree.delete(part.uri)
+            return null
         }
-        return File(target.parentFile, "$stem (${System.currentTimeMillis()})$extension")
+        if (!ReceiveTree.hasRoom(ReceiveTreeAccess.freeBytes(pfd), sizeBytes)) {
+            VeyroLog.w(TAG) { "Not enough space in the chosen folder for $sizeBytes bytes" }
+            runCatching { pfd.close() }
+            tree.delete(part.uri)
+            return null
+        }
+        return TreeTarget(tree, part, pfd, mimeType, sizeBytes)
+    }
+
+    /** ADR-072: a staged, verified file streamed into the chosen folder, then renamed into place. */
+    private fun publishToTree(
+        tree: ReceiveTreeAccess,
+        sourceFile: File,
+        relativePath: String,
+        mimeType: String,
+        sizeBytes: Long,
+    ): StoragePublishResult {
+        val dirs = ReceiveTree.dirSegments(relativePath, mimeType) ?: return StoragePublishResult.Failed("PATH_REJECTED")
+        val fileName = relativePath.substringAfterLast('/')
+        val dirId = tree.dir(dirs, create = true) ?: return StoragePublishResult.Failed("Could not make the folder in the chosen folder")
+        val part = tree.createPart(dirId, fileName, mimeType) ?: return StoragePublishResult.Failed("Could not create the file in the chosen folder")
+        return try {
+            val pfd = tree.open(part.uri, "w") ?: throw IOException("could not open the new file")
+            var total = 0L
+            ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { output ->
+                if (!ReceiveTree.hasRoom(ReceiveTreeAccess.freeBytes(pfd), sizeBytes)) throw IOException("not enough space")
+                sourceFile.inputStream().use { input ->
+                    val buffer = ByteArray(256 * 1024)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        output.write(buffer, 0, read)
+                        total += read
+                    }
+                    output.flush()
+                }
+            }
+            if (sizeBytes > 0 && total != sizeBytes) throw IOException("wrote $total bytes, expected $sizeBytes")
+            val (uri, name) = tree.finish(part) ?: throw IOException("could not rename into place")
+            sourceFile.delete()
+            VeyroLog.i(TAG) { "[diagnostics:tree] item saved in the chosen folder: size=$total bytes, mime=$mimeType" }
+            StoragePublishResult.Success(destinationUri = uri.toString(), displayName = name, mimeType = mimeType, bytesWritten = total)
+        } catch (t: Throwable) {
+            VeyroLog.e(TAG) { "Saving into the chosen folder failed (${t.javaClass.simpleName})" }
+            tree.delete(part.uri)
+            StoragePublishResult.Failed("Failed writing to the chosen folder: ${t.javaClass.simpleName}", t)
+        }
+    }
+
+    /** One `.veyropart` document in the chosen folder, written in place; renamed on [commit]. */
+    private inner class TreeTarget(
+        private val tree: ReceiveTreeAccess,
+        private val part: ReceiveTreeAccess.Part,
+        private val pfd: ParcelFileDescriptor,
+        private val mimeType: String,
+        private val sizeBytes: Long,
+    ) : DirectReceiveTarget {
+        private val writer: FileChannel = FileOutputStream(pfd.fileDescriptor).channel
+        private val reader: FileChannel = FileInputStream(pfd.fileDescriptor).channel
+        private val closed = AtomicBoolean(false)
+        private val finished = AtomicBoolean(false)
+
+        override fun write(position: Long, data: ByteArray) {
+            val buffer = ByteBuffer.wrap(data)
+            var at = position
+            while (buffer.hasRemaining()) at += writer.write(buffer, at)
+        }
+
+        override fun read(position: Long, buffer: ByteArray, length: Int): Int =
+            reader.read(ByteBuffer.wrap(buffer, 0, length), position)
+
+        override suspend fun commit(): StoragePublishResult = withContext(Dispatchers.IO) {
+            val size = runCatching { pfd.statSize }.getOrDefault(-1L)
+            close()
+            if (size != sizeBytes) {
+                abort()
+                return@withContext StoragePublishResult.Failed("Stored $size bytes, expected $sizeBytes")
+            }
+            val done = tree.finish(part)
+            if (done == null) {
+                abort()
+                return@withContext StoragePublishResult.Failed("Could not rename into place in the chosen folder")
+            }
+            finished.set(true)
+            VeyroLog.i(TAG) { "[diagnostics:tree] item committed in place in the chosen folder: size=$sizeBytes bytes, mime=$mimeType" }
+            StoragePublishResult.Success(
+                destinationUri = done.first.toString(),
+                displayName = done.second,
+                mimeType = mimeType,
+                bytesWritten = sizeBytes,
+            )
+        }
+
+        override fun abort() {
+            close()
+            if (finished.compareAndSet(false, true)) tree.delete(part.uri)
+        }
+
+        override fun close() {
+            if (closed.compareAndSet(false, true)) runCatching { pfd.close() }
+        }
     }
 }

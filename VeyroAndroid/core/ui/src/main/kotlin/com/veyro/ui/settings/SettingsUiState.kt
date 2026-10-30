@@ -15,7 +15,15 @@ public data class SettingsUiState(
     val fingerprint: String = "",
     val pairedDeviceCount: Int = 0,
     val alwaysDiscoverable: Boolean = false,
-    val destinationPath: String? = null,
+
+    /** "Save received files to" (ADR-072): the chosen tree URI, null for Download/Veyro. */
+    val receiveFolderUri: String? = null,
+
+    /** "Download/Veyro (default)" or the chosen folder's name. */
+    val receiveFolderLabel: String = "Download/Veyro (default)",
+
+    /** Shown once after a receive fell back to Download/Veyro; null otherwise. */
+    val receiveFolderNotice: String? = null,
 
     /** The user's choice to mirror notifications to a connected PC (ADR-025). */
     val notificationMirrorEnabled: Boolean = false,

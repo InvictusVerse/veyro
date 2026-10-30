@@ -130,6 +130,9 @@ public data class HomeUiState(
     /** The last wallpaper each PC sent (JPEG), by device id string (ADR-038). */
     val pcWallpapers: Map<String, ByteArray> = emptyMap(),
 
+    /** The folder chosen in Settings while it is usable (ADR-072); null for Download/Veyro. */
+    val receiveFolder: com.veyro.ui.format.ChosenReceiveFolder? = null,
+
     /** Paired devices from the trust store, revoked ones excluded. */
     val pairedPeers: List<TrustedPeer> = emptyList(),
 

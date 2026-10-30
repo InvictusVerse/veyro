@@ -59,6 +59,7 @@ import com.veyro.ui.home.components.PcVolumeCard
 import com.veyro.ui.home.components.RecentActions
 import com.veyro.ui.home.components.RecentCard
 import com.veyro.ui.components.rememberTickingClock
+import com.veyro.ui.format.ReceiveTree
 import kotlinx.coroutines.delay
 
 /**
@@ -260,8 +261,8 @@ public fun HomeScreen(
                     HomeRow(
                         label = "Received files",
                         icon = VeyroIcons.Folder,
-                        supporting = "Everything you receive is in Download/Veyro, sorted into Photos, Videos, Music, Documents and more.",
-                        onClick = { if (!FileActions.openReceivedFolder(context)) onOpenHistory() },
+                        supporting = ReceiveTree.receivedRowText(state.receiveFolder),
+                        onClick = { if (!FileActions.openReceivedFolder(context, state.receiveFolder?.uri)) onOpenHistory() },
                     )
                 }
                 // ADR-054: PCs and phones both send clips; one list for all of them.

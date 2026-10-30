@@ -18,6 +18,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -172,7 +174,7 @@ public class MainActivity : ComponentActivity() {
                 InboundPairingDialog(connectionManager = container.connectionManager)
                 InboundTransferDialog(
                     transferCoordinator = container.transferCoordinator,
-                    customDestination = container.settingsStore.destinationDir,
+                    customDestination = remember { container.receiveFolder.map { it?.name } },
                 )
             }
         }

@@ -10,7 +10,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /** The pure parts of the incoming-file prompt: type icons, destination wording, countdown. */
 class IncomingFilesSheetModelTest {
@@ -39,7 +38,7 @@ class IncomingFilesSheetModelTest {
         )
         assertEquals("Download/Veyro", destinationLabel(emptyList(), null))
         assertEquals("Download/Veyro/Other", destinationLabel(listOf("notes.xyz"), null))
-        assertEquals("Inbox", destinationLabel(listOf("a.jpg"), File("/storage/emulated/0/Inbox")))
+        assertEquals("Inbox/Photos", destinationLabel(listOf("a.jpg"), "Inbox"))
     }
 
     @Test

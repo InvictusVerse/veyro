@@ -97,6 +97,8 @@ import com.veyro.ui.clipboard.ClipKind
 import com.veyro.ui.clipboard.ClipRow
 import com.veyro.ui.clipboard.SendClipOutcome
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.Dispatchers
+import com.veyro.ui.format.ChosenReceiveFolder
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -466,9 +468,26 @@ public class VeyroContainer(context: Context) {
     private val mediaStorePublisher: AndroidMediaStorePublisher by lazy {
         AndroidMediaStorePublisher(
             context = appContext,
-            customDestinationDir = { runCatching { settingsStore.destinationDir.first() }.getOrNull() },
+            // ADR-072: "Save received files to" in Settings; Download/Veyro when unset or gone.
+            receiveFolderUri = { runCatching { settingsStore.receiveFolderUri.first() }.getOrNull() },
+            onReceiveFolderLost = { settingsStore.setReceiveFolderLost(true) },
         )
     }
+
+    /**
+     * The folder chosen in Settings while Veyro can still write to it (ADR-072), for the incoming
+     * prompt's label and Home's Received files row; null for Download/Veyro.
+     */
+    public val receiveFolder: Flow<ChosenReceiveFolder?> by lazy {
+        combine(settingsStore.receiveFolderUri, settingsStore.receiveFolderName) { uri, name ->
+            uri?.takeIf { usableTree(it) }?.let { ChosenReceiveFolder(it, name ?: "Chosen folder") }
+        }.flowOn(Dispatchers.IO)
+    }
+
+    private fun usableTree(uri: String): Boolean = runCatching {
+        val tree = android.net.Uri.parse(uri)
+        appContext.contentResolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission && it.isWritePermission }
+    }.getOrDefault(false)
 
     public val storagePublisher: TransferStoragePublisher get() = mediaStorePublisher
 
@@ -1066,16 +1085,11 @@ public class VeyroContainer(context: Context) {
     }
 
     /**
-     * Where received files land.
-     *
-     * Defaults to the app-private Downloads folder rather than the shared one. That is deliberate:
-     * writing to shared storage needs either a SAF tree the user granted or a permission, and
-     * neither should be required before the first transfer works. The user can point it elsewhere
-     * from Settings.
+     * Where received items are staged before the publisher puts them in Download/Veyro or the
+     * folder chosen in Settings (ADR-072). App-private, so no permission is needed for it.
      */
     public suspend fun destinationDirectory(): File {
-        val chosen = runCatching { settingsStore.destinationDir.first() }.getOrNull()
-        val dir = chosen ?: File(appContext.cacheDir, "staging_receive")
+        val dir = File(appContext.cacheDir, "staging_receive")
         dir.mkdirs()
         return dir
     }

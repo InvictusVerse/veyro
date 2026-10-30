@@ -44,12 +44,40 @@ internal object FileActions {
      * MediaStore offers no "reveal this file" intent, so the folder is the closest equivalent.
      */
     fun showInFolder(context: Context, fileName: String, uriString: String?): Boolean {
+        // A file saved into the folder chosen in Settings (ADR-072) is a document, not a MediaStore row.
+        documentParent(context, uriString)?.let { parent -> if (openDocumentFolder(context, parent)) return true }
         val folder = mediaStoreFolder(context, uriString) ?: folderFor(fileName, uriString)
         return openFolder(context, folder)
     }
 
-    /** The Received files row: the folder received files land in by default. */
-    fun openReceivedFolder(context: Context): Boolean = openFolder(context, ReceivedFolders.ROOT)
+    /**
+     * The Received files row: the folder chosen in Settings (ADR-072), else Download/Veyro, where
+     * received files land by default.
+     */
+    fun openReceivedFolder(context: Context, chosenTreeUri: String? = null): Boolean {
+        val tree = chosenTreeUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        if (tree != null) {
+            val root = runCatching {
+                DocumentsContract.buildDocumentUri(tree.authority, DocumentsContract.getTreeDocumentId(tree))
+            }.getOrNull()
+            if (root != null && openDocumentFolder(context, root)) return true
+        }
+        return openFolder(context, ReceivedFolders.ROOT)
+    }
+
+    private fun openDocumentFolder(context: Context, folder: Uri): Boolean =
+        start(context) { Intent(Intent.ACTION_VIEW).setDataAndType(folder, DocumentsContract.Document.MIME_TYPE_DIR) }
+
+    /** The folder a document received into a chosen tree lives in; null for anything else. */
+    private fun documentParent(context: Context, uriString: String?): Uri? {
+        val uri = uriString?.let { runCatching { Uri.parse(it) }.getOrNull() }?.takeIf { it.scheme == "content" } ?: return null
+        if (!runCatching { DocumentsContract.isDocumentUri(context, uri) }.getOrDefault(false)) return null
+        return runCatching {
+            val path = DocumentsContract.findDocumentPath(context.contentResolver, uri)?.path ?: return null
+            val parentId = path.getOrNull(path.size - 2) ?: return null
+            DocumentsContract.buildDocumentUri(uri.authority, parentId)
+        }.getOrNull()
+    }
 
     private fun openFolder(context: Context, relativeFolder: String): Boolean {
         val documentUri = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, "primary:$relativeFolder")
