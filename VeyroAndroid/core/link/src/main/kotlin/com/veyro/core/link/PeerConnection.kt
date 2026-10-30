@@ -108,6 +108,12 @@ public class PeerConnection(
 
         /** Maximum allowed size for a single frame (24 MB) to prevent memory exhaustion DoS. */
         public const val MAX_FRAME_SIZE_BYTES: Long = 24L * 1024 * 1024
+
+        /**
+         * How long the read loop holds after a `pairOk` for [rekey] (ADR-056). Saving the pairing
+         * takes milliseconds; this only bounds a caller that never rekeys.
+         */
+        internal const val REKEY_WAIT_MS: Long = 10_000L
     }
 
     @Volatile
@@ -115,6 +121,15 @@ public class PeerConnection(
 
     @Volatile
     private var encryptFrames: Boolean = initialEncrypt
+
+    /**
+     * Set while a `pairOk` waits for [rekey] (ADR-056). The side that sends pairOk switches to the
+     * session key at once, so its next frame (another phone's Hello) is already under that key.
+     * Read before the rekey, that frame failed authentication and was dropped, and this side
+     * never learnt the peer's capabilities: phone-to-phone worked in one direction only.
+     */
+    @Volatile
+    private var rekeyGate: CompletableDeferred<Unit>? = null
 
     private val nonceCache = NonceCache()
     private val seqOut = AtomicLong(0)
@@ -222,6 +237,7 @@ public class PeerConnection(
             lastSeqByPeer.clear()
             VeyroLog.i(tag) { "Rekeyed to the session secret; encryption on" }
         }
+        rekeyGate?.complete(Unit)
     }
 
     public fun outboundQueueBytes(): Long? = WebSocketQueueMonitor.getQueueSize(ws)
@@ -258,6 +274,14 @@ public class PeerConnection(
                     break
                 }
                 handleRaw(frame.readText())
+                // ADR-056: after a pairOk the next frame is under the session key; read it only
+                // once that key is in place. The frames wait in the socket meanwhile.
+                rekeyGate?.let { gate ->
+                    if (withTimeoutOrNull(REKEY_WAIT_MS) { gate.await() } == null) {
+                        VeyroLog.w(tag) { "No rekey within ${REKEY_WAIT_MS}ms of pairOk; reading on" }
+                    }
+                    rekeyGate = null
+                }
             }
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) {
@@ -487,8 +511,13 @@ public class PeerConnection(
                 handshakeChannel.trySend(envelope)
             }
 
+            is PeerMessage.PairOk -> {
+                // Armed before the hand-off, so a rekey that follows at once is not missed.
+                if (!encryptFrames) rekeyGate = CompletableDeferred()
+                handshakeChannel.trySend(envelope)
+            }
+
             is PeerMessage.PairHello,
-            is PeerMessage.PairOk,
             is PeerMessage.PairFail -> {
                 handshakeChannel.trySend(envelope)
             }
