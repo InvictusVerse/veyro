@@ -134,6 +134,19 @@ public sealed class DeviceManagerService : IDeviceManager
         SyncDiscovered();
     }
 
+    public void RefreshName(string deviceId) => Post(() =>
+    {
+        if (Find(deviceId) is not { } device) return;
+        string? name = PairedDeviceDirectory.Build(_trustStore.GetTrustedPeers(), _sessions.IsConnected)
+            .FirstOrDefault(entry => string.Equals(entry.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase))?.DisplayName;
+        if (name is null || name == device.Name) return;
+        device.Name = name;
+        _entries = _entries
+            .Select(entry => string.Equals(entry.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase) ? entry with { DisplayName = name } : entry)
+            .ToList();
+        ConnectionChanged?.Invoke(device.DeviceId);
+    });
+
     public void SelectNext(int delta)
     {
         if (PairedDevices.Count < 2) return;

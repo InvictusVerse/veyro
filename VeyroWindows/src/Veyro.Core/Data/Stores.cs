@@ -67,6 +67,17 @@ public interface ITrustStore
 
     /// <summary>The phone was told, or no longer holds the old pairing: drop its kept secret.</summary>
     Task ClearPendingUnpairAsync(string deviceId) => Task.CompletedTask;
+
+    /// <summary>
+    /// ADR-059: the phone announced <paramref name="name"/> for itself (already validated).
+    /// Replaces the stored name and keeps a nickname. False for an unknown phone or the same name.
+    /// </summary>
+    async Task<bool> SetAnnouncedNameAsync(string deviceId, string name)
+    {
+        if (GetPeer(deviceId) is not { } peer || peer.DisplayName == name) return false;
+        await UpsertAsync(peer with { DisplayName = name }).ConfigureAwait(false);
+        return true;
+    }
 }
 
 public interface ITransferHistoryStore

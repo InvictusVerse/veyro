@@ -30,11 +30,20 @@ public sealed class DeviceStatusViewModel : BaseViewModel
     private string _statusText = string.Empty;
     private byte[]? _wallpaperBytes;
     private ImageSource? _wallpaper;
+    // ADR-060: sliders show the user's value until the phone confirms it; sends are coalesced.
+    private readonly HeldLevel _volumeHold = new();
+    private readonly HeldLevel _brightnessHold = new();
+    private readonly LatestValueSender<int> _volumeSender;
+    private readonly LatestValueSender<int> _brightnessSender;
 
     public DeviceStatusViewModel(IDeviceStatusService status, IWallpaperService wallpapers, IDeviceManager deviceManager)
     {
         _status = status;
         _wallpapers = wallpapers;
+        _volumeSender = new LatestValueSender<int>(value =>
+            SendAsync(() => _status.SendPhoneControlAsync(_peerId!, mediaVolume: value), "volume", () => CanVolume));
+        _brightnessSender = new LatestValueSender<int>(value =>
+            SendAsync(() => _status.SendPhoneControlAsync(_peerId!, brightness: value), "brightness", () => CanBrightness));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _peerId = deviceManager.ActiveDevice?.DeviceId;
         if (_dispatcher is not null)
@@ -243,7 +252,56 @@ public sealed class DeviceStatusViewModel : BaseViewModel
     public Task RequestDndAsync(bool enabled)
         => SendAsync(() => _status.SendControlAsync(_peerId!, dnd: enabled), "dnd");
 
-    private async Task<bool> SendAsync(Func<Task> request, string name)
+    // ── Flashlight, media volume, brightness (ADR-060). Shown state is what the phone reports. ──
+
+    private bool IsConnected => _peerId is not null && _status.CanControl(_peerId);
+    private bool HasPhoneControls => _peerId is not null && _status.CanUsePhoneControls(_peerId);
+
+    private string? Reason(PhoneControlKind kind) => PhoneControlsView.Unavailable(IsConnected, HasPhoneControls, _reported, kind);
+
+    public bool CanTorch => Reason(PhoneControlKind.Torch) is null;
+    public bool IsTorchOn => _reported?.Torch == true;
+    public string TorchTip => Reason(PhoneControlKind.Torch) ?? (IsTorchOn
+        ? "Flashlight: on. Select to turn it off."
+        : "Flashlight: off. Select to turn it on.");
+
+    public bool CanVolume => Reason(PhoneControlKind.Volume) is null;
+
+    /// <summary>The slider's value: the user's pick while it is on its way, else the phone's.</summary>
+    public double ShownMediaVolume => _volumeHold.Shown(_reported?.MediaVolume) ?? 0;
+    public string VolumeTip => Reason(PhoneControlKind.Volume) ??
+        (_reported?.MediaVolume is { } volume ? $"Media volume on the phone: {volume}%" : "Media volume on the phone");
+
+    public bool CanBrightness => Reason(PhoneControlKind.Brightness) is null;
+    public double ShownBrightness => _brightnessHold.Shown(_reported?.Brightness) ?? 0;
+    public bool IsAutoBrightness => _reported?.AutoBrightness == true;
+    public string BrightnessTip => Reason(PhoneControlKind.Brightness) ??
+        (_reported?.Brightness is { } level
+            ? $"Screen brightness on the phone: {level}%{(IsAutoBrightness ? ", automatic" : string.Empty)}"
+            : "Screen brightness on the phone");
+
+    public Task RequestTorchAsync(bool on)
+        => SendAsync(() => _status.SendPhoneControlAsync(_peerId!, torch: on), "torch", () => CanTorch);
+
+    /// <summary>From the slider. Coalesced: one send in flight, the newest value follows.</summary>
+    public void RequestMediaVolume(int percent)
+    {
+        if (!CanVolume || percent is < 0 or > 100) return;
+        _volumeHold.Request(percent);
+        _ = _volumeSender.Post(percent);
+    }
+
+    public void RequestBrightness(int percent)
+    {
+        if (!CanBrightness || percent is < 0 or > 100) return;
+        _brightnessHold.Request(percent);
+        _ = _brightnessSender.Post(percent);
+    }
+
+    public Task RequestAutoBrightnessAsync(bool on)
+        => SendAsync(() => _status.SendPhoneControlAsync(_peerId!, autoBrightness: on), "auto brightness", () => CanBrightness);
+
+    private async Task<bool> SendAsync(Func<Task> request, string name, Func<bool>? allowed = null)
     {
         StatusText = string.Empty;
         if (!CanControl)
@@ -251,6 +309,7 @@ public sealed class DeviceStatusViewModel : BaseViewModel
             StatusText = "The phone is not connected.";
             return false;
         }
+        if (allowed is not null && !allowed()) return false;
         try
         {
             await request();
@@ -294,7 +353,10 @@ public sealed class DeviceStatusViewModel : BaseViewModel
                      nameof(HasBluetooth), nameof(BluetoothOpacity), nameof(BluetoothLabel),
                      nameof(HasWifi), nameof(WifiGlyph), nameof(WifiOpacity), nameof(WifiLabel),
                      nameof(HasCell), nameof(CellGlyph), nameof(CellOpacity), nameof(CellLabel), nameof(HasRadios),
-                     nameof(SoundGlyph), nameof(SoundLabel)
+                     nameof(SoundGlyph), nameof(SoundLabel),
+                     nameof(CanTorch), nameof(IsTorchOn), nameof(TorchTip),
+                     nameof(CanVolume), nameof(ShownMediaVolume), nameof(VolumeTip),
+                     nameof(CanBrightness), nameof(ShownBrightness), nameof(IsAutoBrightness), nameof(BrightnessTip)
                  })
         {
             OnPropertyChanged(name);

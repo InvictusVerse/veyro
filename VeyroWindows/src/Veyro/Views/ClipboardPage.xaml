@@ -144,13 +144,21 @@
             <SelectorBarItem Tag="Images" Text="Images" />
         </SelectorBar>
 
-        <InfoBar
-            x:Name="CopiedBar"
-            Grid.Row="3"
-            IsClosable="False"
-            IsOpen="False"
-            Severity="Success"
-            Title="Copied to this PC's clipboard" />
+        <StackPanel Grid.Row="3" Spacing="8">
+            <InfoBar
+                x:Name="CopiedBar"
+                IsClosable="False"
+                IsOpen="False"
+                Severity="Success"
+                Title="Copied to this PC's clipboard" />
+            <!--  ADR-059: a phone turned "Auto-fetch clipboard" off; its copies are held back.  -->
+            <InfoBar
+                IsClosable="False"
+                IsOpen="True"
+                Message="{x:Bind ViewModel.ReceiveOffText, Mode=OneWay}"
+                Severity="Informational"
+                Visibility="{x:Bind ViewModel.ReceiveOffVisibility, Mode=OneWay}" />
+        </StackPanel>
 
         <!--  Empty state  -->
         <StackPanel

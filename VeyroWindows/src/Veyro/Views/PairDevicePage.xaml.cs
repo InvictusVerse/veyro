@@ -37,7 +37,7 @@ public sealed partial class PairDevicePage : Page
     private void ViewModel_Paired(TrustedPeer peer)
     {
         string fingerprint = DeviceId.ParseOrNull(peer.DeviceId) is { } id ? DeviceId.FormatFingerprint(id) : peer.DeviceId;
-        PairedInfoBar.Message = $"{peer.DisplayName} ({fingerprint}) can now connect to this PC.";
+        PairedInfoBar.Message = $"{peer.ShownName} ({fingerprint}) can now connect to this PC.";
         PairedInfoBar.IsOpen = true;
         Pairing.Visibility = Visibility.Collapsed;
     }

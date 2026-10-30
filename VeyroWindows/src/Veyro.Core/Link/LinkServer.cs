@@ -84,7 +84,8 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
     public const int PortRangeStart = 5150;
     public const int PortRangeEnd = 5169;
     private readonly string _localDeviceId;
-    private readonly string _localName;
+    // ADR-059: follows Settings, so every later hello, helloAck and pairing reply carries the new name.
+    private volatile string _localName;
     private readonly ITrustStore _trustStore;
     private readonly string _destinationRoot;
     private readonly byte[] _localPublicKey;
@@ -99,7 +100,13 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         PeerCapabilities.Clipboard |
         PeerCapabilities.MediaControl | PeerCapabilities.DeviceStatus |
         PeerCapabilities.Messaging | PeerCapabilities.Calls | PeerCapabilities.Photos |
-        PeerCapabilities.Wallpaper;
+        PeerCapabilities.Wallpaper | PeerCapabilities.PhoneControls | PeerCapabilities.DeviceInfo;
+
+    /// <summary>ADR-059: this PC was renamed in Settings. Sessions that are already open hear it as deviceInfo.</summary>
+    public void SetLocalName(string name)
+    {
+        if (Devices.DeviceNames.Clean(name) is { } clean) _localName = clean;
+    }
 
     /// <summary>
     /// Claims offers that answer a request this PC made (photoFetch, ADR-034). Those are accepted
@@ -921,10 +928,18 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                         // their on-connect snapshots, which must not overtake the HelloAck.
                         await secure.SendAsync(new PeerMessage.HelloAck(
                             _localDeviceId, _localName, "windows", LocalCapabilities), sessionCt).ConfigureAwait(false);
+                        // ADR-059: kept before the capabilities, which tell the name service to read it.
+                        registration.PeerName = hello.DeviceName;
                         registration.Capabilities = hello.Capabilities;
                         break;
                     case PeerMessage.HelloAck helloAck:
+                        registration.PeerName = helloAck.DeviceName;
                         registration.Capabilities = helloAck.Capabilities;
+                        break;
+                    // ADR-059. Names are user data: never logged.
+                    case PeerMessage.DeviceInfo:
+                        registration.Capabilities |= PeerCapabilities.DeviceInfo;
+                        _sessions.PublishDeviceMessage(peer.DeviceId, message.Envelope.Payload);
                         break;
                     case PeerMessage.Ping ping:
                         await secure.SendAsync(new PeerMessage.Pong(ping.Nonce), sessionCt).ConfigureAwait(false);
