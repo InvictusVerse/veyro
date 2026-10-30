@@ -1,0 +1,14 @@
+{
+  "description": "Coded size of a mirrored screen (04-PROTOCOL.md 7.5.7, StreamGeometry on both platforms). Integer arithmetic: long = min(screen long, maxLong, encoder long); short = screen short * long / screen long (floor); if short > encoder short then short = encoder short and long = encoder short * screen long / screen short (floor); both floored to a multiple of 16 (at least 16); orientation of the screen kept. 'fit' fits the screen's aspect into the coded frame and centres it (floors); 'stretch' makes all of the frame visible. expected = [width, height, visX, visY, visW, visH], or null when nothing fits.",
+  "cases": [
+    { "name": "Redmi K50i portrait, Balanced 1920", "screen": [1080, 2460], "maxLong": 1920, "encoder": [4096, 2304], "fit": "fit", "expected": [832, 1920, 0, 12, 832, 1895] },
+    { "name": "Redmi K50i portrait, Balanced 1920, Android 10-12", "screen": [1080, 2460], "maxLong": 1920, "encoder": [4096, 2304], "fit": "stretch", "expected": [832, 1920, 0, 0, 832, 1920] },
+    { "name": "Redmi K50i portrait, native", "screen": [1080, 2460], "maxLong": 3840, "encoder": [4096, 2304], "fit": "fit", "expected": [1072, 2448, 0, 3, 1072, 2441] },
+    { "name": "Galaxy A20s portrait, native", "screen": [720, 1560], "maxLong": 1920, "encoder": [1920, 1088], "fit": "stretch", "expected": [720, 1552, 0, 0, 720, 1552] },
+    { "name": "landscape, encoder long side limits", "screen": [2460, 1080], "maxLong": 3840, "encoder": [1920, 1080], "fit": "fit", "expected": [1920, 832, 12, 0, 1895, 832] },
+    { "name": "encoder short side limits", "screen": [2000, 1800], "maxLong": 3840, "encoder": [4096, 1088], "fit": "stretch", "expected": [1200, 1088, 0, 0, 1200, 1088] },
+    { "name": "smallest maxLong", "screen": [1080, 2460], "maxLong": 160, "encoder": [4096, 2304], "fit": "fit", "expected": [64, 160, 0, 7, 64, 145] },
+    { "name": "screen too small", "screen": [10, 2460], "maxLong": 1920, "encoder": [4096, 2304], "fit": "fit", "expected": null },
+    { "name": "maxLong too small", "screen": [1080, 2460], "maxLong": 8, "encoder": [4096, 2304], "fit": "fit", "expected": null }
+  ]
+}

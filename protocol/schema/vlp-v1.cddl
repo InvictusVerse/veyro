@@ -37,6 +37,9 @@ capability = &(
   multi-stream: 64,
   compression: 128,
   ; Companion bits 0x0100..0x4000 are listed in 04-PROTOCOL.md section 6. Appended here:
+  screen-source: 32768,     ; 0x8000, ADR-066 (phone; not advertised yet)
+  screen-view: 65536,       ; 0x10000, ADR-066 (PC; not advertised yet)
+  remote-input: 131072,     ; 0x20000, ADR-066 (reserved)
   phone-controls: 262144,   ; 0x40000, ADR-060
   device-info: 2097152,     ; 0x200000, ADR-059
 )
@@ -241,6 +244,32 @@ device-info = {
 }
 device-name = tstr .size (1..64) ; after trimming; no C0/C1 control, U+2028/2029, U+202A-202E, U+2066-2069
 
+; ADR-066, gated by screen-source (phone) and screen-view (PC). The PC decides every quality
+; setting; the phone reports caps and consent, asks Android, and encodes what the PC asked for.
+; Vectors: protocol/testvectors/link-stream.json. Media itself travels on VMS1 (below).
+stream-sid = tstr .regexp "^[A-Za-z0-9_-]{22}$"   ; base64url of 16 bytes, canonical
+stream-codec = "h264" / "h265"
+stream-reason = "user" / "declined" / "timeout" / "busy" / "disabled" / "permission" /
+                "unsupported" / "projection-ended" / "locked" / "thermal" / "encoder" /
+                "network" / "session-closed" / "error"
+stream-caps = { "t": "streamCaps", ? "allowed": bool, ? "screen": { "w": 16..8192, "h": 16..8192, "maxFps": 1..240 },
+                ? "encoders": [* { "codec": tstr, "hw": bool, "maxW": 16..8192, "maxH": 16..8192, "fps": 1..240 }], ? "audio": bool }
+stream-start = { "t": "streamStart", "sid": stream-sid, "source": "screen", "codec": stream-codec, "hw": bool,
+                 "maxLong": 160..3840, "fps": 1..120, "bitrate": 250000..80000000, ? "audio": bool,
+                 "host": tstr, "port": 1024..65535 }               ; host: private IPv4 only
+stream-state = { "t": "streamState", "sid": stream-sid,
+                 "state": "asking" / "starting" / "streaming" / "paused" / "stopped", ? "reason": stream-reason,
+                 ? "codec": stream-codec, ? "w": 16..8192, ? "h": 16..8192, ? "fps": 1..240,
+                 ? "bitrate": 0..80000000, ? "hw": bool, ? "audio": bool, ? "thermal": 0..6 }
+stream-config = { "t": "streamConfig", "sid": stream-sid, ? "maxLong": 160..3840, ? "fps": 1..120,
+                  ? "bitrate": 250000..80000000, ? "audio": bool, ? "paused": bool }
+stream-keyframe = { "t": "streamKeyframe", "sid": stream-sid }
+stream-stop = { "t": "streamStop", "sid": stream-sid, "reason": stream-reason }
+
+; VMS1 media socket (binary, ADR-066, 04-PROTOCOL.md 7.5). Not CBOR or JSON; described here so
+; every wire format has one index. preface = "VMS1" u8(1) u8(source) u16(0) sid[16] salt[16];
+; record = u8 kind | u8 flags | u32 len | ChaCha20-Poly1305 ciphertext||tag (len bytes), AAD = the
+; 6 header bytes. Vectors: protocol/testvectors/media/vms1.json, fragmentation.json, stream-geometry.json.
 ; ADR-060, gated by phone-controls (and device-status). Optional additions to devStatus
 ; (phone to PC) and devControl (PC to phone); never between phones.
 dev-status-phone-controls = (

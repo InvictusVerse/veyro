@@ -1,0 +1,30 @@
+{
+  "description": "Screen mirroring control messages (ADR-066, 04-PROTOCOL.md 6.9; SCREEN_SOURCE 0x8000 on the phone, SCREEN_VIEW 0x10000 on the PC). Each 'json' is the payload as the link codec encodes it ('t' discriminator, nulls omitted). Both clients decode every 'vectors' entry to its type and re-encode it to semantically identical JSON. 'invalid' entries decode but break a field rule: the named receiver drops them.",
+  "vectors": [
+    { "type": "streamCaps", "json": "{\"t\":\"streamCaps\",\"allowed\":true,\"screen\":{\"w\":1080,\"h\":2460,\"maxFps\":120},\"encoders\":[{\"codec\":\"h264\",\"hw\":true,\"maxW\":4096,\"maxH\":2304,\"fps\":60},{\"codec\":\"h265\",\"hw\":true,\"maxW\":4096,\"maxH\":2304,\"fps\":60},{\"codec\":\"h264\",\"hw\":false,\"maxW\":2048,\"maxH\":2048,\"fps\":30}],\"audio\":true}" },
+    { "type": "streamCaps", "json": "{\"t\":\"streamCaps\",\"allowed\":false,\"encoders\":[],\"audio\":false}" },
+    { "type": "streamStart", "json": "{\"t\":\"streamStart\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"source\":\"screen\",\"codec\":\"h264\",\"hw\":true,\"maxLong\":1920,\"fps\":60,\"bitrate\":8000000,\"audio\":true,\"host\":\"192.168.31.191\",\"port\":5151}" },
+    { "type": "streamState", "json": "{\"t\":\"streamState\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"state\":\"asking\"}" },
+    { "type": "streamState", "json": "{\"t\":\"streamState\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"state\":\"streaming\",\"codec\":\"h264\",\"w\":832,\"h\":1920,\"fps\":60,\"bitrate\":6710886,\"hw\":true,\"audio\":true,\"thermal\":0}" },
+    { "type": "streamState", "json": "{\"t\":\"streamState\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"state\":\"stopped\",\"reason\":\"projection-ended\"}" },
+    { "type": "streamConfig", "json": "{\"t\":\"streamConfig\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"bitrate\":4000000}" },
+    { "type": "streamConfig", "json": "{\"t\":\"streamConfig\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"maxLong\":1280,\"fps\":30,\"audio\":false,\"paused\":true}" },
+    { "type": "streamKeyframe", "json": "{\"t\":\"streamKeyframe\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\"}" },
+    { "type": "streamStop", "json": "{\"t\":\"streamStop\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"reason\":\"user\"}" }
+  ],
+  "invalid": [
+    { "receiver": "phone", "why": "sid of 21 characters", "json": "{\"t\":\"streamKeyframe\",\"sid\":\"EBESExQVFhcYGRobHB0eH\"}" },
+    { "receiver": "phone", "why": "sid of 23 characters", "json": "{\"t\":\"streamKeyframe\",\"sid\":\"EBESExQVFhcYGRobHB0eHwA\"}" },
+    { "receiver": "phone", "why": "sid not canonical (low bits set)", "json": "{\"t\":\"streamKeyframe\",\"sid\":\"EBESExQVFhcYGRobHB0eHx\"}" },
+    { "receiver": "phone", "why": "maxLong 3841", "json": "{\"t\":\"streamStart\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"source\":\"screen\",\"codec\":\"h264\",\"hw\":true,\"maxLong\":3841,\"fps\":60,\"bitrate\":8000000,\"host\":\"192.168.31.191\",\"port\":5151}" },
+    { "receiver": "phone", "why": "fps 0", "json": "{\"t\":\"streamStart\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"source\":\"screen\",\"codec\":\"h264\",\"hw\":true,\"maxLong\":1920,\"fps\":0,\"bitrate\":8000000,\"host\":\"192.168.31.191\",\"port\":5151}" },
+    { "receiver": "phone", "why": "unknown codec", "json": "{\"t\":\"streamStart\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"source\":\"screen\",\"codec\":\"vp9\",\"hw\":true,\"maxLong\":1920,\"fps\":60,\"bitrate\":8000000,\"host\":\"192.168.31.191\",\"port\":5151}" },
+    { "receiver": "phone", "why": "unknown source", "json": "{\"t\":\"streamStart\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"source\":\"window\",\"codec\":\"h264\",\"hw\":true,\"maxLong\":1920,\"fps\":60,\"bitrate\":8000000,\"host\":\"192.168.31.191\",\"port\":5151}" },
+    { "receiver": "phone", "why": "public host", "json": "{\"t\":\"streamStart\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"source\":\"screen\",\"codec\":\"h264\",\"hw\":true,\"maxLong\":1920,\"fps\":60,\"bitrate\":8000000,\"host\":\"8.8.8.8\",\"port\":5151}" },
+    { "receiver": "phone", "why": "bitrate below 250 000", "json": "{\"t\":\"streamConfig\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"bitrate\":100000}" },
+    { "receiver": "phone", "why": "unknown stop reason", "json": "{\"t\":\"streamStop\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"reason\":\"bored\"}" },
+    { "receiver": "pc", "why": "unknown state", "json": "{\"t\":\"streamState\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"state\":\"dancing\"}" },
+    { "receiver": "pc", "why": "screen width 8193", "json": "{\"t\":\"streamCaps\",\"allowed\":true,\"screen\":{\"w\":8193,\"h\":2460,\"maxFps\":60},\"encoders\":[],\"audio\":false}" },
+    { "receiver": "pc", "why": "thermal 7", "json": "{\"t\":\"streamState\",\"sid\":\"EBESExQVFhcYGRobHB0eHw\",\"state\":\"streaming\",\"thermal\":7}" }
+  ]
+}

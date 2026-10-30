@@ -122,6 +122,18 @@ public enum class Capability(public val bit: Int) {
     WALLPAPER(0x4000),
 
     /**
+     * This phone can share its screen: `streamCaps`, `streamStart` and the VMS1 socket (ADR-066).
+     * Not advertised until the capture side is built.
+     */
+    SCREEN_SOURCE(0x8000),
+
+    /** This PC can show a phone's screen (ADR-066). PC only. */
+    SCREEN_VIEW(0x10000),
+
+    /** Touch and keys from the PC to the phone while mirroring (ADR-066, reserved). */
+    REMOTE_INPUT(0x20000),
+
+    /**
      * Flashlight, media volume and screen brightness in `devStatus` / `devControl` (ADR-060).
      * Only meaningful together with [DEVICE_STATUS]. PC to phone only, never phone to phone.
      */

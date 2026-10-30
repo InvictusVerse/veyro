@@ -15,8 +15,9 @@ worst possible moment. Both platforms must pass every vector here before a phase
 | `crypto/` | RFC vectors for the fixed primitives: HKDF-SHA256, ChaCha20-Poly1305, X25519 | **populated** (ADR-058) — enforced by both platforms |
 | `frames/` | `VTC3` sealed data-plane records, byte-exact | **populated** — enforced by both platforms |
 | `link/` | v3 connection and pairing key schedules, session frames, key exporter, control-plane JSON | **populated** — enforced by both platforms |
-| `tools/` | `GenV3.java`, the generator of every v3 file above | source, not vectors |
+| `tools/` | `GenV3.java` (every v3 file above) and `GenVms1.java` (`media/vms1.json`, `media/fragmentation.json`) | source, not vectors |
 | `discovery/` | presence record + UDP beacon encodings | **populated** — enforced by both platforms |
+| `media/` | VMS1 media socket records (sealed, byte-exact), fragmentation, mirrored-screen geometry (ADR-066) | **populated** — enforced by both platforms |
 | `transfer/` | resume bitmap, manifest round trips | **empty — waits on phase P4 close-out** |
 
 `noise/` was removed. Noise is not used: the link layer is `FrameCrypto` over a WebSocket
@@ -38,6 +39,9 @@ worst possible moment. Both platforms must pass every vector here before a phase
 | `link/control-messages.json` | `core/link` `ControlMessageVectorTest` | `Veyro.Tests` `ControlMessageVectorTests` |
 | `pair-confirm.json` | `core/crypto` `PairConfirmVectorTest` | `Veyro.Tests` `PairConfirmVectorTests` |
 | `link-device-info-controls.json` | `core/link` `DeviceInfoControlsVectorTest` | `Veyro.Tests` `DeviceInfoControlsVectorTests` |
+| `link-stream.json` | `core/link` `media.MediaRulesVectorTest` | `Veyro.Tests` `Media.MirroringVectorTests` |
+| `media/vms1.json` (from `tools/GenVms1.java`) | `core/link` `media.Vms1VectorTest` | `Veyro.Tests` `Media.MirroringVectorTests` |
+| `media/fragmentation.json` (from `tools/GenVms1.java`), `media/stream-geometry.json` | `core/link` `media.MediaRulesVectorTest` | `Veyro.Tests` `Media.MirroringVectorTests` |
 
 Run them:
 
