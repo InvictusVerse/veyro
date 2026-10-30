@@ -14,6 +14,7 @@ import com.veyro.core.model.Transfer
 import com.veyro.core.model.TrustedPeer
 import com.veyro.core.network.LocalNetworkState
 import com.veyro.core.network.NetworkMonitor
+import com.veyro.ui.format.ChosenReceiveFolder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -77,6 +78,8 @@ public class HomeViewModel(
     localNetwork: Flow<LocalNetworkState> = flowOf(LocalNetworkState.NOT_NEEDED),
     /** Whether a setting stops Veyro in the background (ADR-061); read on every start of Home. */
     private val keepAliveNotice: suspend () -> Boolean = { false },
+    /** The folder chosen in Settings while it is usable (ADR-072); null for Download/Veyro. */
+    receiveFolder: Flow<ChosenReceiveFolder?> = flowOf(null),
 ) : ViewModel() {
 
     /** For the Recent card's image preview. */
@@ -139,6 +142,11 @@ public class HomeViewModel(
         peerCapabilities
             .catch { emit(emptyMap()) }
             .onEach { caps -> _state.update { it.copy(peerCapabilities = caps) } }
+            .launchIn(viewModelScope)
+
+        receiveFolder
+            .catch { emit(null) }
+            .onEach { folder -> _state.update { it.copy(receiveFolder = folder) } }
             .launchIn(viewModelScope)
 
         pcWallpapers

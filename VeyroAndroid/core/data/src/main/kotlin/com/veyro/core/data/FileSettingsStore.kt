@@ -38,7 +38,11 @@ public class FileSettingsStore(
     private data class Stored(
         val version: Int = 1,
         val deviceName: String? = null,
-        val destinationPath: String? = null,
+        // ADR-072 replaced the never-used `destinationPath` (a File path, which would have needed
+        // All files access) with a SAF tree URI. An old file's `destinationPath` is ignored.
+        val receiveFolderUri: String? = null,
+        val receiveFolderName: String? = null,
+        val receiveFolderLost: Boolean = false,
         val alwaysDiscoverable: Boolean = false,
         // Added after v1 with a default, so an older settings file still decodes.
         val notificationMirrorEnabled: Boolean = false,
@@ -81,8 +85,14 @@ public class FileSettingsStore(
     override val deviceName: Flow<String> =
         state.asStateFlow().map { it.deviceName ?: defaultDeviceName }
 
-    override val destinationDir: Flow<File?> =
-        state.asStateFlow().map { stored -> stored.destinationPath?.let(::File) }
+    override val receiveFolderUri: Flow<String?> =
+        state.asStateFlow().map { it.receiveFolderUri }
+
+    override val receiveFolderName: Flow<String?> =
+        state.asStateFlow().map { it.receiveFolderName }
+
+    override val receiveFolderLost: Flow<Boolean> =
+        state.asStateFlow().map { it.receiveFolderLost }
 
     override val alwaysDiscoverable: Flow<Boolean> =
         state.asStateFlow().map { it.alwaysDiscoverable }
@@ -99,8 +109,20 @@ public class FileSettingsStore(
         update { it.copy(deviceName = clamped) }
     }
 
-    override suspend fun setDestinationDir(dir: File?) {
-        update { it.copy(destinationPath = dir?.absolutePath) }
+    override suspend fun setReceiveFolder(uri: String?, name: String?) {
+        val chosen = uri?.takeIf { it.isNotBlank() }
+        update {
+            it.copy(
+                receiveFolderUri = chosen,
+                receiveFolderName = if (chosen == null) null else name?.trim()?.takeIf(String::isNotEmpty),
+                receiveFolderLost = false,
+            )
+        }
+    }
+
+    override suspend fun setReceiveFolderLost(lost: Boolean) {
+        if (state.value.receiveFolderLost == lost) return
+        update { it.copy(receiveFolderLost = lost) }
     }
 
     override suspend fun setAlwaysDiscoverable(enabled: Boolean) {

@@ -1,7 +1,5 @@
 package com.veyro.ui.format
 
-import java.io.File
-
 /** Coarse file type, for a row icon and the destination folder. Decided by extension only. */
 public enum class FileKind { IMAGE, VIDEO, AUDIO, DOCUMENT, ARCHIVE, OTHER }
 
@@ -27,17 +25,17 @@ public fun fileKindOf(name: String): FileKind {
 
 /**
  * Where received files will appear, in the words the Files app uses: "Download/Veyro/Photos", or
- * "Download/Veyro (Photos and Videos)" for a mix. Mirrors [ReceivedFolders], unless the user chose
- * a folder in Settings.
+ * "Download/Veyro (Photos and Videos)" for a mix. Mirrors [ReceivedFolders]. A folder chosen in
+ * Settings (ADR-072) gets the same type subfolders, so it reads "Inbox/Photos".
  */
-public fun destinationLabel(names: List<String>, customDestination: File?): String {
-    if (customDestination != null) return customDestination.name.ifBlank { customDestination.path }
+public fun destinationLabel(names: List<String>, customFolderName: String?): String {
+    val root = customFolderName?.takeIf { it.isNotBlank() } ?: ReceivedFolders.ROOT
     val folders = names.map { ReceivedFolders.subfolder(it) }.distinct()
     return when (folders.size) {
-        0 -> ReceivedFolders.ROOT
-        1 -> "${ReceivedFolders.ROOT}/${folders[0]}"
-        2 -> "${ReceivedFolders.ROOT} (${folders[0]} and ${folders[1]})"
-        else -> "${ReceivedFolders.ROOT} (" + folders.dropLast(1).joinToString(", ") + " and " + folders.last() + ")"
+        0 -> root
+        1 -> "$root/${folders[0]}"
+        2 -> "$root (${folders[0]} and ${folders[1]})"
+        else -> "$root (" + folders.dropLast(1).joinToString(", ") + " and " + folders.last() + ")"
     }
 }
 

@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,8 +59,9 @@ import com.veyro.ui.devices.openPolicyAccess
  *
  * Veyro changes: the rows are Veyro's - device name, the identity fingerprint, paired-device count,
  * always-discoverable, the three system grants the companion features depend on, identity reset
- * (confirmed) and the diagnostics panel with the in-app log tail. Storage location, recycle bin,
- * action labels and "stop service" have no Veyro counterpart. The companion feature switches
+ * (confirmed) and the diagnostics panel with the in-app log tail. "Save received files to"
+ * (ADR-072) is Veyro's storage location row; recycle bin, action labels and "stop service" have
+ * no Veyro counterpart. The companion feature switches
  * themselves are on each device's settings screen, as in Sefirah.
  */
 @Composable
@@ -79,6 +82,16 @@ public fun SettingsScreen(
     var showResetConfirm by rememberSaveable { mutableStateOf(false) }
     var showDebug by rememberSaveable { mutableStateOf(false) }
     var showAutoClearDialog by rememberSaveable { mutableStateOf(false) }
+
+    // ADR-072: the system folder picker. The grant is kept across restarts; the one it replaces
+    // is given back. Nothing else on the phone becomes readable to Veyro.
+    val pickReceiveFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree == null) return@rememberLauncherForActivityResult
+        if (!ReceiveFolderGrants.take(context, tree)) return@rememberLauncherForActivityResult
+        val previous = state.receiveFolderUri
+        if (previous != null && previous != tree.toString()) ReceiveFolderGrants.release(context, previous)
+        viewModel.setReceiveFolder(tree.toString(), ReceiveFolderGrants.nameOf(context, tree))
+    }
 
     if (showAutoClearDialog) {
         AutoClearDialog(
@@ -157,6 +170,34 @@ public fun SettingsScreen(
                 icon = VeyroIcons.Wifi,
                 checked = state.alwaysDiscoverable,
                 onCheckedChanged = viewModel::setAlwaysDiscoverable,
+            )
+        }
+
+        // ADR-072: where received files go. Download/Veyro unless the user picks a folder.
+        item { SectionLabel("Received files") }
+
+        state.receiveFolderNotice?.let { notice ->
+            item { ProblemCard(title = "Folder not available", message = notice) }
+        }
+
+        item {
+            val custom = state.receiveFolderUri != null
+            TextPreferenceWidget(
+                title = "Save received files to",
+                subtitle = state.receiveFolderLabel,
+                icon = VeyroIcons.Folder,
+                onPreferenceClick = { pickReceiveFolder.launch(null) },
+                widget = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (custom) {
+                            TextButton(onClick = {
+                                ReceiveFolderGrants.release(context, state.receiveFolderUri)
+                                viewModel.useDefaultReceiveFolder()
+                            }) { Text("Use default") }
+                        }
+                        TextButton(onClick = { pickReceiveFolder.launch(null) }) { Text("Change") }
+                    }
+                },
             )
         }
 

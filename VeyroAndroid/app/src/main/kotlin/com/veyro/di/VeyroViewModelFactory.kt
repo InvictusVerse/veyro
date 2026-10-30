@@ -59,6 +59,8 @@ public class VeyroViewModelFactory(
             // ADR-061: the local network notice and the "stops in the background" notice.
             localNetwork = container.localNetworkAccess.state,
             keepAliveNotice = { container.keepAliveHomeNotice() },
+            // ADR-072: the Received files row follows the folder chosen in Settings.
+            receiveFolder = container.receiveFolder,
         ) as T
 
         modelClass.isAssignableFrom(KeepConnectedViewModel::class.java) -> KeepConnectedViewModel(

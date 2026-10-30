@@ -67,7 +67,6 @@ import com.veyro.ui.format.formatCountdown
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
-import java.io.File
 
 /**
  * The question asked on the phone when a paired PC sends files (REQ-T02 explicit consent).
@@ -86,8 +85,8 @@ import java.io.File
 @Composable
 public fun InboundTransferDialog(
     transferCoordinator: TransferCoordinator,
-    /** The folder chosen in Settings, if any; otherwise files go to the shared media folders. */
-    customDestination: Flow<File?> = flowOf(null),
+    /** The name of the folder chosen in Settings (ADR-072), if any; otherwise Download/Veyro. */
+    customDestination: Flow<String?> = flowOf(null),
 ) {
     val pending by transferCoordinator.pendingOffer.collectAsStateWithLifecycle()
     val offer = pending ?: return

@@ -33,7 +33,8 @@ class FileSettingsStoreTest {
         val s = store()
         assertEquals(defaultName, s.deviceName.first())
         assertFalse("always-discoverable must default to off (NFR-03)", s.alwaysDiscoverable.first())
-        assertNull(s.destinationDir.first())
+        assertNull(s.receiveFolderUri.first())
+        assertFalse(s.receiveFolderLost.first())
     }
 
     @Test
@@ -51,13 +52,29 @@ class FileSettingsStoreTest {
     }
 
     @Test
-    fun `destination persists and can be cleared`() = runBlocking {
-        val target = File(dir, "Downloads")
-        store().setDestinationDir(target)
-        assertEquals(target.absolutePath, store().destinationDir.first()!!.absolutePath)
+    fun `receive folder persists, clears the lost notice, and can be cleared`() = runBlocking {
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3AInbox"
+        store().setReceiveFolderLost(true)
+        store().setReceiveFolder(uri, "Inbox")
+        assertEquals(uri, store().receiveFolderUri.first())
+        assertEquals("Inbox", store().receiveFolderName.first())
+        assertFalse("choosing a folder clears the notice", store().receiveFolderLost.first())
 
-        store().setDestinationDir(null)
-        assertNull(store().destinationDir.first())
+        store().setReceiveFolderLost(true)
+        assertTrue(store().receiveFolderLost.first())
+
+        store().setReceiveFolder(null, "ignored")
+        assertNull(store().receiveFolderUri.first())
+        assertNull(store().receiveFolderName.first())
+        assertFalse(store().receiveFolderLost.first())
+    }
+
+    @Test
+    fun `an older file with the unused destinationPath still loads`() = runBlocking {
+        // ADR-072: the File path field was replaced; a file that still has it must decode.
+        File(dir, "settings.json").writeText("""{"version":1,"deviceName":"Kept","destinationPath":"/storage/emulated/0/X"}""")
+        assertEquals("Kept", store().deviceName.first())
+        assertNull(store().receiveFolderUri.first())
     }
 
     @Test

@@ -1,16 +1,21 @@
 package com.veyro
 
-import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.ContextThemeWrapper
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import com.veyro.core.common.VeyroLog
+import com.veyro.core.designsystem.theme.VeyroTheme
 import com.veyro.core.model.TrustedPeer
 import com.veyro.di.ShareShortcuts
+import com.veyro.ui.components.SendContent
+import com.veyro.ui.components.SendTarget
+import com.veyro.ui.components.SendToSheet
+import com.veyro.ui.components.orderSendTargets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,14 +30,15 @@ import kotlinx.coroutines.launch
  *  - Files (`ACTION_SEND` / `ACTION_SEND_MULTIPLE` with streams): sent in the background by
  *    [ShareSendService]; Veyro does not open.
  *  - Who it goes to: the device picked in the Direct Share row ("Send to <device>",
- *    [ShareShortcuts]); else, with more than one device connected, a "Send to" chooser with every
- *    connected device and "All connected"; else the one connected (or most recently used) device.
+ *    [ShareShortcuts]); else, with more than one device connected, the "Send to" sheet
+ *    ([SendToSheet], ADR-072, the same one Home uses) with every connected device and "All
+ *    connected"; else the one connected (or most recently used) device.
  *
- * The chooser is the only UI; otherwise it finishes at once. Everything in the intent comes from
- * another app and is treated as untrusted (length-capped by the bridge, files validated by the
- * receiver).
+ * The sheet is the only UI, drawn with Compose over this translucent window; otherwise it finishes
+ * at once. Everything in the intent comes from another app and is treated as untrusted
+ * (length-capped by the bridge, files validated by the receiver).
  */
-public class ShareToPcActivity : Activity() {
+public class ShareToPcActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "ShareToPc"
@@ -45,9 +51,9 @@ public class ShareToPcActivity : Activity() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var chooser: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val shared = runCatching { read(intent) }
             .onFailure { VeyroLog.w(TAG) { "Share not read: ${it.javaClass.simpleName}" } }
@@ -73,26 +79,43 @@ public class ShareToPcActivity : Activity() {
         }
     }
 
-    /** "Send to": each connected device, then "All connected". Dismissing sends nothing. */
+    /**
+     * "Send to": each connected device, then "All connected". A tap sends at once, while this
+     * Activity is still visible (a dataSync service must start then); dismissing sends nothing.
+     */
     private fun choose(shared: Shared, connected: List<TrustedPeer>) {
-        val labels = connected.map { it.displayName } + "All connected (${connected.size})"
-        // A DayNight context, so the dialog follows the system theme over the translucent window.
-        val themed = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_DayNight)
-        chooser = AlertDialog.Builder(themed)
-            .setTitle("Send to")
-            .setItems(labels.toTypedArray()) { _, which ->
-                val chosen = connected.getOrNull(which)
-                if (chosen != null) {
-                    deliver(shared, listOf(chosen.deviceId.value), listOf(chosen.displayName))
-                } else {
-                    deliver(shared, connected.map { it.deviceId.value }, connected.map { it.displayName }, all = true)
-                }
+        val statuses = runCatching {
+            (application as VeyroApplication).container.deviceStatusPublisher.peerStatus.value
+        }.getOrDefault(emptyMap())
+        val targets = orderSendTargets(
+            connected.map { peer ->
+                val status = statuses[peer.deviceId.value]
+                SendTarget(peer.deviceId.value, peer.displayName, peer.platform, status?.battery, status?.charging)
+            },
+            preferredId = null, // already Home's selected device first
+        )
+        val content = when (shared) {
+            is Shared.Text -> SendContent.Text(shared.text)
+            is Shared.Files -> SendContent.Files(shared.uris.map { uri -> runCatching { contentResolver.getType(uri) }.getOrNull() })
+        }
+        setContent {
+            VeyroTheme {
+                SendToSheet(
+                    content = content,
+                    targets = targets,
+                    onSendTo = { target ->
+                        deliver(shared, listOf(target.id), listOf(target.name))
+                        done()
+                    },
+                    onSendToAll = {
+                        deliver(shared, connected.map { it.deviceId.value }, connected.map { it.displayName }, all = true)
+                        done()
+                    },
+                    onDismiss = { done() },
+                )
             }
-            .setNegativeButton("Cancel", null)
-            .setOnDismissListener { done() }
-            .show()
+        }
     }
-
     /**
      * Sends [shared] to [targets] (empty: the default device). [names] are only for the toast.
      * [all]: every connected device, which for text is one broadcast.
@@ -117,9 +140,6 @@ public class ShareToPcActivity : Activity() {
     }
 
     override fun onDestroy() {
-        chooser?.setOnDismissListener(null)
-        chooser?.dismiss()
-        chooser = null
         scope.cancel()
         super.onDestroy()
     }

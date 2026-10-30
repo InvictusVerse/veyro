@@ -2,20 +2,34 @@ package com.veyro.core.data
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
-import java.io.File
 
 /** User-visible settings that are not per-peer trust (REQ-I05, feature:settings). */
 public interface SettingsStore {
     public val deviceName: Flow<String>
-    public val destinationDir: Flow<File?>
     public val alwaysDiscoverable: Flow<Boolean>
 
     /** Mirror phone notifications to a connected PC (ADR-025). Off by default. */
     public val notificationMirrorEnabled: Flow<Boolean>
 
     public suspend fun setDeviceName(name: String)
-    public suspend fun setDestinationDir(dir: File?)
     public suspend fun setAlwaysDiscoverable(enabled: Boolean)
+
+    /**
+     * "Save received files to" (ADR-072): the `content://` tree URI the user picked, null for the
+     * default Download/Veyro. A URI is user data: never logged.
+     */
+    public val receiveFolderUri: Flow<String?> get() = flowOf(null)
+
+    /** That folder's name, as the picker reported it, for the Settings row and the prompt. */
+    public val receiveFolderName: Flow<String?> get() = flowOf(null)
+
+    /** A receive fell back to Download/Veyro because the chosen folder was gone. Settings says so once. */
+    public val receiveFolderLost: Flow<Boolean> get() = flowOf(false)
+
+    /** Sets or (null) clears the chosen folder; either clears [receiveFolderLost]. */
+    public suspend fun setReceiveFolder(uri: String?, name: String?) {}
+
+    public suspend fun setReceiveFolderLost(lost: Boolean) {}
     public suspend fun setNotificationMirrorEnabled(enabled: Boolean)
 
     /** Share this phone's media sessions with a connected PC (ADR-026). Explicit opt-in, off by default. */

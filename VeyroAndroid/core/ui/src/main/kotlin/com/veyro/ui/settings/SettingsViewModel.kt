@@ -9,6 +9,7 @@ import com.veyro.core.crypto.IdentityUnavailableException
 import com.veyro.core.data.SettingsStore
 import com.veyro.core.data.TrustStore
 import com.veyro.core.model.fingerprint
+import com.veyro.ui.format.ReceiveTree
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,18 +78,36 @@ public class SettingsViewModel(
         combine(
             settingsStore.deviceName,
             settingsStore.alwaysDiscoverable,
-            settingsStore.destinationDir,
             trustStore.peers,
-        ) { name, discoverable, dir, peers ->
-            Quad(name, discoverable, dir?.absolutePath, peers.count { !it.revoked })
+        ) { name, discoverable, peers ->
+            Triple(name, discoverable, peers.count { !it.revoked })
         }
-            .onEach { (name, discoverable, path, count) ->
+            .onEach { (name, discoverable, count) ->
                 _state.value = _state.value.copy(
                     deviceName = name,
                     alwaysDiscoverable = discoverable,
-                    destinationPath = path,
                     pairedDeviceCount = count,
                 )
+            }
+            .launchIn(viewModelScope)
+
+        // ADR-072: "Save received files to".
+        combine(settingsStore.receiveFolderUri, settingsStore.receiveFolderName) { uri, name -> uri to name }
+            .onEach { (uri, name) ->
+                _state.value = _state.value.copy(
+                    receiveFolderUri = uri,
+                    receiveFolderLabel = if (uri == null) ReceiveTree.DEFAULT_LABEL else ReceiveTree.label(name ?: "Chosen folder"),
+                )
+            }
+            .launchIn(viewModelScope)
+
+        // A receive fell back to Download/Veyro: say so here once, then forget it.
+        settingsStore.receiveFolderLost
+            .onEach { lost ->
+                if (lost) {
+                    _state.value = _state.value.copy(receiveFolderNotice = ReceiveTree.LOST_NOTICE)
+                    settingsStore.setReceiveFolderLost(false)
+                }
             }
             .launchIn(viewModelScope)
 
@@ -248,10 +267,22 @@ public class SettingsViewModel(
         _state.value = _state.value.copy(logDump = "")
     }
 
-    private data class Quad(
-        val name: String,
-        val discoverable: Boolean,
-        val path: String?,
-        val count: Int,
-    )
+    /**
+     * ADR-072: the folder the user picked, its persisted grant already taken by the screen
+     * (which also releases the grant of the folder it replaces).
+     */
+    public fun setReceiveFolder(uri: String, name: String?) {
+        viewModelScope.launch {
+            settingsStore.setReceiveFolder(uri, name)
+            _state.value = _state.value.copy(receiveFolderNotice = null)
+        }
+    }
+
+    /** "Use default": back to Download/Veyro. The screen releases the grant. */
+    public fun useDefaultReceiveFolder() {
+        viewModelScope.launch {
+            settingsStore.setReceiveFolder(null, null)
+            _state.value = _state.value.copy(receiveFolderNotice = null)
+        }
+    }
 }

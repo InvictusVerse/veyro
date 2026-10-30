@@ -19,7 +19,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class OnboardingViewModelTest {
@@ -40,7 +39,6 @@ class OnboardingViewModelTest {
         val control = MutableStateFlow(false)
         val messages = MutableStateFlow(false)
         override val deviceName: Flow<String> = this.name
-        override val destinationDir: Flow<File?> = MutableStateFlow(null)
         override val alwaysDiscoverable: Flow<Boolean> = MutableStateFlow(false)
         override val notificationMirrorEnabled: Flow<Boolean> = notif
         override val mediaShareEnabled: Flow<Boolean> = media
@@ -51,7 +49,6 @@ class OnboardingViewModelTest {
         override suspend fun setPhotosEnabled(enabled: Boolean) { photos.value = enabled }
         override val onboardingComplete: Flow<Boolean> = done
         override suspend fun setDeviceName(name: String) { this.name.value = name }
-        override suspend fun setDestinationDir(dir: File?) = Unit
         override suspend fun setAlwaysDiscoverable(enabled: Boolean) = Unit
         override suspend fun setNotificationMirrorEnabled(enabled: Boolean) { notif.value = enabled }
         override suspend fun setMediaShareEnabled(enabled: Boolean) { media.value = enabled }
