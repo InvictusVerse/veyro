@@ -86,6 +86,15 @@ public sealed class SessionSealer : IDisposable
 
     public long NextCounter => _framer.NextCounter;
 
+    /// <summary>
+    /// The UTF-8 length of the wire text <see cref="Seal"/> returns for a plaintext of
+    /// <paramref name="plainBytes"/> bytes, so a caller can refuse an oversized frame before a
+    /// counter is spent (review issue 1, ADR-058).
+    /// </summary>
+    public long WireLength(int plainBytes)
+        => "{\"f\":\"\",\"c\":\"\"}".Length + Encoding.UTF8.GetByteCount(_localDeviceId)
+           + 4L * (((long)plainBytes + AeadStreamFramer.TagSize + 2) / 3);
+
     /// <summary>Returns the wire text. Throws <see cref="InvalidDataException"/> when the counter is exhausted.</summary>
     public string Seal(string envelopeJson)
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -236,6 +237,186 @@ public sealed class SecureLinkSessionTests
         await SendRawAsync(a, new SessionSealer(bootI.SendKey, Phone, FrameCrypto.DirI2R), Envelope(1, "{\"t\":\"ping\",\"nonce\":\"n\"}"));
         await Assert.ThrowsAsync<InvalidDataException>(() => pc.ReceiveAsync(Ct));
         a.Dispose();
+    }
+
+    /// <summary>
+    /// Review finding 2 (ADR-058): a control frame over the 24 MiB limit fails only that message.
+    /// The size is known before sealing, so no counter is spent and the next frame still opens.
+    /// </summary>
+    [Fact]
+    public async Task AnOversizedControlFrameFailsOnlyThatMessage()
+    {
+        var (phone, pc) = await EstablishedPairAsync();
+        string huge = new('a', SecureLinkSession.MaxFrameSizeBytes);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => phone.SendAsync(new PeerMessage.Ping(huge), Ct));
+        await phone.SendAsync(new PeerMessage.Ping("after"), Ct);
+        var ping = Assert.IsType<PeerMessage.Ping>((await pc.ReceiveAsync(Ct))!.Envelope.Payload);
+        Assert.Equal("after", ping.Nonce);
+        await phone.DisposeAsync();
+        await pc.DisposeAsync();
+    }
+
+    /// <summary>The size check before sealing (review issue 1) predicts the wire length exactly.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(1000)]
+    [InlineData(65537)]
+    public void TheWireLengthIsKnownBeforeSealing(int plainBytes)
+    {
+        var (k, _) = TestLinkKeys.SessionPair(Phone, Pc, Secret);
+        using var sealer = new SessionSealer(k.SendKey, Phone, FrameCrypto.DirI2R);
+        long predicted = sealer.WireLength(plainBytes);
+        Assert.Equal(predicted, Encoding.UTF8.GetByteCount(sealer.Seal(new string('x', plainBytes))));
+    }
+
+    /// <summary>Delegates to a real socket; <see cref="FailNextSend"/> makes the next send fail without writing.</summary>
+    private sealed class FlakySendSocket(WebSocket inner) : WebSocket
+    {
+        private readonly TaskCompletionSource _aborted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public volatile bool FailNextSend;
+        /// <summary>Sends hang until the socket is aborted, like a write to a peer that stopped reading.</summary>
+        public volatile bool BlockSends;
+        public int Writes;
+        public bool WasAborted => _aborted.Task.IsCompleted;
+        public override WebSocketCloseStatus? CloseStatus => inner.CloseStatus;
+        public override string? CloseStatusDescription => inner.CloseStatusDescription;
+        public override WebSocketState State => inner.State;
+        public override string? SubProtocol => inner.SubProtocol;
+        public override void Abort()
+        {
+            _aborted.TrySetResult();
+            inner.Abort();
+        }
+        public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+            => inner.CloseAsync(closeStatus, statusDescription, cancellationToken);
+        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+            => inner.CloseOutputAsync(closeStatus, statusDescription, cancellationToken);
+        public override void Dispose() => inner.Dispose();
+        public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
+            => inner.ReceiveAsync(buffer, cancellationToken);
+        public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+        {
+            if (FailNextSend)
+            {
+                FailNextSend = false;
+                throw new IOException("simulated socket failure after sealing");
+            }
+            if (BlockSends) return HangUntilAbortedAsync();
+            Interlocked.Increment(ref Writes);
+            return inner.SendAsync(buffer, messageType, endOfMessage, cancellationToken);
+        }
+
+        private async Task HangUntilAbortedAsync()
+        {
+            await _aborted.Task;
+            throw new WebSocketException("aborted");
+        }
+    }
+
+    /// <summary>
+    /// Review issue 1 (ADR-058): once a frame is sealed its counter is spent. A write that then
+    /// fails must fail the session, not leave it alive one counter ahead of the peer.
+    /// </summary>
+    [Fact]
+    public async Task AWriteThatFailsAfterSealingFailsTheSession()
+    {
+        var (a, b) = await SocketPairAsync();
+        var flaky = new FlakySendSocket(a);
+        var (kPhone, kPc) = TestLinkKeys.SessionPair(Phone, Pc, Secret);
+        await using var phone = new SecureLinkSession(flaky, kPhone);
+        await using var pc = new SecureLinkSession(b, kPc);
+        await phone.SendAsync(new PeerMessage.Hello(Phone, "Phone", "android"), Ct);
+        Assert.IsType<PeerMessage.Hello>((await pc.ReceiveAsync(Ct))!.Envelope.Payload);
+
+        flaky.FailNextSend = true;
+        await Assert.ThrowsAsync<IOException>(() => phone.SendAsync(new PeerMessage.Ping("lost"), Ct));
+        int writes = flaky.Writes;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => phone.SendAsync(new PeerMessage.Ping("next"), Ct));
+        Assert.Equal(writes, flaky.Writes);
+    }
+
+    /// <summary>
+    /// Review issue 8: <see cref="SecureLinkSession.CloseOutputAsync"/> (the replaced-session
+    /// close) is bounded even while a send holds the gate on a peer that stopped reading.
+    /// </summary>
+    [Fact]
+    public async Task CloseOutputIsBoundedWhileASendHoldsTheGate()
+    {
+        var (a, b) = await SocketPairAsync();
+        var socket = new FlakySendSocket(a) { BlockSends = true };
+        var (kPhone, _) = TestLinkKeys.SessionPair(Phone, Pc, Secret);
+        var phone = new SecureLinkSession(socket, kPhone);
+        // The send hangs on the socket and holds the send gate, with no cancellation of its own.
+        Task blocked = phone.SendAsync(new PeerMessage.Ping("stuck"), CancellationToken.None);
+        await Task.Delay(200);
+        Assert.False(blocked.IsCompleted);
+        var clock = Stopwatch.StartNew();
+        await phone.CloseOutputAsync("replaced").WaitAsync(TimeSpan.FromSeconds(15));
+        clock.Stop();
+        Assert.True(clock.Elapsed < SecureLinkSession.CloseHandshakeTimeout + TimeSpan.FromSeconds(3), $"close took {clock.Elapsed}");
+        Assert.True(socket.WasAborted, "the socket is aborted when the close cannot be sent in time");
+        await Assert.ThrowsAnyAsync<Exception>(() => blocked);
+        await phone.DisposeAsync();
+        b.Dispose();
+    }
+
+    /// <summary>A socket whose close handshake throws, as one with a receive still in flight may.</summary>
+    private sealed class CloseThrowsSocket : WebSocket
+    {
+        public bool Disposed { get; private set; }
+        public override WebSocketCloseStatus? CloseStatus => null;
+        public override string? CloseStatusDescription => null;
+        public override WebSocketState State => WebSocketState.Open;
+        public override string? SubProtocol => null;
+        public override void Abort() { }
+        public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("There is already one outstanding 'ReceiveAsync' call.");
+        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("There is already one outstanding 'ReceiveAsync' call.");
+        public override void Dispose() => Disposed = true;
+        public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+        public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>Review finding 5: a close handshake that throws still disposes the socket and wipes every key.</summary>
+    [Fact]
+    public async Task DisposeWipesEveryKeyEvenWhenTheCloseHandshakeThrows()
+    {
+        var (kPhone, kPc) = TestLinkKeys.SessionPair(Phone, Pc, Secret);
+        var socket = new CloseThrowsSocket();
+        var session = new SecureLinkSession(socket, kPhone);
+        await session.DisposeAsync();
+        Assert.True(socket.Disposed);
+        foreach (byte[] key in new[] { kPhone.SendKey, kPhone.RecvKey, kPhone.ExpSecret! })
+            Assert.All(key, b => Assert.Equal(0, b));
+        kPc.Dispose();
+    }
+
+    /// <summary>
+    /// Review findings 6 and 15: a peer that never answers the close frame holds
+    /// <see cref="SecureLinkSession.DisposeAsync"/> for <see cref="SecureLinkSession.CloseHandshakeTimeout"/>,
+    /// and the socket ends aborted.
+    /// </summary>
+    [Fact]
+    public async Task ACloseThePeerNeverAnswersEndsAfterTheHandshakeTimeoutAndAbortsTheSocket()
+    {
+        var (a, b) = await SocketPairAsync();
+        var (kPhone, _) = TestLinkKeys.SessionPair(Phone, Pc, Secret);
+        var phone = new SecureLinkSession(a, kPhone);
+        var clock = Stopwatch.StartNew();
+        // b never reads, so it never answers the close frame.
+        await phone.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+        clock.Stop();
+        Assert.InRange(clock.Elapsed,
+            SecureLinkSession.CloseHandshakeTimeout - TimeSpan.FromMilliseconds(250),
+            SecureLinkSession.CloseHandshakeTimeout + TimeSpan.FromSeconds(3));
+        Assert.Equal(WebSocketState.Aborted, a.State);
+        b.Dispose();
     }
 
     [Fact]

@@ -117,19 +117,32 @@ public sealed class SecureLinkSession : IAsyncDisposable
             Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             Payload = message
         };
+        string json = PeerMessageJson.Encode(envelope);
+        // Sized before sealing: an oversized message fails alone and spends no counter (review issue 1).
+        if (_sealer.WireLength(Encoding.UTF8.GetByteCount(json)) > MaxFrameSizeBytes)
+            throw new InvalidOperationException("Control frame exceeds the protocol limit.");
         string wire;
         try
         {
-            wire = _sealer.Seal(PeerMessageJson.Encode(envelope));
+            wire = _sealer.Seal(json);
         }
         catch (InvalidDataException)
         {
             _failed = true;
             throw;
         }
-        byte[] bytes = Encoding.UTF8.GetBytes(wire);
-        if (bytes.Length > MaxFrameSizeBytes) throw new InvalidOperationException("Control frame exceeds the protocol limit.");
-        await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+        try
+        {
+            await _socket.SendAsync(Encoding.UTF8.GetBytes(wire), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The counter is spent whether or not the frame left: a later frame would no longer
+            // open at the peer, so the session fails here and the socket is dropped (review issue 1).
+            _failed = true;
+            try { _socket.Abort(); } catch (ObjectDisposedException) { }
+            throw;
+        }
     }
 
     /// <summary>
@@ -320,21 +333,28 @@ public sealed class SecureLinkSession : IAsyncDisposable
     /// <summary>
     /// Starts a clean close (ADR-040): sends the WebSocket close frame after any send in progress.
     /// The receive loop then sees the peer's answering close and ends. Never throws.
+    /// Bounded by <see cref="CloseHandshakeTimeout"/> (review issue 8): a send that holds the gate
+    /// on a peer that stopped reading, or a close write that does not complete, aborts the socket.
     /// </summary>
     public async Task CloseOutputAsync(string reason)
     {
+        using var timeout = new CancellationTokenSource(CloseHandshakeTimeout);
         try
         {
-            await _sendGate.WaitAsync().ConfigureAwait(false);
+            await _sendGate.WaitAsync(timeout.Token).ConfigureAwait(false);
             try
             {
                 if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-                    await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, reason, CancellationToken.None).ConfigureAwait(false);
+                    await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, reason, timeout.Token).ConfigureAwait(false);
             }
             finally
             {
                 _sendGate.Release();
             }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            try { _socket.Abort(); } catch (ObjectDisposedException) { }
         }
         catch (Exception error) when (error is WebSocketException or IOException or ObjectDisposedException or InvalidOperationException) { }
     }
@@ -348,16 +368,25 @@ public sealed class SecureLinkSession : IAsyncDisposable
         // failed close handshake must not turn a finished transfer into a failure.
         // The handshake is bounded: a peer that never answers the close (silent, or a reader that
         // stopped) must not hold the caller forever. On timeout the socket is aborted.
-        if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+        // Whatever the close throws, every key is disposed (review issue 9).
+        try
         {
-            using var timeout = new CancellationTokenSource(CloseHandshakeTimeout);
-            try { await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", timeout.Token).ConfigureAwait(false); }
-            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException) { }
+            if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            {
+                using var timeout = new CancellationTokenSource(CloseHandshakeTimeout);
+                try { await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", timeout.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (timeout.IsCancellationRequested) { _socket.Abort(); }
+                catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException
+                                                  or ObjectDisposedException or InvalidOperationException) { }
+            }
         }
-        _socket.Dispose();
-        _sealer.Dispose();
-        Volatile.Read(ref _recv).Opener.Dispose();
-        _keys.Dispose();
+        finally
+        {
+            _socket.Dispose();
+            _sealer.Dispose();
+            Volatile.Read(ref _recv).Opener.Dispose();
+            _keys.Dispose();
+        }
     }
 
     private async Task<byte[]> ReceiveTextAsync(CancellationToken ct)
