@@ -62,7 +62,7 @@ public sealed class OnboardingViewModel(ISettingsStore settings) : BaseViewModel
     /// <summary>Shows the newly paired phone on the Success step.</summary>
     public void ShowPaired(TrustedPeer peer)
     {
-        PairedName = peer.DisplayName;
+        PairedName = peer.ShownName;
         try { PairedFingerprint = DeviceId.FormatFingerprint(Convert.FromBase64String(peer.PublicKeyBase64)); }
         catch (Exception error) when (error is FormatException or ArgumentException)
         {

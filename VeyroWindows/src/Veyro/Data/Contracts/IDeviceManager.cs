@@ -15,8 +15,14 @@ public interface IDeviceManager
     PairedDeviceUiModel? ActiveDevice { get; set; }
     event Action<PairedDeviceUiModel?>? ActiveDeviceChanged;
 
-    /// <summary>A paired phone connected or disconnected (argument: device id).</summary>
+    /// <summary>A paired phone connected, disconnected or was renamed (argument: device id).</summary>
     event Action<string>? ConnectionChanged;
+
+    /// <summary>
+    /// ADR-059: the phone's stored name changed (it renamed itself). Re-reads it from the trust
+    /// store so every page shows it at once. Any thread.
+    /// </summary>
+    void RefreshName(string deviceId);
 
     /// <summary>Discovery saw, refreshed or lost a phone.</summary>
     event Action? DiscoveryChanged;

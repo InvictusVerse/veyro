@@ -7,6 +7,7 @@ import com.veyro.core.model.Platform
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -59,6 +60,12 @@ public interface CompanionLink {
 
     /** The peer's device id as the session authenticated it, when known. Display lookups only. */
     public val peerDeviceId: String? get() = null
+
+    /** The name the peer announces for itself, validated, null until known (ADR-059). */
+    public val peerAnnouncedName: Flow<String?> get() = flowOf(null)
+
+    /** What the peer runs, from the trust store (ADR-052). */
+    public val peerPlatform: Platform get() = Platform.UNKNOWN
 }
 
 /**
@@ -71,9 +78,10 @@ public interface CompanionLink {
  */
 public data class PeerConnectionLink(
     public val connection: PeerConnection,
-    public val peerPlatform: Platform = Platform.UNKNOWN,
+    override val peerPlatform: Platform = Platform.UNKNOWN,
 ) : CompanionLink {
     override val peerDeviceId: String? get() = connection.peerDeviceId
+    override val peerAnnouncedName: Flow<String?> get() = connection.peerAnnouncedName
     override val peerCapabilities: Flow<Capabilities>
         get() = connection.peerCapabilities.map { Capabilities.usedWith(peerPlatform, it) }
     override val incoming: Flow<PeerMessage> get() = connection.incoming.map { it.payload }

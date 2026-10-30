@@ -343,7 +343,11 @@
         </Grid>
 
         <!--  Quick actions, as in Phone Link. Selections show only what the phone reports; a click is a request.  -->
-        <Grid Grid.Row="1" ColumnSpacing="8">
+        <Grid Grid.Row="1" ColumnSpacing="8" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
@@ -539,7 +543,91 @@
                     <FontIcon Margin="8,0,-8,0" FontSize="12" Glyph="&#xEBC5;" />
                 </Grid>
             </ToggleButton>
-        </Grid>
+
+            <!--  ADR-060: flashlight, media volume, brightness. Each tile sits in a hit-testable
+                  Grid so its tooltip still says why while the tile is disabled.  -->
+            <Grid
+                Grid.Row="1"
+                Grid.Column="0"
+                Background="Transparent"
+                ToolTipService.ToolTip="{x:Bind StatusViewModel.TorchTip, Mode=OneWay}">
+                <ToggleButton
+                    x:Name="TorchToggle"
+                    AutomationProperties.Name="{x:Bind StatusViewModel.TorchTip, Mode=OneWay}"
+                    Click="Torch_Click"
+                    IsChecked="{x:Bind StatusViewModel.IsTorchOn, Mode=OneWay}"
+                    IsEnabled="{x:Bind StatusViewModel.CanTorch, Mode=OneWay}"
+                    Style="{StaticResource QuickActionToggleStyle}">
+                    <FontIcon FontSize="20" Glyph="&#xEA80;" />
+                </ToggleButton>
+            </Grid>
+
+            <Grid
+                Grid.Row="1"
+                Grid.Column="1"
+                Background="Transparent"
+                ToolTipService.ToolTip="{x:Bind StatusViewModel.VolumeTip, Mode=OneWay}">
+                <Button
+                    AutomationProperties.Name="{x:Bind StatusViewModel.VolumeTip, Mode=OneWay}"
+                    IsEnabled="{x:Bind StatusViewModel.CanVolume, Mode=OneWay}"
+                    Style="{StaticResource QuickActionButtonStyle}">
+                    <FontIcon FontSize="20" Glyph="&#xE995;" />
+                    <Button.Flyout>
+                        <Flyout Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
+                            <StackPanel MinWidth="260" Spacing="8">
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Media volume on the phone" />
+                                <Slider
+                                    AutomationProperties.Name="Phone media volume"
+                                    IsEnabled="{x:Bind StatusViewModel.CanVolume, Mode=OneWay}"
+                                    Maximum="100"
+                                    Minimum="0"
+                                    StepFrequency="1"
+                                    Value="{x:Bind StatusViewModel.ShownMediaVolume, Mode=OneWay}"
+                                    ValueChanged="MediaVolumeSlider_ValueChanged" />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+            </Grid>
+
+            <Grid
+                Grid.Row="1"
+                Grid.Column="2"
+                Background="Transparent"
+                ToolTipService.ToolTip="{x:Bind StatusViewModel.BrightnessTip, Mode=OneWay}">
+                <Button
+                    AutomationProperties.Name="{x:Bind StatusViewModel.BrightnessTip, Mode=OneWay}"
+                    IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
+                    Style="{StaticResource QuickActionButtonStyle}">
+                    <FontIcon FontSize="20" Glyph="&#xE706;" />
+                    <Button.Flyout>
+                        <Flyout Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
+                            <StackPanel MinWidth="260" Spacing="8">
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Screen brightness on the phone" />
+                                <Slider
+                                    AutomationProperties.Name="Phone screen brightness"
+                                    IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
+                                    Maximum="100"
+                                    Minimum="0"
+                                    StepFrequency="1"
+                                    Value="{x:Bind StatusViewModel.ShownBrightness, Mode=OneWay}"
+                                    ValueChanged="BrightnessSlider_ValueChanged" />
+                                <ToggleSwitch
+                                    AutomationProperties.Name="Automatic brightness on the phone"
+                                    Header="Automatic brightness"
+                                    IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
+                                    IsOn="{x:Bind StatusViewModel.IsAutoBrightness, Mode=OneWay}"
+                                    Toggled="AutoBrightness_Toggled" />
+                                <TextBlock
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Moving the slider turns automatic brightness off, as on the phone."
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+            </Grid>        </Grid>
 
         <TextBlock
             Grid.Row="2"

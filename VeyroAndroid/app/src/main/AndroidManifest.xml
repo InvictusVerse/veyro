@@ -59,6 +59,14 @@
          also behind the "Allow PC to ring and change sound mode" switch, off by default. -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
+    <!-- Screen brightness from the PC (ADR-060). A special access the user grants in system
+         settings ("Modify system settings"), asked for only from Device settings; brightness is
+         also behind "Let PCs control flashlight, volume and brightness", off by default. The
+         flashlight (CameraManager.setTorchMode) and media volume need no permission. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- Messages and calls on the PC (ADR-027). Each is runtime-requested only when the user
          turns on "Messages and calls on PC" (off by default); nothing is read or sent without
          both the switch and the grant. GitHub build only: a Play build would move these to a

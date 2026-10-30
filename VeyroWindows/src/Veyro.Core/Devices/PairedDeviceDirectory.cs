@@ -34,7 +34,8 @@ public static class PairedDeviceDirectory
             .OrderBy(peer => peer.PairedAt)
             .Select(peer => new PairedDeviceEntry(
                 peer.DeviceId,
-                string.IsNullOrWhiteSpace(peer.DisplayName) ? UnnamedDevice : peer.DisplayName.Trim(),
+                // ADR-059: a nickname given on this PC wins over the name the phone gives itself.
+                string.IsNullOrWhiteSpace(peer.ShownName) ? UnnamedDevice : peer.ShownName.Trim(),
                 peer.Platform,
                 peer.PublicKeyBase64,
                 isConnected(peer.DeviceId)))

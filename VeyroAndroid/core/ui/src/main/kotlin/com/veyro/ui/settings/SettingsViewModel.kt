@@ -43,6 +43,8 @@ public class SettingsViewModel(
     private val onBackgroundSettingChanged: () -> Unit = {},
     /** How many "Keep Veyro connected" items need a change (ADR-061). Re-read on every resume. */
     private val keepConnectedIssues: () -> Int = { 0 },
+    /** Whether "Modify system settings" is granted (ADR-060). Re-read on every screen resume. */
+    private val writeSettingsGranted: () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -100,6 +102,10 @@ public class SettingsViewModel(
 
         settingsStore.deviceControlAllowed
             .onEach { _state.value = _state.value.copy(deviceControlAllowed = it) }
+            .launchIn(viewModelScope)
+
+        settingsStore.phoneControlsAllowed
+            .onEach { _state.value = _state.value.copy(phoneControlsAllowed = it) }
             .launchIn(viewModelScope)
 
         settingsStore.messagesAndCallsEnabled
@@ -179,6 +185,11 @@ public class SettingsViewModel(
         viewModelScope.launch { settingsStore.setDeviceControlAllowed(enabled) }
     }
 
+    /** ADR-060. "Modify system settings" is asked for from the row, not here. */
+    public fun setPhoneControlsAllowed(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setPhoneControlsAllowed(enabled) }
+    }
+
     /** Access is granted in system settings, outside the app, so it is polled on resume. */
     public fun refreshNotificationAccess() {
         _state.value = _state.value.copy(
@@ -188,6 +199,7 @@ public class SettingsViewModel(
             photosPermissionGranted = photosPermissionGranted(),
             batteryOptimizationIgnored = batteryOptimizationIgnored(),
             keepConnectedIssues = keepConnectedIssues(),
+            writeSettingsGranted = writeSettingsGranted(),
         )
     }
 

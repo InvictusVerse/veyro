@@ -65,6 +65,8 @@ public class FileSettingsStore(
         // ADR-044. Defaulted so older files decode: on, 5 minutes.
         val notificationAutoClear: Boolean = true,
         val notificationAutoClearMinutes: Int = SettingsStore.DEFAULT_AUTO_CLEAR_MINUTES,
+        // ADR-060. Defaulted so older files decode; off until the user opts in.
+        val phoneControlsAllowed: Boolean = false,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -184,6 +186,13 @@ public class FileSettingsStore(
 
     override suspend fun setNotificationAutoClearMinutes(minutes: Int) {
         update { it.copy(notificationAutoClearMinutes = minutes.coerceIn(1, 24 * 60)) }
+    }
+
+    override val phoneControlsAllowed: Flow<Boolean> =
+        state.asStateFlow().map { it.phoneControlsAllowed }
+
+    override suspend fun setPhoneControlsAllowed(enabled: Boolean) {
+        update { it.copy(phoneControlsAllowed = enabled) }
     }
 
     private suspend fun update(transform: (Stored) -> Stored) = mutex.withLock {

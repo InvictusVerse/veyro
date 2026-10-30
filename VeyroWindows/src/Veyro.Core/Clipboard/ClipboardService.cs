@@ -68,11 +68,51 @@ public sealed partial class ClipboardService : IDisposable
     private string? _lastSentFingerprint;
     private DateTimeOffset _lastSentAt;
 
+    /// <summary>
+    /// ADR-059: a copy made while a phone had "Auto-fetch clipboard" off is still sent to it when
+    /// it turns the switch back on, if it is the latest copy and no older than this.
+    /// </summary>
+    public static readonly TimeSpan CatchUpWindow = TimeSpan.FromMinutes(10);
+
+    // ADR-059, all under _gate. Phones that said "auto-fetch off" (default on until a phone says
+    // otherwise; kept across its reconnects, each session re-announces it).
+    private readonly HashSet<string> _receiveOff = new(StringComparer.OrdinalIgnoreCase);
+    // Per phone, the id of the copy it was not sent because its switch was off.
+    private readonly Dictionary<string, string> _missed = new(StringComparer.OrdinalIgnoreCase);
+    // The latest copy this PC sent out (or held back), for the catch-up.
+    private PeerMessage.Clip? _latestCopy;
+    private DateTimeOffset _latestCopyAt;
+
     public IClipboardSink? Sink { get; set; }
     public IClipboardNotifier? Notifier { get; set; }
 
     /// <summary>The virtual clipboard changed. Raised on a background thread.</summary>
     public event Action? Changed;
+
+    /// <summary>A phone turned "Auto-fetch clipboard" on or off (argument: device id). Background thread.</summary>
+    public event Action<string>? ReceivePreferenceChanged;
+
+    /// <summary>The phone said its "Auto-fetch clipboard" is off: this PC does not send it its copies.</summary>
+    public bool IsReceiveOff(string peerId)
+    {
+        lock (_gate) return _receiveOff.Contains(peerId);
+    }
+
+    /// <summary>Every phone whose "Auto-fetch clipboard" is off, as last announced.</summary>
+    public IReadOnlyList<string> PeersWithReceiveOff
+    {
+        get { lock (_gate) return _receiveOff.ToList(); }
+    }
+
+    /// <summary>The PC's note for phones with auto-fetch off, or null when there are none.</summary>
+    public static string? DescribeReceiveOff(IReadOnlyList<string> phoneNames)
+    {
+        if (phoneNames.Count == 0) return null;
+        string names = phoneNames.Count == 1
+            ? phoneNames[0]
+            : string.Join(", ", phoneNames.Take(phoneNames.Count - 1)) + " and " + phoneNames[^1];
+        return $"Auto-fetch is off on {names}. What you copy here is not sent there until it is turned back on.";
+    }
 
     public ClipboardService(
         IPeerSessionRegistry sessions,
@@ -146,11 +186,27 @@ public sealed partial class ClipboardService : IDisposable
         return BroadcastAsync(new PeerMessage.Clip(NewId(), PeerMessage.Clip.KindImage, Image: Convert.ToBase64String(png), Ts: Now()));
     }
 
+    /// <summary>
+    /// Sends one of this PC's own copies (always apply = false) to every capable phone, except a
+    /// phone whose "Auto-fetch clipboard" is off (ADR-059): that one is remembered as having
+    /// missed it, for <see cref="SetReceive"/>.
+    /// </summary>
     private async Task BroadcastAsync(PeerMessage.Clip clip)
     {
-        foreach (string peerId in _sessions.GetConnectedPeers())
+        var targets = new List<string>();
+        lock (_gate)
         {
-            if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Clipboard) == 0) continue;
+            _latestCopy = clip;
+            _latestCopyAt = _clock();
+            foreach (string peerId in _sessions.GetConnectedPeers())
+            {
+                if ((_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Clipboard) == 0) continue;
+                if (_receiveOff.Contains(peerId)) _missed[peerId] = clip.Id;
+                else targets.Add(peerId);
+            }
+        }
+        foreach (string peerId in targets)
+        {
             try { await _sessions.SendAsync(peerId, clip).ConfigureAwait(false); }
             catch (Exception error) { VeyroTrace.Warn($"Clipboard not sent: {error.GetType().Name}"); }
         }
@@ -158,7 +214,53 @@ public sealed partial class ClipboardService : IDisposable
 
     private void OnDeviceMessage(string peerId, PeerMessage message)
     {
-        if (message is PeerMessage.Clip clip) _ = HandleIncomingAsync(peerId, clip);
+        switch (message)
+        {
+            case PeerMessage.Clip clip:
+                _ = HandleIncomingAsync(peerId, clip);
+                break;
+            case PeerMessage.DeviceInfo { ClipReceive: { } receive }:
+                _ = SetReceive(peerId, receive);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// ADR-059: the phone announced its "Auto-fetch clipboard" switch. Off: its copies stop at once.
+    /// On again: copies resume, and the latest copy it missed while off is sent once, if it is
+    /// still the latest, within <see cref="CatchUpWindow"/>, and still allowed (send setting, image
+    /// setting). A repeated announcement changes nothing, so rapid toggling never sends twice.
+    /// </summary>
+    public Task SetReceive(string peerId, bool receive)
+    {
+        PeerMessage.Clip? catchUp = null;
+        bool changed;
+        lock (_gate)
+        {
+            changed = receive ? _receiveOff.Remove(peerId) : _receiveOff.Add(peerId);
+            if (receive && _missed.Remove(peerId, out string? missedId) &&
+                _latestCopy is { } latest && latest.Id == missedId &&
+                _clock() - _latestCopyAt <= CatchUpWindow &&
+                _sendEnabled() && (latest.Kind != PeerMessage.Clip.KindImage || _imagesEnabled()))
+            {
+                catchUp = latest;
+            }
+        }
+        if (changed)
+        {
+            try { ReceivePreferenceChanged?.Invoke(peerId); }
+            catch (Exception error) { VeyroTrace.Error("ReceivePreferenceChanged handler failed", error); }
+        }
+        if (catchUp is null || !_sessions.IsConnected(peerId) ||
+            (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.Clipboard) == 0)
+            return Task.CompletedTask;
+        return SendCatchUpAsync(peerId, catchUp);
+    }
+
+    private async Task SendCatchUpAsync(string peerId, PeerMessage.Clip clip)
+    {
+        try { await _sessions.SendAsync(peerId, clip).ConfigureAwait(false); }
+        catch (Exception error) { VeyroTrace.Warn($"Clipboard catch-up not sent: {error.GetType().Name}"); }
     }
 
     /// <summary>Incoming clip from a phone. Untrusted input: validated and size-capped.</summary>
@@ -234,6 +336,10 @@ public sealed partial class ClipboardService : IDisposable
         {
             _lastAppliedFingerprint = Fingerprint(text, image);
             _lastImageAppliedAt = image is null ? null : _clock();
+            // ADR-059: the PC clipboard now holds something from a phone, so the last copy is no
+            // longer what is on it and must not be caught up to a phone later.
+            _latestCopy = null;
+            _missed.Clear();
         }
     }
 

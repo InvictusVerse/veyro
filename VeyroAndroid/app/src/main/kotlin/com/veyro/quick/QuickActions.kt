@@ -67,7 +67,8 @@ public data class QuickSnapshot(
                     val isPc = peer.platform != Platform.ANDROID
                     QuickDevice(
                         deviceId = id,
-                        name = peer.name,
+                        // ADR-059: nickname first, as everywhere else.
+                        name = peer.displayName,
                         isPc = isPc,
                         connected = connected,
                         canLock = isPc && connected && id in lockable,

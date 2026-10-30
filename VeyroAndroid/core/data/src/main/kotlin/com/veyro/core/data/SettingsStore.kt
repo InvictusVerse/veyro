@@ -81,6 +81,14 @@ public interface SettingsStore {
 
     public suspend fun setNotificationAutoClearMinutes(minutes: Int) {}
 
+    /**
+     * "Let PCs control flashlight, volume and brightness" (ADR-060). Off by default; separate from
+     * [deviceControlAllowed] (ring and sound mode) so turning one on never grants the other.
+     */
+    public val phoneControlsAllowed: Flow<Boolean> get() = flowOf(false)
+
+    public suspend fun setPhoneControlsAllowed(enabled: Boolean) {}
+
     public companion object {
         public const val DEFAULT_AUTO_CLEAR_MINUTES: Int = 5
 

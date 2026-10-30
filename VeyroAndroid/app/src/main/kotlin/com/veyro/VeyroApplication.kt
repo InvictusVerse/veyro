@@ -48,6 +48,9 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.wallpaperBridge.start()
         // ADR-043. Same rule: clips only travel over a session something else opened.
         container.clipboardBridge.start()
+        // ADR-059. Same rule: names and the auto-fetch switch travel over a session something
+        // else opened; a rename or a toggle reaches every connected device at once.
+        container.deviceInfoSync.start()
         // ADR-043: "Send to <PC>" in the share sheet's top row.
         container.startShareShortcuts()
         // ADR-044: start reading "Clear notifications automatically" now, so the first notification has it.

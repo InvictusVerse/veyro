@@ -48,6 +48,16 @@ public interface IDeviceStatusService
 
     /// <summary>Sends <c>devControl</c>. The phone answers with the resulting <c>devStatus</c>.</summary>
     Task SendControlAsync(string peerId, bool? ring = null, string? ringer = null, bool? dnd = null, CancellationToken ct = default);
+
+    /// <summary>ADR-060: connected and advertising both DeviceStatus and PhoneControls.</summary>
+    bool CanUsePhoneControls(string peerId) => false;
+
+    /// <summary>
+    /// ADR-060: flashlight, media volume (0..100) and brightness (0..100, also turns automatic
+    /// brightness off on the phone) as one <c>devControl</c>. The phone answers with <c>devStatus</c>.
+    /// </summary>
+    Task SendPhoneControlAsync(string peerId, bool? torch = null, int? mediaVolume = null, int? brightness = null, bool? autoBrightness = null, CancellationToken ct = default)
+        => throw new NotSupportedException();
 }
 
 /// <summary>
@@ -112,6 +122,34 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
         await _sessions.SendAsync(peerId, new PeerMessage.DeviceControl(ring, ringer, dnd), ct).ConfigureAwait(false);
     }
 
+    public bool CanUsePhoneControls(string peerId)
+        => CanControl(peerId) && (_sessions.GetPeerCapabilities(peerId) & PeerCapabilities.PhoneControls) != 0;
+
+    public async Task SendPhoneControlAsync(string peerId, bool? torch = null, int? mediaVolume = null, int? brightness = null, bool? autoBrightness = null, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(peerId);
+        if (torch is null && mediaVolume is null && brightness is null && autoBrightness is null)
+            throw new ArgumentException("Nothing to control.");
+        if (mediaVolume is not null and not (>= 0 and <= 100))
+            throw new ArgumentOutOfRangeException(nameof(mediaVolume), "Media volume is 0..100.");
+        if (brightness is not null and not (>= 0 and <= 100))
+            throw new ArgumentOutOfRangeException(nameof(brightness), "Brightness is 0..100.");
+        if (!_sessions.IsConnected(peerId))
+            throw new InvalidOperationException("The phone is not connected.");
+        if (!CanUsePhoneControls(peerId))
+            throw new InvalidOperationException("The phone does not support flashlight, volume and brightness control.");
+        await _sessions.SendAsync(peerId, new PeerMessage.DeviceControl(
+            Torch: torch, MediaVolume: mediaVolume, Brightness: brightness, AutoBrightness: autoBrightness), ct).ConfigureAwait(false);
+    }
+
+    private static readonly HashSet<string> ControlStates =
+    [
+        PhoneControlState.Ok, PhoneControlState.Off, PhoneControlState.Permission, PhoneControlState.Unsupported, PhoneControlState.Busy
+    ];
+
+    /// <summary>A known reason, else null (the UI then says the phone did not report it).</summary>
+    private static string? KnownState(string? value) => value is not null && ControlStates.Contains(value) ? value : null;
+
     public void Dispose()
     {
         _sessions.DeviceStatusReceived -= OnDeviceStatus;
@@ -139,7 +177,15 @@ public sealed class DeviceStatusService : IDeviceStatusService, IDisposable
             Cell: status.Cell is >= -1 and <= 4 ? status.Cell : null,
             Carrier: carrier,
             Bluetooth: status.Bluetooth,
-            MobileData: status.MobileData);
+            MobileData: status.MobileData,
+            // ADR-060: out-of-range levels and unknown reasons become "unknown".
+            Torch: status.Torch,
+            MediaVolume: status.MediaVolume is >= 0 and <= 100 ? status.MediaVolume : null,
+            Brightness: status.Brightness is >= 0 and <= 100 ? status.Brightness : null,
+            AutoBrightness: status.AutoBrightness,
+            Controls: status.Controls is { } controls
+                ? new PhoneControlState(KnownState(controls.Torch), KnownState(controls.Volume), KnownState(controls.Brightness))
+                : null);
         lock (_gate) _phoneStatus[peerId] = sanitized;
         Changed?.Invoke(peerId);
     }

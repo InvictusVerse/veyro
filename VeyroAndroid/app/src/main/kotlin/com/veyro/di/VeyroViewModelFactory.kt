@@ -105,6 +105,7 @@ public class VeyroViewModelFactory(
             batteryOptimizationIgnored = container::isIgnoringBatteryOptimizations,
             onBackgroundSettingChanged = { container.backgroundController.onSettingChanged() },
             keepConnectedIssues = container::keepAliveIssueCount,
+            writeSettingsGranted = container::canWriteSystemSettings,
         ) as T
 
         modelClass.isAssignableFrom(ClipboardViewModel::class.java) -> ClipboardViewModel(

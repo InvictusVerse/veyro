@@ -98,6 +98,33 @@ public sealed partial class DeviceControlCenter : UserControl
         await StatusViewModel.ToggleRingAsync();
     }
 
+    // ADR-060. Like DND: the toggle shows the reported state until the phone's devStatus confirms.
+    private async void Torch_Click(object sender, RoutedEventArgs e)
+    {
+        bool requested = !StatusViewModel.IsTorchOn;
+        TorchToggle.IsChecked = StatusViewModel.IsTorchOn;
+        await StatusViewModel.RequestTorchAsync(requested);
+    }
+
+    // A value equal to the shown one came from the binding (the phone reported it): not a request.
+    private void MediaVolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        int value = (int)Math.Round(e.NewValue);
+        if (value != (int)Math.Round(StatusViewModel.ShownMediaVolume)) StatusViewModel.RequestMediaVolume(value);
+    }
+
+    private void BrightnessSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        int value = (int)Math.Round(e.NewValue);
+        if (value != (int)Math.Round(StatusViewModel.ShownBrightness)) StatusViewModel.RequestBrightness(value);
+    }
+
+    private async void AutoBrightness_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleSwitch toggle && toggle.IsOn != StatusViewModel.IsAutoBrightness)
+            await StatusViewModel.RequestAutoBrightnessAsync(toggle.IsOn);
+    }
+
     private async void MediaPrevious_Click(object sender, RoutedEventArgs e) => await MediaViewModel.PreviousAsync();
 
     private async void MediaPlayPause_Click(object sender, RoutedEventArgs e) => await MediaViewModel.TogglePlayPauseAsync();

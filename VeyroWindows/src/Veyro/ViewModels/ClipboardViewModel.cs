@@ -126,7 +126,27 @@ public sealed class ClipboardViewModel : BaseViewModel
         _settings = settings;
         _phoneName = phoneName;
         _service.Changed += () => App.MainWindow?.DispatcherQueue.TryEnqueue(Reload);
+        _service.ReceivePreferenceChanged += _ => App.MainWindow?.DispatcherQueue.TryEnqueue(RaiseReceiveOff);
         Reload();
+    }
+
+    /// <summary>ADR-059: "Auto-fetch is off on Pixel. ..." while a phone has it off; empty otherwise.</summary>
+    public string ReceiveOffText => ClipboardService.DescribeReceiveOff(
+        _service.PeersWithReceiveOff.Select(id => _phoneName(id) ?? "a phone").ToList()) ?? string.Empty;
+
+    public Visibility ReceiveOffVisibility => string.IsNullOrEmpty(ReceiveOffText) ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>ADR-059: a phone renamed itself; rows and the auto-fetch note show the new name.</summary>
+    public void RefreshNames()
+    {
+        Reload();
+        RaiseReceiveOff();
+    }
+
+    private void RaiseReceiveOff()
+    {
+        OnPropertyChanged(nameof(ReceiveOffText));
+        OnPropertyChanged(nameof(ReceiveOffVisibility));
     }
 
     public ObservableCollection<ClipRowViewModel> Items { get; } = [];

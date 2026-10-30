@@ -64,6 +64,8 @@ import com.veyro.core.companion.ClipboardBridge
 import com.veyro.core.companion.PhotoBridge
 import com.veyro.core.companion.PhotoSender
 import com.veyro.core.link.SendResult
+import com.veyro.core.companion.AndroidPhoneControls
+import com.veyro.core.companion.DeviceInfoSync
 import com.veyro.core.companion.DeviceStatusPublisher
 import com.veyro.core.companion.MediaMirror
 import com.veyro.core.companion.NotificationMirror
@@ -338,13 +340,13 @@ public class VeyroContainer(context: Context) {
         var succeeded = 0
         var cancelled = false
         SendTargets.sendToEach(peers, deviceIds, selected) { target ->
-            names += target.name
+            names += target.displayName
             // ADR-053: sending to a device the user disconnected is asking for it again.
             if (backgroundController.isDisconnectedByUser(target.deviceId.value)) {
                 backgroundController.onUserConnect(target.deviceId.value)
             }
             // SendResult reports failures in the banner; an exception must not skip the rest.
-            val result = runCatching { transferCoordinator.sendTo(target.deviceId, target.name, files) }
+            val result = runCatching { transferCoordinator.sendTo(target.deviceId, target.displayName, files) }
                 .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                 .getOrNull()
             if (result is SendResult.Success) succeeded++
@@ -372,7 +374,8 @@ public class VeyroContainer(context: Context) {
                             .thenByDescending { maxOf(it.lastConnectedEpochMillis, it.pairedAtEpochMillis) },
                     )
             }
-                .distinctUntilChanged { a, b -> a.map { it.deviceId to it.name } == b.map { it.deviceId to it.name } }
+                // ADR-059: a rename (the device's own or a nickname) republishes at once.
+                .distinctUntilChanged { a, b -> a.map { it.deviceId to it.displayName } == b.map { it.deviceId to it.displayName } }
                 .collect { ShareShortcuts.publish(appContext, it) }
         }
     }
@@ -492,6 +495,8 @@ public class VeyroContainer(context: Context) {
             rememberAutoAccept = { deviceId ->
                 if (trustStore.find(deviceId)?.revoked == false) trustStore.setAutoAccept(deviceId, true)
             },
+            // ADR-059: the prompt names a paired sender as Devices does (nickname first).
+            peerDisplayName = { deviceId -> trustStore.find(deviceId)?.takeUnless { it.revoked }?.displayName },
         )
     }
 
@@ -704,7 +709,7 @@ public class VeyroContainer(context: Context) {
         appScope.launch {
             val sent = runCatching { lockPc(deviceId) }.getOrDefault(false)
             val label = name
-                ?: DeviceId.parseOrNull(deviceId)?.let { runCatching { trustStore.find(it)?.name }.getOrNull() }
+                ?: DeviceId.parseOrNull(deviceId)?.let { runCatching { trustStore.find(it)?.displayName }.getOrNull() }
                 ?: "your PC"
             withContext(dispatchers.main) { onResult(com.veyro.quick.QuickActions.lockToast(sent, label)) }
         }
@@ -760,7 +765,10 @@ public class VeyroContainer(context: Context) {
         AndroidDeviceController(appContext, dispatchers)
     }
 
-    /** This phone's battery/ringer/DND to the PC, the PC's status back, and ring-my-phone. */
+    /**
+     * This phone's battery/ringer/DND to the PC, the PC's status back, and ring-my-phone; with a
+     * PC, also flashlight, media volume and brightness (ADR-060, behind its own switch).
+     */
     public val deviceStatusPublisher: DeviceStatusPublisher by lazy {
         DeviceStatusPublisher(
             links = companionLinks,
@@ -768,8 +776,25 @@ public class VeyroContainer(context: Context) {
             source = AndroidDeviceStatusSource(appContext),
             controller = deviceController,
             peerName = { id ->
-                DeviceId.parseOrNull(id)?.let { runCatching { trustStore.find(it)?.name }.getOrNull() }
+                DeviceId.parseOrNull(id)?.let { runCatching { trustStore.find(it)?.displayName }.getOrNull() }
             },
+            scope = appScope,
+            phoneControls = AndroidPhoneControls(appContext, dispatchers),
+            phoneControlsAllowed = flow { emitAll(settingsStore.phoneControlsAllowed) },
+        )
+    }
+
+    /**
+     * Live device names and the auto-fetch switch (ADR-059): this phone's name and "Auto-fetch
+     * clipboard" go to every connected device at once and on every connect; each device's own
+     * name is stored when it announces a new one. A nickname given here is kept.
+     */
+    public val deviceInfoSync: DeviceInfoSync by lazy {
+        DeviceInfoSync(
+            links = companionLinks,
+            localName = flow { emitAll(settingsStore.deviceName) },
+            clipReceive = flow { emitAll(settingsStore.clipboardReceiveEnabled) },
+            storeAnnouncedName = { id, name -> DeviceId.parseOrNull(id)?.let { trustStore.setAnnouncedName(it, name) } },
             scope = appScope,
         )
     }
@@ -777,6 +802,9 @@ public class VeyroContainer(context: Context) {
     /** Whether Do Not Disturb access is granted, for the Settings row. */
     public fun isPolicyAccessGranted(): Boolean =
         AndroidDeviceController.isPolicyAccessGranted(appContext)
+
+    /** Whether "Modify system settings" is granted (brightness from the PC, ADR-060). */
+    public fun canWriteSystemSettings(): Boolean = AndroidPhoneControls.canWriteSettings(appContext)
 
     // ── Companion: SMS and calls (ADR-027) ────────────────────────────────────────────────
 
@@ -861,7 +889,7 @@ public class VeyroContainer(context: Context) {
 
     private suspend fun clipSourceName(peerId: String?): String =
         peerId?.let { com.veyro.core.model.DeviceId.parseOrNull(it) }
-            ?.let { runCatching { trustStore.find(it) }.getOrNull()?.name }
+            ?.let { runCatching { trustStore.find(it) }.getOrNull()?.displayName }
             ?: "your PC"
 
     /** The virtual clipboard as Clipboard-screen rows; image previews decoded off the main thread. */

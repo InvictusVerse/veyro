@@ -1,0 +1,37 @@
+{
+  "description": "Live device names, the clipboard-receive preference (ADR-059, deviceInfo, DEVICE_INFO 0x200000) and phone controls (ADR-060, devStatus/devControl fields, PHONE_CONTROLS 0x40000). Each 'json' is the LinkMessage payload as LinkJson encodes it (discriminator 't', nulls omitted). Both clients must decode each entry to the listed type and re-encode to semantically identical JSON. 'names' is the shared name rule: every 'accept' input cleans to its expected value, every 'reject' input is refused.",
+  "vectors": [
+    { "type": "deviceInfo", "json": "{\"t\":\"deviceInfo\",\"name\":\"Office PC\"}" },
+    { "type": "deviceInfo", "json": "{\"t\":\"deviceInfo\",\"name\":\"Pixel 9\",\"clipReceive\":false}" },
+    { "type": "deviceInfo", "json": "{\"t\":\"deviceInfo\",\"clipReceive\":true}" },
+    {
+      "type": "devStatus",
+      "json": "{\"t\":\"devStatus\",\"battery\":64,\"charging\":false,\"torch\":false,\"mediaVolume\":40,\"brightness\":75,\"autoBrightness\":true,\"controls\":{\"torch\":\"ok\",\"volume\":\"ok\",\"brightness\":\"permission\"}}"
+    },
+    {
+      "type": "devStatus",
+      "json": "{\"t\":\"devStatus\",\"mediaVolume\":0,\"brightness\":0,\"autoBrightness\":false,\"controls\":{\"torch\":\"unsupported\",\"volume\":\"off\",\"brightness\":\"off\"}}"
+    },
+    { "type": "devControl", "json": "{\"t\":\"devControl\",\"torch\":true}" },
+    { "type": "devControl", "json": "{\"t\":\"devControl\",\"mediaVolume\":55,\"brightness\":30,\"autoBrightness\":false}" }
+  ],
+  "names": {
+    "accept": [
+      ["Office PC", "Office PC"],
+      ["  Pixel 9 \t", "Pixel 9"],
+      ["A", "A"],
+      ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+      ["\u66f8\u658e\u306ePC", "\u66f8\u658e\u306ePC"]
+    ],
+    "reject": [
+      "",
+      "   ",
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "Bell\u0007",
+      "Two\nlines",
+      "Next\u0085line",
+      "Right\u202eto left",
+      "Isolate\u2066x\u2069"
+    ]
+  }
+}

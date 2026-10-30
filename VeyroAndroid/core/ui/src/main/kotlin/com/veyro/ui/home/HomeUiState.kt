@@ -192,7 +192,8 @@ public data class HomeUiState(
                 }
                 PairedDeviceUi(
                     deviceId = peer.deviceId,
-                    name = peer.name,
+                    // ADR-059: the nickname given here, else the name the device gives itself.
+                    name = peer.displayName,
                     platform = peer.platform,
                     status = status,
                     battery = if (connected) pcStatus?.battery else null,

@@ -79,7 +79,7 @@ public static class ExplorerMenu
     private sealed record TrustEnvelope(string PayloadJson);
 
     // Names and ids only: the pairing secret and keys are not read into this process.
-    private sealed record TrustEntry(string DeviceId, string DisplayName, DateTimeOffset PairedAt);
+    private sealed record TrustEntry(string DeviceId, string DisplayName, DateTimeOffset PairedAt, string? Nickname = null);
 
     /// <summary>
     /// Paired phones for menu labels when Veyro is not running, read from trust.json without the
@@ -99,7 +99,7 @@ public static class ExplorerMenu
             var peers = entries
                 .Where(entry => entry.DeviceId is not null && HandoffCodec.IsPlausibleDeviceId(entry.DeviceId))
                 .Select(entry => new TrustedPeer(entry.DeviceId, entry.DisplayName ?? string.Empty, PlatformType.Unknown,
-                    string.Empty, string.Empty, false, entry.PairedAt));
+                    string.Empty, string.Empty, false, entry.PairedAt, Nickname: entry.Nickname));
             return PairedDeviceDirectory.Build(peers, _ => false)
                 .Select(device => new SendCandidate(device.DeviceId, device.DisplayName, false))
                 .ToList();

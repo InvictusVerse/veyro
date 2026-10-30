@@ -1,3 +1,4 @@
+using Veyro.Core.Devices;
 using Veyro.Core.Diagnostics;
 using Veyro.Platform.Calling;
 using Veyro.Platform.Interop;
@@ -38,6 +39,7 @@ public sealed class VeyroContainer
     public SessionKeeper SessionKeeper { get; }
     public IWindowsNetworkChangeSignal NetworkChangeSignal { get; }
     public DeviceStatusService DeviceStatus { get; }
+    public DeviceNameService DeviceNames { get; }
     public WallpaperService Wallpaper { get; }
     public MessagingService Messaging { get; }
     public CallService Calls { get; }
@@ -123,7 +125,10 @@ public sealed class VeyroContainer
             imagesEnabled: () => SettingsStore.Current.SyncClipboardImages);
         WindowsClipboard = new WindowsClipboard(Clipboard, () => SettingsStore.Current.SyncClipboardImages);
         Clipboard.Sink = WindowsClipboard;
-        Clipboard.Notifier = new ClipboardToasts(peerId => TrustStore.GetPeer(peerId)?.DisplayName);
+        Clipboard.Notifier = new ClipboardToasts(peerId => TrustStore.GetPeer(peerId)?.ShownName);
+        // ADR-059: this PC's name goes to every connected phone on connect and after a rename; each
+        // phone's own name is stored whenever it announces a new one (a nickname is kept).
+        DeviceNames = new DeviceNameService(PeerSessions, TrustStore, () => SettingsStore.Current.DeviceName);
         // ADR-027: in-memory only, cleared when the phone's session closes.
         Messaging = new MessagingService(PeerSessions);
         Calls = new CallService(PeerSessions);
@@ -166,6 +171,19 @@ public sealed class VeyroContainer
         ThemeModeService = new AppThemeModeService();
         // Paired phones from the trust store, connected state from the live sessions.
         DeviceManager = new DeviceManagerService(TrustStore, DiscoveryService, PeerSessions, SessionKeeper);
+        // ADR-059: a phone renamed itself: sidebar, device list and headers follow at once; toasts
+        // and the consent prompt read the trust store when they show.
+        DeviceNames.PeerNameChanged += DeviceManager.RefreshName;
+        // This PC renamed in Settings: new hellos and pairing replies carry it, open sessions hear it.
+        string announcedName = SettingsStore.Current.DeviceName;
+        SettingsStore.SettingsChanged += settings =>
+        {
+            if (settings.DeviceName == announcedName) return;
+            announcedName = settings.DeviceName;
+            LinkServer.SetLocalName(settings.DeviceName);
+            (DiscoveryService as UdpDiscoveryService)?.SetLocalName(settings.DeviceName);
+            DeviceNames.LocalNameChanged();
+        };
         // ADR-034: sends over the phone's live session; dials only when there is none.
         FileTransferService = new FileTransferService(HistoryStore, TrustStore, IdentityManager, SettingsStore, (DeviceManagerService)DeviceManager, PeerSessions);
         // ADR-047: what Veyro may do in the background (polling, EcoQoS), from three facts.
@@ -182,7 +200,7 @@ public sealed class VeyroContainer
             openThread: (peerId, threadId) => MessagesViewModel!.RequestOpenThread(peerId, threadId),
             DataDirectory,
             // ADR-040: toasts name their phone; opening one shows that phone (UI thread).
-            phoneName: peerId => TrustStore.GetPeer(peerId)?.DisplayName,
+            phoneName: peerId => TrustStore.GetPeer(peerId)?.ShownName,
             showPhone: peerId => DeviceManager.Select(peerId),
             // ADR-063: Copy code goes through the clipboard service, so it is not echoed to the phones.
             copyText: Clipboard.CopyTextToPcAsync,
@@ -203,7 +221,8 @@ public sealed class VeyroContainer
         CallsPageViewModel = new CallsPageViewModel(Calls, CallRouter, DeviceManager);
         BluetoothCallingViewModel = new BluetoothCallingViewModel(BluetoothCalling, DeviceManager);
         PhotosViewModel = new PhotosViewModel(Photos, DeviceManager);
-        ClipboardViewModel = new ClipboardViewModel(Clipboard, SettingsStore, peerId => TrustStore.GetPeer(peerId)?.DisplayName);
+        ClipboardViewModel = new ClipboardViewModel(Clipboard, SettingsStore, peerId => TrustStore.GetPeer(peerId)?.ShownName);
+        DeviceNames.PeerNameChanged += _ => App.MainWindow?.DispatcherQueue.TryEnqueue(ClipboardViewModel.RefreshNames);
         GeneralViewModel = new GeneralViewModel(IdentityManager, SettingsStore, LoginStartup, SystemTrayService);
         DevicesViewModel = new DevicesViewModel(DeviceManager, TrustStore, PeerSessions);
         NotificationRulesViewModel = new NotificationRulesViewModel(NotificationRules);

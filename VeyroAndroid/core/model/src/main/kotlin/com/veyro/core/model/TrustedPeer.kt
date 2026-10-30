@@ -39,11 +39,21 @@ public data class TrustedPeer(
     val autoAcceptTransfers: Boolean = false,
 
     val revoked: Boolean = false,
+
+    /**
+     * What the user here calls this device (Devices > Rename), or null (ADR-059). [name] is the
+     * name the device announces for itself and follows its renames; the nickname is local and
+     * stays when the device announces a new name.
+     */
+    val nickname: String? = null,
 ) {
     init {
         require(staticPublicKey.size == 32) { "static public key must be 32 bytes" }
         require(pairingSecret.size == 32) { "pairing secret must be 32 bytes" }
     }
+
+    /** What every screen and notification shows: the nickname when set, else the device's own name. */
+    public val displayName: String get() = nickname ?: name
 
     /** Guards against a trust record whose id does not actually commit to its key. */
     public fun isSelfConsistent(): Boolean = DeviceId.matches(deviceId, staticPublicKey)
@@ -61,7 +71,8 @@ public data class TrustedPeer(
             pairedAtEpochMillis == other.pairedAtEpochMillis &&
             lastConnectedEpochMillis == other.lastConnectedEpochMillis &&
             autoAcceptTransfers == other.autoAcceptTransfers &&
-            revoked == other.revoked
+            revoked == other.revoked &&
+            nickname == other.nickname
     }
 
     override fun hashCode(): Int {
@@ -74,6 +85,7 @@ public data class TrustedPeer(
         result = 31 * result + lastConnectedEpochMillis.hashCode()
         result = 31 * result + autoAcceptTransfers.hashCode()
         result = 31 * result + revoked.hashCode()
+        result = 31 * result + (nickname?.hashCode() ?: 0)
         return result
     }
 

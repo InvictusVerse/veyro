@@ -40,7 +40,8 @@ public interface IPeerSessionRegistry
 
     /// <summary>
     /// ADR-038 phone-to-PC messages: <c>pcLock</c> (only from a peer still in the trust store) and
-    /// <c>wallpaper</c>. Wallpaper bytes are user data.
+    /// <c>wallpaper</c>, <c>clip</c>, and ADR-059 <c>deviceInfo</c> (unvalidated). Wallpaper bytes,
+    /// clips and names are user data.
     /// </summary>
     event Action<string, PeerMessage>? DeviceMessageReceived;
 
@@ -51,6 +52,13 @@ public interface IPeerSessionRegistry
 
     /// <summary>Capability bits from the peer's Hello/HelloAck, or 0 when unknown or not connected.</summary>
     int GetPeerCapabilities(string peerId);
+
+    /// <summary>
+    /// ADR-059: the name in the peer's latest Hello/HelloAck on its live session, unvalidated, or
+    /// null. Set before the capabilities, so a <see cref="CapabilitiesChanged"/> handler sees it.
+    /// User data: never log it.
+    /// </summary>
+    string? GetPeerName(string peerId) => null;
 
     /// <summary>Sends over the peer's live session. Throws if the peer has no session.</summary>
     Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default);
@@ -98,6 +106,11 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     public int GetPeerCapabilities(string peerId)
     {
         lock (_gate) return _sessions.TryGetValue(peerId, out var registration) ? registration.Capabilities : 0;
+    }
+
+    public string? GetPeerName(string peerId)
+    {
+        lock (_gate) return _sessions.TryGetValue(peerId, out var registration) ? registration.PeerName : null;
     }
 
     public async Task SendAsync(string peerId, PeerMessage message, CancellationToken ct = default)
@@ -180,10 +193,10 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
         return true;
     }
 
-    /// <summary>Routes an ADR-038 pcLock or wallpaper. Returns false for any other type.</summary>
+    /// <summary>Routes an ADR-038 pcLock or wallpaper, a clip, or an ADR-059 deviceInfo. Returns false for any other type.</summary>
     internal bool PublishDeviceMessage(string peerId, PeerMessage message)
     {
-        if (message is not (PeerMessage.PcLock or PeerMessage.Wallpaper or PeerMessage.Clip)) return false;
+        if (message is not (PeerMessage.PcLock or PeerMessage.Wallpaper or PeerMessage.Clip or PeerMessage.DeviceInfo)) return false;
         Publish(DeviceMessageReceived, peerId, message, nameof(DeviceMessageReceived));
         return true;
     }
@@ -261,6 +274,15 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
 
         /// <summary>Outbound transfers waiting on this session's replies (ADR-034).</summary>
         public TransferMailbox Transfers { get; } = new();
+
+        private string? _peerName;
+
+        /// <summary>ADR-059: the name in the peer's latest Hello/HelloAck. Written by the receive loop.</summary>
+        public string? PeerName
+        {
+            get => Volatile.Read(ref _peerName);
+            set => Volatile.Write(ref _peerName, value);
+        }
 
         /// <summary>Written only by the session's receive loop; a change raises CapabilitiesChanged.</summary>
         public int Capabilities

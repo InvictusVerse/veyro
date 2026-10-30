@@ -3,6 +3,7 @@ package com.veyro.core.companion
 import com.veyro.core.link.PeerMessage
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
+import com.veyro.core.model.Platform
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -21,7 +22,11 @@ import java.util.Base64
 @OptIn(ExperimentalCoroutinesApi::class)
 class ClipboardBridgeTest {
 
-    private class FakeLink(caps: Capabilities, override val peerDeviceId: String = "PC-A") : CompanionLink {
+    private class FakeLink(
+        caps: Capabilities,
+        override val peerDeviceId: String = "PC-A",
+        override val peerPlatform: Platform = Platform.WINDOWS,
+    ) : CompanionLink {
         val inbound = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 64)
         val sent = mutableListOf<PeerMessage>()
         override val peerCapabilities: Flow<Capabilities> = MutableStateFlow(caps)
@@ -156,7 +161,7 @@ class ClipboardBridgeTest {
     }
 
     @Test
-    fun `auto-fetch off keeps nothing`() = runTest {
+    fun `auto-fetch off keeps none of a PC's copies`() = runTest {
         val a = FakeLink(clipCaps)
         val rig = rig(a)
         rig.enabled.value = false
@@ -166,6 +171,38 @@ class ClipboardBridgeTest {
         assertFalse(rig.shown.isNotEmpty())
     }
 
+    @Test
+    fun `auto-fetch off still keeps what was sent on purpose`() = runTest {
+        // ADR-059: a share (apply = true) from a PC, and anything from another phone, which never
+        // sends copies by itself, are kept and notified while the switch is off.
+        val pc = FakeLink(clipCaps, "PC-A")
+        val phone = FakeLink(clipCaps, "PHONE-B", Platform.ANDROID)
+        val rig = rig(pc, phone)
+        rig.enabled.value = false
+        pc.inbound.emit(PeerMessage.Clip("copy", PeerMessage.Clip.KIND_TEXT, text = "a PC copy"))
+        pc.inbound.emit(PeerMessage.Clip("share", PeerMessage.Clip.KIND_TEXT, text = "shared from the PC", apply = true))
+        phone.inbound.emit(PeerMessage.Clip("sent", PeerMessage.Clip.KIND_TEXT, text = "https://example.com", apply = true))
+        phone.inbound.emit(PeerMessage.Clip("button", PeerMessage.Clip.KIND_TEXT, text = "the other phone's clipboard"))
+        runCurrent()
+
+        assertEquals(listOf("button", "sent", "share"), rig.bridge.history.value.map { it.id })
+        assertEquals(3, rig.shown.size)
+    }
+
+    @Test
+    fun `turning auto-fetch back on keeps the next copy, without a reconnect`() = runTest {
+        val pc = FakeLink(clipCaps, "PC-A")
+        val rig = rig(pc)
+        rig.enabled.value = false
+        pc.inbound.emit(PeerMessage.Clip("1", PeerMessage.Clip.KIND_TEXT, text = "dropped"))
+        runCurrent()
+        rig.enabled.value = true
+        pc.inbound.emit(PeerMessage.Clip("2", PeerMessage.Clip.KIND_TEXT, text = "kept"))
+        pc.inbound.emit(PeerMessage.Clip("2", PeerMessage.Clip.KIND_TEXT, text = "kept"))
+        runCurrent()
+        assertEquals(listOf("2"), rig.bridge.history.value.map { it.id })
+        assertEquals(1, rig.shown.size)
+    }
     @Test
     fun `history keeps the newest 50, and remove and clear work`() = runTest {
         val a = FakeLink(clipCaps)

@@ -152,7 +152,7 @@ public class BackgroundController(
             peers
                 .filter { !it.revoked && it.platform in KEPT_PLATFORMS && it.deviceId.value !in paused }
                 .sortedWith(compareByDescending<TrustedPeer> { it.lastConnectedEpochMillis }.thenByDescending { it.pairedAtEpochMillis })
-                .map { KeepTarget(it.deviceId.value, it.name) }
+                .map { KeepTarget(it.deviceId.value, it.displayName) }
         }.distinctUntilChanged()
     }
 

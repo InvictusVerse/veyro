@@ -27,7 +27,7 @@ public sealed class TransferConsentUi(INotificationToastService toasts) : ITrans
 
     public Task<ConsentAnswer?> ShowNotificationAsync(InboundOfferRequest request, CancellationToken ct)
         => toasts.ShowTransferRequestAsync(
-            request.Peer.DisplayName,
+            request.Peer.ShownName,
             request.Offer.Items.Count(item => !item.IsDir),
             request.Offer.TotalBytes,
             ct);
@@ -61,7 +61,7 @@ public sealed class TransferConsentUi(INotificationToastService toasts) : ITrans
                     {
                         new TextBlock
                         {
-                            Text = $"{request.Peer.DisplayName} wants to send {(count == 1 ? "1 file" : $"{count:N0} files")} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)}).",
+                            Text = $"{request.Peer.ShownName} wants to send {(count == 1 ? "1 file" : $"{count:N0} files")} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)}).",
                             TextWrapping = TextWrapping.Wrap
                         },
                         always,

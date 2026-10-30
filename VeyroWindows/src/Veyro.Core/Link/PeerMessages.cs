@@ -126,6 +126,30 @@ public static class PeerCapabilities
     public const int Calls = 0x1000;
     public const int Photos = 0x2000;
     public const int Wallpaper = 0x4000;
+    /// <summary>ADR-060: flashlight, media volume and brightness in devStatus / devControl. PC to phone only.</summary>
+    public const int PhoneControls = 0x40000;
+    /// <summary>ADR-059: deviceInfo, the sender's own name (and a phone's clipboard-receive switch).</summary>
+    public const int DeviceInfo = 0x200000;
+}
+
+/// <summary>
+/// ADR-060, in devStatus.controls: per control "ok" or why the PC cannot change it now. An absent
+/// entry or an unknown value means "not available". Mirrors Kotlin PeerMessage.PhoneControlState.
+/// </summary>
+public sealed record PhoneControlState(
+    [property: JsonPropertyName("torch")] string? Torch = null,
+    [property: JsonPropertyName("volume")] string? Volume = null,
+    [property: JsonPropertyName("brightness")] string? Brightness = null)
+{
+    public const string Ok = "ok";
+    /// <summary>The phone's "Let PCs control flashlight, volume and brightness" switch is off.</summary>
+    public const string Off = "off";
+    /// <summary>The phone needs a system grant first (brightness: "Modify system settings").</summary>
+    public const string Permission = "permission";
+    /// <summary>No flashlight, or a fixed-volume phone.</summary>
+    public const string Unsupported = "unsupported";
+    /// <summary>Another app holds the flashlight (camera open).</summary>
+    public const string Busy = "busy";
 }
 
 public sealed record PhotoInfo(
@@ -265,6 +289,7 @@ public sealed record LinkItem(
 [JsonDerivedType(typeof(Unpair), "unpair")]
 [JsonDerivedType(typeof(Clip), "clip")]
 [JsonDerivedType(typeof(Wallpaper), "wallpaper")]
+[JsonDerivedType(typeof(DeviceInfo), "deviceInfo")]
 public abstract record PeerMessage
 {
     // ── Companion: notification mirroring (ADR-025) ──────────────────────────────────────
@@ -352,7 +377,28 @@ public abstract record PeerMessage
         /// <summary>Carrier of the data SIM. User data: never log.</summary>
         [property: JsonPropertyName("carrier")] string? Carrier = null,
         [property: JsonPropertyName("bluetooth")] bool? Bluetooth = null,
-        [property: JsonPropertyName("mobileData")] bool? MobileData = null) : PeerMessage;
+        [property: JsonPropertyName("mobileData")] bool? MobileData = null,
+        // ADR-060, from a phone that advertises PhoneControls (04-PROTOCOL.md 6.2.2).
+        /// <summary>Flashlight on. Absent when the phone has no flashlight or cannot tell.</summary>
+        [property: JsonPropertyName("torch")] bool? Torch = null,
+        /// <summary>Media stream volume, 0..100 percent of the stream's range.</summary>
+        [property: JsonPropertyName("mediaVolume")] int? MediaVolume = null,
+        /// <summary>Screen brightness setting, 0..100 percent of its range.</summary>
+        [property: JsonPropertyName("brightness")] int? Brightness = null,
+        [property: JsonPropertyName("autoBrightness")] bool? AutoBrightness = null,
+        /// <summary>Whether each control can be changed from the PC now, and if not, why.</summary>
+        [property: JsonPropertyName("controls")] PhoneControlState? Controls = null) : PeerMessage;
+
+    /// <summary>
+    /// Either direction (ADR-059, 04-PROTOCOL.md 6.7), gated by PeerCapabilities.DeviceInfo: the
+    /// sender's own details, on connect and whenever one changes. Each field is applied on its own.
+    /// Names are user data: never log them.
+    /// </summary>
+    public sealed record DeviceInfo(
+        /// <summary>The name the sender's user gave it, 1..64 chars, no control characters.</summary>
+        [property: JsonPropertyName("name")] string? Name = null,
+        /// <summary>Phone only: false asks this PC not to send its automatic copies (clip, apply = false).</summary>
+        [property: JsonPropertyName("clipReceive")] bool? ClipReceive = null) : PeerMessage;
 
     /// <summary>Phone to PC: lock this PC (Phone Link "Lock PC").</summary>
     public sealed record PcLock : PeerMessage;
@@ -493,7 +539,13 @@ public abstract record PeerMessage
         /// <summary>True: ring at full volume until stopped or 30 s. False: stop.</summary>
         [property: JsonPropertyName("ring")] bool? Ring = null,
         [property: JsonPropertyName("ringer")] string? Ringer = null,
-        [property: JsonPropertyName("dnd")] bool? Dnd = null) : PeerMessage;
+        [property: JsonPropertyName("dnd")] bool? Dnd = null,
+        // ADR-060, only to a phone that advertises PhoneControls. 0..100; the phone ignores others.
+        [property: JsonPropertyName("torch")] bool? Torch = null,
+        [property: JsonPropertyName("mediaVolume")] int? MediaVolume = null,
+        /// <summary>Also turns automatic brightness off on the phone.</summary>
+        [property: JsonPropertyName("brightness")] int? Brightness = null,
+        [property: JsonPropertyName("autoBrightness")] bool? AutoBrightness = null) : PeerMessage;
 
     /// <summary>Sent by the pairing initiator, under the PIN-derived bootstrap key.</summary>
     public sealed record PairHello(

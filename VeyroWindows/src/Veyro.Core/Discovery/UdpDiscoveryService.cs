@@ -20,7 +20,8 @@ public sealed class UdpDiscoveryService : IDiscoveryService
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(4);
 
     private readonly string _localDeviceId;
-    private readonly string _localName;
+    // ADR-059: follows Settings; only advertised in open mode (pairing).
+    private volatile string _localName;
     private readonly byte[] _tokenKey;
     private readonly Func<int> _controlPort;
     private readonly Func<bool> _privateMode;
@@ -61,6 +62,12 @@ public sealed class UdpDiscoveryService : IDiscoveryService
         _announceFast = announceFast ?? (() => true);
         if (_tokenKey.Length == 0) throw new ArgumentException("Discovery token key is required.", nameof(tokenKey));
         if (_publicKey.Length != 32) throw new ArgumentException("X25519 public key must be 32 bytes.", nameof(publicKey));
+    }
+
+    /// <summary>ADR-059: this PC was renamed in Settings; the next pairing beacon carries the new name.</summary>
+    public void SetLocalName(string name)
+    {
+        if (Veyro.Core.Devices.DeviceNames.Clean(name) is { } clean) _localName = clean;
     }
 
     public IReadOnlyList<PeerDevice> DiscoveredPeers
