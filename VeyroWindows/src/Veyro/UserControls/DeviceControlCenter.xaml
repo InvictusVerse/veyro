@@ -383,7 +383,7 @@
                 <FontIcon FontSize="20" Glyph="{x:Bind StatusViewModel.SoundGlyph, Mode=OneWay}" />
                 <Button.Flyout>
                     <Flyout x:Name="AudioFlyout" Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
-                        <StackPanel MinWidth="260" Spacing="8">
+                        <StackPanel Width="300" Spacing="8">
                             <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Sound" />
                             <Grid ColumnSpacing="4">
                                 <Grid.ColumnDefinitions>
@@ -580,7 +580,7 @@
                     <FontIcon FontSize="20" Glyph="&#xE995;" />
                     <Button.Flyout>
                         <Flyout Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
-                            <StackPanel MinWidth="260" Spacing="8">
+                            <StackPanel Width="280" Spacing="8">
                                 <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Media volume on the phone" />
                                 <Slider
                                     AutomationProperties.Name="Phone media volume"
@@ -608,7 +608,8 @@
                     <FontIcon FontSize="20" Glyph="&#xE706;" />
                     <Button.Flyout>
                         <Flyout Opened="PaneFlyout_Opened" ShouldConstrainToRootBounds="False">
-                            <StackPanel MinWidth="260" Spacing="8">
+                            <!--  A fixed width, so the note below wraps instead of widening the flyout.  -->
+                            <StackPanel Width="280" Spacing="8">
                                 <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Screen brightness on the phone" />
                                 <Slider
                                     AutomationProperties.Name="Phone screen brightness"

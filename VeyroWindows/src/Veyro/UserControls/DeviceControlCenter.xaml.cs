@@ -161,7 +161,15 @@ public sealed partial class DeviceControlCenter : UserControl
         if (sender is Flyout flyout) CenterFlyout(flyout);
     }
 
-    /// <summary>Centres a flyout on the sidebar pane, as Sefirah does.</summary>
+    /// <summary>Space kept between a flyout and the window's edges.</summary>
+    private const double FlyoutEdgeMargin = 12;
+
+    /// <summary>
+    /// Centres a flyout on the sidebar pane, as Sefirah does, but never past the window's edges:
+    /// a flyout wider than the pane used to be centred out over the left edge (the brightness one
+    /// was cut off when Veyro sat at the screen's left). It is kept <see cref="FlyoutEdgeMargin"/>
+    /// inside the window instead.
+    /// </summary>
     private void CenterFlyout(Flyout flyout)
     {
         if ((flyout.Content as FrameworkElement)?.Parent is not FlyoutPresenter presenter) return;
@@ -171,6 +179,13 @@ public sealed partial class DeviceControlCenter : UserControl
         {
             Rect pane = Root.TransformToVisual(presenter).TransformBounds(new Rect(0, 0, Root.ActualWidth, Root.ActualHeight));
             double offsetX = pane.X + (pane.Width / 2) - (presenter.ActualWidth / 2);
+            if (XamlRoot?.Content is FrameworkElement window && window.ActualWidth > 0)
+            {
+                Rect bounds = window.TransformToVisual(presenter).TransformBounds(new Rect(0, 0, window.ActualWidth, window.ActualHeight));
+                double min = bounds.X + FlyoutEdgeMargin;
+                double max = bounds.X + bounds.Width - presenter.ActualWidth - FlyoutEdgeMargin;
+                offsetX = max < min ? min : Math.Clamp(offsetX, min, max);
+            }
             presenter.Translation = new Vector3((float)offsetX, 0, 0);
         }
         catch (InvalidOperationException)
