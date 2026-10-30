@@ -105,18 +105,29 @@ public class TransferNotifier(
 
     private suspend fun showResult(t: ActiveTransfer) {
         val name = t.peerDisplayName ?: "your PC"
-        val what = if (t.totalFiles == 1) t.currentFileName else "${t.totalFiles} files"
+        val folderName = t.folderName
+        val what = when {
+            folderName != null -> com.veyro.core.link.folderSummary(folderName, t.totalFiles) // ADR-064
+            t.totalFiles == 1 -> t.currentFileName
+            else -> "${t.totalFiles} files"
+        }
         if (t.direction == TransferDirection.SEND) {
             showSendResult(t, name, what)
             return
         }
         when (t.stage) {
             TransferStage.COMPLETED -> {
-                val folder = if (t.totalFiles == 1) ReceivedFolders.pathFor(t.currentFileName) else ReceivedFolders.ROOT
+                // A received folder: Show in folder opens its top folder (ADR-064).
+                val single = t.totalFiles == 1 && folderName == null
+                val folder = when {
+                    folderName != null -> "${ReceivedFolders.ROOT}/$folderName"
+                    single -> ReceivedFolders.pathFor(t.currentFileName)
+                    else -> ReceivedFolders.ROOT
+                }
                 val uri = t.destinationUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
-                val thumb = uri?.takeIf { t.totalFiles == 1 }?.let { thumbnail(it) }
+                val thumb = uri?.takeIf { single }?.let { thumbnail(it) }
                 val pills = listOfNotNull(
-                    uri?.takeIf { t.totalFiles == 1 }?.let { NotificationCard.Pill("Open", openFile(it), NotificationCard.Glyph.OPEN) },
+                    uri?.takeIf { single }?.let { NotificationCard.Pill("Open", openFile(it), NotificationCard.Glyph.OPEN) },
                     NotificationCard.Pill("Show in folder", openFolder(folder), NotificationCard.Glyph.FOLDER),
                 )
                 cards.show(

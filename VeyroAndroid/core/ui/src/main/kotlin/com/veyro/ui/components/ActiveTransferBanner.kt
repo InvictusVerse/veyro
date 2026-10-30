@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.core.link.folderSummary
 import com.veyro.core.model.ActiveTransfer
 import com.veyro.core.model.TransferDirection
 import com.veyro.core.model.TransferStage
@@ -273,9 +274,13 @@ public fun bannerTitle(transfer: ActiveTransfer): String {
     }
 }
 
-/** The file line: the current file's name, or how many files. Banner and notification. */
+/**
+ * The file line: "Photos folder, 120 files" for a folder (ADR-064), else the current file's name,
+ * or how many files. Banner and notification.
+ */
 public fun bannerFileLine(transfer: ActiveTransfer): String =
-    transfer.currentFileName.ifEmpty { if (transfer.totalFiles > 1) "${transfer.totalFiles} files" else "Files" }
+    transfer.folderName?.let { folderSummary(it, transfer.totalFiles) }
+        ?: transfer.currentFileName.ifEmpty { if (transfer.totalFiles > 1) "${transfer.totalFiles} files" else "Files" }
 
 /**
  * The line under the bar: bytes, speed, time left and which file while running; the outcome when

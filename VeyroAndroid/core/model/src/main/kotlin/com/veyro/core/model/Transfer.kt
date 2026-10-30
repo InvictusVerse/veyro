@@ -37,6 +37,17 @@ public data class Transfer(
     val itemCount: Int get() = items.count { !it.isDirectory }
 }
 
+/**
+ * The top folder of a folder transfer (ADR-064): every item sits under one first segment, and at
+ * least one is nested or is a directory. Null for loose files or a mix. For wording only; a path
+ * is validated (REQ-T11) before it is used for anything else.
+ */
+public fun List<TransferItem>.folderName(): String? {
+    val top = firstOrNull()?.relativePath?.substringBefore('/')?.takeIf { it.isNotEmpty() } ?: return null
+    val allUnder = all { it.relativePath.startsWith("$top/") || (it.isDirectory && it.relativePath == top) }
+    return top.takeIf { allUnder && any { item -> item.isDirectory || '/' in item.relativePath } }
+}
+
 public enum class TransferDirection { SEND, RECEIVE }
 
 public enum class TransferState {
@@ -129,6 +140,11 @@ public data class ActiveTransfer(
     val verification: VerificationResult? = null,
     val isVerified: Boolean = false,
     val route: TransferRoute? = null,
+    /**
+     * Set when the transfer is one folder (ADR-064): the folder sent, or the name it was saved
+     * under here ("Photos (2)" when "Photos" was taken). [totalFiles] counts its files.
+     */
+    val folderName: String? = null,
 ) {
     val currentItemName: String get() = currentFileName
     val currentItemIndex: Int get() = currentFileIndex

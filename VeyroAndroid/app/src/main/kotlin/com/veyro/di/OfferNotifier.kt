@@ -67,8 +67,9 @@ public class OfferNotifier(
     }
 
     private fun show(offer: IncomingOffer) {
-        val summary = when (offer.fileCount) {
-            1 -> offer.files.firstOrNull()?.name ?: "1 file"
+        val summary = when {
+            offer.folderName != null -> offer.summary() // "Photos folder, 120 files" (ADR-064)
+            offer.fileCount == 1 -> offer.files.firstOrNull()?.name ?: "1 file"
             else -> "${offer.fileCount} files"
         }
         val always = defaultAlwaysAccept(offer)

@@ -1,6 +1,7 @@
 package com.veyro.ui.home
 
 import com.veyro.core.link.PeerMessage
+import com.veyro.core.link.folderSummary
 import com.veyro.core.model.Capabilities
 import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
@@ -13,6 +14,7 @@ import com.veyro.core.model.TransferDirection
 import com.veyro.core.model.TransferState
 import com.veyro.core.model.TrustState
 import com.veyro.core.model.TrustedPeer
+import com.veyro.core.model.folderName
 import com.veyro.ui.format.FileKind
 import com.veyro.ui.format.fileKindOf
 
@@ -240,19 +242,33 @@ public data class HomeUiState(
     val canSendFiles: Boolean
         get() = selectedPc != null
 
+    /** [canSendFolder] for the selected device, for Home's Send folder tile. */
+    val canSendFolderToSelected: Boolean
+        get() = selectedPc?.let { canSendFolder(it) } == true
+
+    /**
+     * Send folder (ADR-064) works like Send files, except that a connected device must say it
+     * takes folders (FOLDER_TRANSFER). One not connected is tried; the send itself checks again.
+     */
+    public fun canSendFolder(device: PairedDeviceUi): Boolean =
+        !device.isConnected || Capability.FOLDER_TRANSFER in (peerCapabilities[device.deviceId.value] ?: Capabilities.NONE)
+
     /** The newest finished transfer, for the Recent card. */
     val recent: RecentTransferUi?
         get() = history.firstOrNull { it.state.isTerminal }?.let { transfer ->
             val files = transfer.items.filterNot { it.isDirectory }
             val first = files.firstOrNull()?.fileName
+            // A folder reads as one: "Photos folder, 120 files" (ADR-064).
+            val folder = transfer.items.folderName()?.let { folderSummary(it, files.size) }
             RecentTransferUi(
                 id = transfer.id,
-                fileName = first ?: if (transfer.direction == TransferDirection.RECEIVE) "Received files" else "Sent files",
-                moreCount = (files.size - 1).coerceAtLeast(0),
+                fileName = folder ?: first ?: if (transfer.direction == TransferDirection.RECEIVE) "Received files" else "Sent files",
+                moreCount = if (folder != null) 0 else (files.size - 1).coerceAtLeast(0),
                 direction = transfer.direction,
                 peerName = transfer.peerDisplayName ?: "your device",
                 destinationUri = transfer.destinationUri ?: files.firstOrNull()?.destinationUri,
-                kind = first?.let(::fileKindOf) ?: FileKind.OTHER,
+                // ARCHIVE is drawn with the folder icon.
+                kind = if (folder != null) FileKind.ARCHIVE else first?.let(::fileKindOf) ?: FileKind.OTHER,
                 finishedAtEpochMillis = transfer.finishedAtEpochMillis ?: transfer.startedAtEpochMillis,
                 succeeded = transfer.state == TransferState.COMPLETED,
             )

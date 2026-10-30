@@ -78,6 +78,8 @@ public fun VeyroNavHost(
     /** The clipboard notification was tapped: show Clipboard, then call [onClipboardOpened]. */
     openClipboard: Boolean = false,
     onClipboardOpened: () -> Unit = {},
+    /** Opens the system folder picker and sends the folder to these device ids (ADR-064). */
+    onSendFolder: ((deviceIds: List<String>) -> Unit)? = null,
 ) {
     val navController = rememberNavController()
     LaunchedEffect(openClipboard) {
@@ -131,6 +133,7 @@ public fun VeyroNavHost(
                     devicesViewModel = devicesViewModel,
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
                     onSendFiles = onSendFiles,
+                    onSendFolder = onSendFolder,
                 )
             }
 

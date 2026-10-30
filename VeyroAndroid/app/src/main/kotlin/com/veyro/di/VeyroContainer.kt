@@ -324,6 +324,47 @@ public class VeyroContainer(context: Context) {
     }
 
     /**
+     * Send folder (ADR-064): reads the picked tree, then sends it like picked files to every
+     * device in [deviceIds], its files streamed from the tree with no staged copy. The read grant
+     * is held for the send and given back after. A folder with no files, or with more than
+     * [com.veyro.core.link.FolderWalker.MAX_ITEMS] entries, is refused with a toast; entries
+     * that cannot be read are left out and counted.
+     */
+    public fun sendFolder(deviceIds: List<String>, treeUri: android.net.Uri) {
+        appScope.launch {
+            val resolver = appContext.contentResolver
+            val read = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            val held = runCatching { resolver.takePersistableUriPermission(treeUri, read) }.isSuccess
+            try {
+                val folder = com.veyro.SharedFolder(appContext, treeUri)
+                val walk = withContext(dispatchers.io) {
+                    com.veyro.core.link.FolderWalker.walk(folder, folder.rootId, folder.rootName())
+                }
+                VeyroLog.i("Container") { "Send folder: ${walk.fileCount} file(s), ${walk.emptyDirectoryCount} empty dir(s), ${walk.skipped} skipped" }
+                when {
+                    walk.tooLarge -> toast("${walk.name} has more than ${com.veyro.core.link.FolderWalker.MAX_ITEMS} items. Pick a smaller folder.")
+                    walk.fileCount == 0 && walk.skipped > 0 -> toast("The files in ${walk.name} could not be read.")
+                    walk.fileCount == 0 -> toast("${walk.name} has no files to send.")
+                    else -> {
+                        if (walk.skipped > 0) toast("${walk.skipped} item(s) in ${walk.name} could not be read and are left out.")
+                        sendFilesAndWait(deviceIds, walk.items)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                VeyroLog.w("Container") { "Send folder failed (${e.javaClass.simpleName})" }
+                toast("The folder could not be read.")
+            } finally {
+                if (held) runCatching { resolver.releasePersistableUriPermission(treeUri, read) }
+            }
+        }
+    }
+
+    private suspend fun toast(text: String) = withContext(dispatchers.main) {
+        android.widget.Toast.makeText(appContext, text, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
      * Who a send went to and how many of those PCs took every file. [cancelled]: the user
      * cancelled it on this phone, so the devices after that one were skipped (ADR-055).
      */
