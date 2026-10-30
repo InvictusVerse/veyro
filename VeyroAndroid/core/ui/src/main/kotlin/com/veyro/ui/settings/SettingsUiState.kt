@@ -62,6 +62,9 @@ public data class SettingsUiState(
     /** Whether Android exempts Veyro from battery optimisation (asked only from Settings). */
     val batteryOptimizationIgnored: Boolean = false,
 
+    /** "Keep Veyro connected" items that need a change (ADR-061). */
+    val keepConnectedIssues: Int = 0,
+
     /**
      * Set when the identity could not be loaded at all. This is the "your identity was lost"
      * state from `05-SECURITY.md` section 7, and it must be shown rather than hidden behind a

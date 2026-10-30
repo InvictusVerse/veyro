@@ -56,6 +56,8 @@ public class VeyroApplication : Application(), BackgroundHost.Provider {
         container.moveOlderReceivedFilesOnce()
         // ADR-049: hidden entries of receives an earlier run did not finish.
         container.deleteUnfinishedReceives()
+        // ADR-062: a placed widget follows the connection from now on; nothing is built without one.
+        container.refreshWidgets()
         registerActivityLifecycleCallbacks(VisibilityTracker())
     }
 

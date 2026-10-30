@@ -543,6 +543,9 @@ public class VeyroContainer(context: Context) {
         const val PHONE_ENDPOINT_TTL_MS = 12L * 60 * 60 * 1000
         const val THUMBNAIL_PX = 192
         const val CLIP_PREVIEW_PX = 480
+
+        /** ADR-062: how long a widget or toast waits for the first snapshot (a cold trust store read). */
+        const val WIDGET_FIRST_DRAW_MS = 5_000L
     }
 
     // ── Background running (ADR-036) ───────────────────────────────────────────────────────
@@ -590,6 +593,7 @@ public class VeyroContainer(context: Context) {
                 offerNotifier.start()
                 transferNotifier.start()
             },
+            localNetworkBlocked = localNetworkAccess.state.map { it.isBlocked }.distinctUntilChanged(),
         )
     }
 
@@ -597,6 +601,114 @@ public class VeyroContainer(context: Context) {
     public fun isIgnoringBatteryOptimizations(): Boolean =
         appContext.getSystemService(android.os.PowerManager::class.java)
             ?.isIgnoringBatteryOptimizations(appContext.packageName) == true
+
+    // ── Android 17 local network, "Keep Veyro connected" (ADR-061) ─────────────────────────
+
+    /** `ACCESS_LOCAL_NETWORK` on API 37+; NOT_NEEDED below. MainActivity refreshes it on resume. */
+    public val localNetworkAccess: LocalNetworkAccess by lazy { LocalNetworkAccess(appContext) }
+
+    private val keepAliveProbe: KeepAliveProbe by lazy { KeepAliveProbe(appContext) }
+
+    /** What the checklist shows, read now. */
+    public fun keepAliveFacts(): com.veyro.ui.keepalive.KeepAliveFacts =
+        keepAliveProbe.facts(localNetworkAccess.state.value)
+
+    /** A checklist button: opens that system screen, App info when it is missing. */
+    public fun openKeepAliveTarget(target: com.veyro.ui.keepalive.KeepAliveTarget): Boolean = keepAliveProbe.open(target)
+
+    /** Checklist items that need a change, for the Settings row. */
+    public fun keepAliveIssueCount(): Int = com.veyro.ui.keepalive.KeepConnectedChecklist.issueCount(keepAliveFacts())
+
+    /** Home's "Android stops Veyro in the background" notice. */
+    public suspend fun keepAliveHomeNotice(): Boolean = com.veyro.ui.keepalive.KeepConnectedChecklist.homeNotice(
+        keepAliveFacts(),
+        runInBackground = runCatching { settingsStore.runInBackground.first() }.getOrDefault(false),
+    )
+
+    // ── Quick Settings tiles and the home-screen widget (ADR-062) ──────────────────────────
+
+    /**
+     * What the tiles and the widget show, pushed from the connection flows (no polling). Reading
+     * it builds the trust store, so only a visible tile or a placed widget reads it.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    public val quickSnapshot: Flow<com.veyro.quick.QuickSnapshot> by lazy {
+        val selected = connectionManagerReady
+            .flatMapLatest { manager -> manager?.activeConnection ?: flowOf(null) }
+            .map { it?.peerDeviceId }
+        val lockable = connectedPeerCapabilities
+            .map { caps -> caps.filterValues { Capability.DEVICE_STATUS in it }.keys }
+        val blocked = localNetworkAccess.state.map { it.isBlocked }
+        combine(
+            trustStore.peers,
+            connectedPeerIds,
+            combine(lockable, selected) { l, s -> l to s },
+            backgroundController.userDisconnectedIds,
+            blocked,
+        ) { peers, live, (lock, chosen), paused, isBlocked ->
+            com.veyro.quick.QuickSnapshot.of(peers, live, lock, chosen, paused, isBlocked)
+        }.distinctUntilChanged()
+    }
+
+    private var widgetUpdates: kotlinx.coroutines.Job? = null
+
+    /**
+     * Draws every placed widget now and keeps them following [quickSnapshot]. Does nothing (and
+     * builds nothing) while no widget is placed. [done] runs once the first drawing is finished.
+     */
+    public fun refreshWidgets(done: () -> Unit = {}) {
+        if (!com.veyro.quick.VeyroWidgetProvider.hasWidgets(appContext)) {
+            done()
+            return
+        }
+        appScope.launch {
+            try {
+                val snapshot = withTimeoutOrNull(WIDGET_FIRST_DRAW_MS) { quickSnapshot.first() }
+                if (snapshot != null) {
+                    com.veyro.quick.VeyroWidgetProvider.render(appContext, com.veyro.quick.QuickActions.widget(snapshot))
+                }
+            } finally {
+                done()
+            }
+            followWidgets()
+        }
+    }
+
+    @Synchronized
+    private fun followWidgets() {
+        if (widgetUpdates?.isActive == true) return
+        widgetUpdates = appScope.launch {
+            quickSnapshot.map { com.veyro.quick.QuickActions.widget(it) }.distinctUntilChanged().collect { spec ->
+                if (!com.veyro.quick.VeyroWidgetProvider.hasWidgets(appContext)) return@collect
+                com.veyro.quick.VeyroWidgetProvider.render(appContext, spec)
+            }
+        }
+    }
+
+    /**
+     * The tile's and widget's Send clipboard (ADR-062): reads this phone's clipboard (the caller's
+     * window has focus) and sends it like the Clipboard screen does, on the app scope so closing
+     * the window does not cancel it. [onResult] gets the toast text, on the main thread.
+     */
+    public fun sendClipboardFromShortcut(onResult: (String) -> Unit) {
+        appScope.launch {
+            val outcome = runCatching { sendPhoneClipboard() }.getOrDefault(SendClipOutcome.NO_PC)
+            val snapshot = withTimeoutOrNull(WIDGET_FIRST_DRAW_MS) { quickSnapshot.first() } ?: com.veyro.quick.QuickSnapshot.EMPTY
+            val message = com.veyro.quick.QuickActions.clipboardToast(outcome, snapshot)
+            withContext(dispatchers.main) { onResult(message) }
+        }
+    }
+
+    /** The tile's and widget's Lock PC: [lockPc] on the app scope; [onResult] gets the toast text. */
+    public fun lockPcFromShortcut(deviceId: String, name: String?, onResult: (String) -> Unit) {
+        appScope.launch {
+            val sent = runCatching { lockPc(deviceId) }.getOrDefault(false)
+            val label = name
+                ?: DeviceId.parseOrNull(deviceId)?.let { runCatching { trustStore.find(it)?.name }.getOrNull() }
+                ?: "your PC"
+            withContext(dispatchers.main) { onResult(com.veyro.quick.QuickActions.lockToast(sent, label)) }
+        }
+    }
 
     // ── Companion: notification mirroring (ADR-025) ────────────────────────────────────────
 

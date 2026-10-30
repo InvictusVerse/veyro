@@ -11,6 +11,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Android 17 (ADR-061): with targetSdk 37 every local network packet (TCP both ways, UDP
+         multicast and broadcast, mDNS) is blocked until the user grants this. It is in the Nearby
+         devices group with NEARBY_WIFI_DEVICES. Requested at runtime only on API 37+; older
+         systems do not know it and ignore the declaration. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+
     <!-- Required for ConnectivityManager.getActiveNetwork() / NetworkCallback.
          Without it the call throws SecurityException. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -83,6 +89,27 @@
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
+
+    <!-- ADR-061: the phone makers' battery and autostart apps that "Keep Veyro connected" may
+         open, so PackageManager can check a screen exists before it is offered (package visibility,
+         Android 11+). Must match OemBackgroundGuide.allPackages; KeepAliveManifestTest checks it.
+         Nothing is read from these apps. -->
+    <queries>
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.powerkeeper" />
+        <package android:name="com.samsung.android.lool" />
+        <package android:name="com.samsung.android.sm" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.oneplus.security" />
+        <package android:name="com.coloros.oppoguardelf" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.abe" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.hihonor.systemmanager" />
+        <package android:name="com.asus.mobilemanager" />
+    </queries>
 
     <application
         android:name=".VeyroApplication"
@@ -173,6 +200,77 @@
         <!-- ADR-043: Copy on the "Copied on your PC" notification. Only our own PendingIntents. -->
         <receiver
             android:name=".di.ClipActionReceiver"
+            android:exported="false" />
+
+        <!-- ADR-062: Quick Settings tiles. Exported with BIND_QUICK_SETTINGS_TILE, so only the
+             system can bind them. Not active tiles: bound only while the shade is open. -->
+        <service
+            android:name=".quick.SendClipboardTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_sym_content_paste"
+            android:label="@string/tile_send_clipboard"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TILE_CATEGORY"
+                android:value="android.service.quicksettings.CATEGORY_CONNECTIVITY" />
+        </service>
+        <service
+            android:name=".quick.SendFilesTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_sym_upload"
+            android:label="@string/tile_send_files"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TILE_CATEGORY"
+                android:value="android.service.quicksettings.CATEGORY_CONNECTIVITY" />
+        </service>
+        <service
+            android:name=".quick.LockPcTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_sym_lock"
+            android:label="@string/tile_lock_pc"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TILE_CATEGORY"
+                android:value="android.service.quicksettings.CATEGORY_CONNECTIVITY" />
+        </service>
+
+        <!-- ADR-062: the Send clipboard tile's and widget's window. Android 10+ lets only the app
+             with focus read the clipboard, so this transparent window takes focus, sends and
+             closes. Started only by Veyro's own PendingIntents. -->
+        <activity
+            android:name=".quick.SendClipboardActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- ADR-062: the 4x1 home-screen widget. Exported because the launcher sends it updates. -->
+        <receiver
+            android:name=".quick.VeyroWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/veyro_widget_info" />
+        </receiver>
+
+        <!-- ADR-062: the widget's Lock PC. Only our own PendingIntents. -->
+        <receiver
+            android:name=".quick.QuickActionReceiver"
             android:exported="false" />
 
         <!-- ADR-043: hands an image from the PC to the system clipboard. Exposes cache/clips only. -->

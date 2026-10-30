@@ -4,4 +4,12 @@
     <string name="app_tagline">Seamlessly connected</string>
     <!-- ADR-043, ADR-054: the share sheet and text-selection entry, for PCs and phones. -->
     <string name="send_with_veyro">Send with Veyro</string>
+    <!-- ADR-062: Quick Settings tiles and the home-screen widget. -->
+    <string name="tile_send_clipboard">Send clipboard</string>
+    <string name="tile_send_files">Send files</string>
+    <string name="tile_lock_pc">Lock PC</string>
+    <string name="widget_label">Veyro</string>
+    <string name="widget_description">Your connected PC or phone, with Send files, Send clipboard and Lock PC.</string>
+    <string name="widget_open_veyro">Open Veyro</string>
+    <string name="widget_not_connected">Not connected</string>
 </resources>

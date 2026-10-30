@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.veyro.core.network.LocalNetworkState
 import com.veyro.ui.onboarding.components.PageIndicator
 
 /**
@@ -50,6 +51,10 @@ public fun OnboardingScreen(
     viewModel: OnboardingViewModel,
     viewModelFactory: ViewModelProvider.Factory,
     modifier: Modifier = Modifier,
+    /** Android 17's local network permission (ADR-061): pairing finds nothing without it. */
+    localNetwork: LocalNetworkState = LocalNetworkState.NOT_NEEDED,
+    /** Asks for it, or opens App info when only that works. Needs the Activity. */
+    onFixLocalNetwork: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -143,7 +148,11 @@ public fun OnboardingScreen(
                             onAccessChanged = viewModel::refreshAccess,
                         )
                         // The Pair page belongs to the pairing flow and is hosted here unchanged.
-                        OnboardingStep.PAIR -> PairPage(viewModelFactory = viewModelFactory)
+                        OnboardingStep.PAIR -> PairPage(
+                            viewModelFactory = viewModelFactory,
+                            localNetwork = localNetwork,
+                            onFixLocalNetwork = onFixLocalNetwork,
+                        )
                         OnboardingStep.DONE -> DonePage(paired = state.paired)
                     }
                 } else {

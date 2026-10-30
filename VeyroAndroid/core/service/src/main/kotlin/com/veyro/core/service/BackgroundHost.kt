@@ -18,10 +18,17 @@ public data class BackgroundStatus(
     val connectedNames: List<String> = if (connected) listOf(peerName) else emptyList(),
     /** Every kept PC not connected right now, being looked for. */
     val lookingNames: List<String> = if (connected) emptyList() else listOf(peerName),
+    /**
+     * Something stops Veyro reaching any device (ADR-061: Android 17's local network permission is
+     * not granted). Shown instead of the status, so a start from boot never fails silently.
+     */
+    val problemTitle: String? = null,
+    val problemText: String? = null,
 ) {
     /** "Connected to Office PC", "Connected to 2 devices", "Looking for Office PC". PCs and phones. */
     val title: String
         get() = when {
+            problemTitle != null -> problemTitle
             connectedNames.size > 1 -> "Connected to ${connectedNames.size} devices"
             connectedNames.size == 1 -> "Connected to ${connectedNames.single()}"
             lookingNames.size > 1 -> "Looking for ${lookingNames.size} devices"
@@ -31,6 +38,7 @@ public data class BackgroundStatus(
     /** The names behind a count, and what is still being looked for. */
     val text: String
         get() = when {
+            problemText != null -> problemText
             connectedNames.size > 1 && lookingNames.isEmpty() -> connectedNames.joinToString(", ")
             connectedNames.size > 1 -> connectedNames.joinToString(", ") + ". Looking for " + lookingNames.joinToString(", ")
             connectedNames.size == 1 && lookingNames.isNotEmpty() -> "Looking for " + lookingNames.joinToString(", ")
@@ -66,6 +74,11 @@ public interface BackgroundHost {
      * start it if so. [done] must be called when finished (it ends the receiver's `goAsync`).
      */
     public fun onBoot(context: Context, done: () -> Unit)
+
+    /** After Veyro was updated (ADR-061): the same rules as [onBoot]. */
+    public fun onAppUpdated(context: Context, done: () -> Unit) {
+        onBoot(context, done)
+    }
 
     /** Opens the app; with [sendToDeviceId], on the Send screen for that device. */
     public fun openAppIntent(context: Context, sendToDeviceId: String?): Intent

@@ -80,6 +80,8 @@ internal fun MainScreen(
     /** Send files from Home: the system picker, then straight to the chosen PCs (ADR-038). */
     onSendFiles: (deviceIds: List<String>) -> Unit,
     homeNavController: NavHostController = rememberNavController(),
+    /** ADR-061: Home's local network notice. */
+    onFixLocalNetwork: () -> Unit = {},
 ) {
     val backStackState by homeNavController.currentBackStackEntryAsState()
     val currentDestination = backStackState?.destination
@@ -156,6 +158,8 @@ internal fun MainScreen(
                     onSendFiles = { ids -> onSendFiles(ids.map { it.value }) },
                     onOpenHistory = { navigateToTab(homeNavController, VeyroDestination.History) },
                     onOpenClipboard = { rootNavController.navigate(VeyroDestination.Clipboard) },
+                    onFixLocalNetwork = onFixLocalNetwork,
+                    onOpenKeepConnected = { rootNavController.navigate(VeyroDestination.KeepConnected) },
                 )
             }
 
@@ -181,6 +185,7 @@ internal fun MainScreen(
                     viewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
                     onOpenDevices = { navigateToTab(homeNavController, VeyroDestination.Devices) },
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
+                    onOpenKeepConnected = { rootNavController.navigate(VeyroDestination.KeepConnected) },
                 )
             }
         }

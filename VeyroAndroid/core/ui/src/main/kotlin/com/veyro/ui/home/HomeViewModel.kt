@@ -12,6 +12,7 @@ import com.veyro.core.model.Endpoint
 import com.veyro.core.model.NetworkStatus
 import com.veyro.core.model.Transfer
 import com.veyro.core.model.TrustedPeer
+import com.veyro.core.network.LocalNetworkState
 import com.veyro.core.network.NetworkMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -72,6 +73,10 @@ public class HomeViewModel(
     private val removeHistory: suspend (transferId: String) -> Unit = {},
     /** A small preview of a received image, read off the main thread by `:app`. */
     private val loadThumbnail: suspend (uri: String) -> ImageBitmap? = { null },
+    /** Android 17's local network permission (ADR-061). */
+    localNetwork: Flow<LocalNetworkState> = flowOf(LocalNetworkState.NOT_NEEDED),
+    /** Whether a setting stops Veyro in the background (ADR-061); read on every start of Home. */
+    private val keepAliveNotice: suspend () -> Boolean = { false },
 ) : ViewModel() {
 
     /** For the Recent card's image preview. */
@@ -145,6 +150,25 @@ public class HomeViewModel(
             .catch { emit(emptyList()) }
             .onEach { transfers -> _state.update { it.copy(history = transfers) } }
             .launchIn(viewModelScope)
+
+        localNetwork
+            .catch { emit(LocalNetworkState.NOT_NEEDED) }
+            .onEach { network -> _state.update { it.copy(localNetwork = network) } }
+            .launchIn(viewModelScope)
+    }
+
+    /** Re-reads the background settings behind [HomeUiState.keepAliveNotice]; they change outside the app. */
+    public fun refreshHealth() {
+        viewModelScope.launch {
+            val notice = try {
+                keepAliveNotice()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+            _state.update { it.copy(keepAliveNotice = notice) }
+        }
     }
 
     /** The PC switcher on Home. The hero, Lock PC, media and Send files follow it. */

@@ -13,6 +13,8 @@ import com.veyro.core.model.TransferDirection
 import com.veyro.core.model.TransferState
 import com.veyro.core.model.TrustState
 import com.veyro.core.model.TrustedPeer
+import com.veyro.core.network.LocalNetworkPermission
+import com.veyro.core.network.LocalNetworkState
 import com.veyro.ui.format.FileKind
 import com.veyro.ui.format.fileKindOf
 
@@ -143,7 +145,17 @@ public data class HomeUiState(
 
     /** A one-line confirmation for the snackbar ("Locking Office PC"); cleared once shown. */
     val message: String? = null,
+
+    /** Android 17's local network permission (ADR-061); NOT_NEEDED below API 37. */
+    val localNetwork: LocalNetworkState = LocalNetworkState.NOT_NEEDED,
+
+    /** A setting stops Veyro in the background; Home links to "Keep Veyro connected" (ADR-061). */
+    val keepAliveNotice: Boolean = false,
 ) {
+    /** Home's local network notice (ADR-061). It replaces the network notice: nothing else matters while blocked. */
+    val showLocalNetworkNotice: Boolean
+        get() = LocalNetworkPermission.showNotice(localNetwork)
+
     /** The selected PC's media, which the media and volume cards show; null when it shares none. */
     val pcMedia: PeerMessage.MediaState?
         get() = selectedPc?.takeIf { it.isConnected }?.let { pcMediaByPeer[it.deviceId.value] }
