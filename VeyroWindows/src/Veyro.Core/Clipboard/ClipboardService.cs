@@ -154,6 +154,18 @@ public sealed partial class ClipboardService : IDisposable
     }
 
     /// <summary>
+    /// ADR-073: puts an image (a photo or scan taken on the phone) on the PC clipboard without
+    /// sending it back to the phones and without adding it to the virtual clipboard.
+    /// </summary>
+    public async Task<bool> CopyImageToPcAsync(byte[] image)
+    {
+        if (Sink is not { } sink || image.Length == 0) return false;
+        RememberApplied(null, image);
+        await sink.SetImageAsync(image).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
     /// Puts text on the PC clipboard without sending it to the phones, without adding it to the
     /// virtual clipboard, and outside clipboard history: "Copy code" on a mirrored notification
     /// (ADR-063). False when the clipboard is not available. The text is user data: never logged.

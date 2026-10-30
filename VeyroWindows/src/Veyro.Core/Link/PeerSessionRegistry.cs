@@ -144,7 +144,8 @@ public sealed class PeerSessionRegistry : IPeerSessionRegistry
     /// <summary>Routes an ADR-066 phone-to-PC stream message. Returns false for any other type.</summary>
     internal bool PublishStream(string peerId, PeerMessage message)
     {
-        if (message is not (PeerMessage.StreamCaps or PeerMessage.StreamState or PeerMessage.StreamStop)) return false;
+        if (message is not (PeerMessage.StreamCaps or PeerMessage.StreamState or PeerMessage.StreamStop or
+            PeerMessage.SpeakerState or PeerMessage.SpeakerStop or PeerMessage.CaptureResult)) return false;
         Publish(StreamMessageReceived, peerId, message, nameof(StreamMessageReceived));
         return true;
     }

@@ -107,7 +107,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
         PeerCapabilities.MediaControl | PeerCapabilities.DeviceStatus |
         PeerCapabilities.Messaging | PeerCapabilities.Calls | PeerCapabilities.Photos |
         PeerCapabilities.Wallpaper | PeerCapabilities.PhoneControls | PeerCapabilities.DeviceInfo |
-        PeerCapabilities.ScreenView;
+        PeerCapabilities.ScreenView | PeerCapabilities.PcAudio | PeerCapabilities.PhotoCapture;
 
     /// <summary>ADR-059: this PC was renamed in Settings. Sessions that are already open hear it as deviceInfo.</summary>
     public void SetLocalName(string name)
@@ -1304,6 +1304,10 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                     // ADR-066. Screen frames never travel here; these are control messages only.
                     case PeerMessage.StreamCaps or PeerMessage.StreamState or PeerMessage.StreamStop:
                         registration.Capabilities |= PeerCapabilities.ScreenSource;
+                        _sessions.PublishStream(peer.DeviceId, message.Envelope.Payload);
+                        break;
+                    // ADR-073: speaker and photo capture control; sound travels on VMS1, photos as transfers.
+                    case PeerMessage.SpeakerState or PeerMessage.SpeakerStop or PeerMessage.CaptureResult:
                         _sessions.PublishStream(peer.DeviceId, message.Envelope.Payload);
                         break;
                     default:

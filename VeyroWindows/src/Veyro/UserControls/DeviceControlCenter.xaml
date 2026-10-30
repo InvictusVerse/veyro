@@ -320,7 +320,24 @@
                         ToolTipService.ToolTip="More">
                         <FontIcon FontSize="14" Glyph="&#xE712;" />
                         <Button.Flyout>
-                            <MenuFlyout x:Name="DeviceActionsFlyout" Placement="Bottom">
+                            <MenuFlyout x:Name="DeviceActionsFlyout" Opening="DeviceActions_Opening" Placement="Bottom">
+                                <!--  ADR-073: this PC's sound on the phone; photos and scans taken on the phone.  -->
+                                <MenuFlyoutItem x:Name="SpeakerMenuItem" Click="Speaker_Click" Text="Play PC sound on phone">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE7F5;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="TakePhotoMenuItem" Click="TakePhoto_Click" Text="Take photo with phone (Ctrl+Alt+C)">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE722;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="ScanMenuItem" Click="Scan_Click" Text="Scan document with phone (Ctrl+Alt+D)">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8A5;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
                                 <!--  ADR-067: in the menu, so the action row fits the sidebar.  -->
                                 <MenuFlyoutItem
                                     Click="PhoneCamera_Click"

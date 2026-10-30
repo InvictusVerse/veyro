@@ -86,6 +86,22 @@ public sealed class SystemTrayService : ISystemTrayService
 
     public bool IsAvailable { get; private set; }
 
+    private const uint WmHotkey = 0x0312;
+    private readonly List<(uint Modifiers, uint Key, Action Action)> _hotkeys = [];
+
+    /// <summary>
+    /// ADR-073: system-wide shortcuts (Ctrl+Alt+C, Ctrl+Alt+D) on the tray window. One another app
+    /// already took is skipped and logged. Call after <see cref="Initialize"/>, on the UI thread.
+    /// </summary>
+    public void AddHotkey(uint modifiers, uint key, Action action)
+    {
+        _hotkeys.Add((modifiers, key, action));
+        if (_hwnd == 0) return;
+        int id = _hotkeys.Count;
+        if (!RegisterHotKey(_hwnd, id, modifiers | 0x4000 /* MOD_NOREPEAT */, key))
+            VeyroTrace.Warn($"Shortcut {id} is taken by another app ({Marshal.GetLastWin32Error()})");
+    }
+
     public void SetEnabled(bool enabled)
     {
         _enabled = enabled;
@@ -169,6 +185,12 @@ public sealed class SystemTrayService : ISystemTrayService
 
     private nint OnMessage(nint hwnd, uint message, nint wParam, nint lParam)
     {
+        if (message == WmHotkey)
+        {
+            int id = (int)wParam.ToInt64();
+            if (id >= 1 && id <= _hotkeys.Count) Run(_hotkeys[id - 1].Action);
+            return 0;
+        }
         if (message == WmTrayCallback)
         {
             uint mouse = (uint)(lParam.ToInt64() & 0xFFFF);
@@ -329,6 +351,10 @@ public sealed class SystemTrayService : ISystemTrayService
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyWindow(nint hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
 
     [DllImport("user32.dll")]
     private static extern nint DefWindowProcW(nint hwnd, uint message, nint wParam, nint lParam);

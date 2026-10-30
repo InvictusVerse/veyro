@@ -59,6 +59,9 @@ public sealed class VeyroContainer
     public CallWindowService CallWindowService { get; }
     public MirrorService Mirror { get; }
     public VirtualCameraService VirtualCamera { get; }
+    public CaptureService Capture { get; }
+    public SpeakerService Speaker { get; }
+    public PhoneCaptureActions PhoneCapture { get; }
     public INetworkDiagnosticsService NetworkDiagnostics { get; }
     public IQrCodeRenderer QrCodeRenderer { get; }
     public IPhotoActions PhotoActions { get; }
@@ -137,7 +140,9 @@ public sealed class VeyroContainer
         // ADR-034: metadata and thumbnails in memory; fetched originals in LocalCache, deleted
         // with the session. Offers answering our photoFetch are accepted without a prompt.
         Photos = new PhotoService(PeerSessions, Constants.LocalCacheDirectory);
-        LinkServer.RequestedOffers = Photos;
+        // ADR-073: photos and scans the PC asked for share LinkServer's handler slot with photo fetches.
+        Capture = new CaptureService(PeerSessions, Constants.LocalCacheDirectory, () => SettingsStore.Current.DownloadDirectory);
+        LinkServer.RequestedOffers = new RequestedOfferRouter(Photos, Capture);
         PhotoActions = new WindowsPhotoActions(() => App.WindowHandle);
         DiscoveryService = new UdpDiscoveryService(
             IdentityManager.DeviceId.Value,
@@ -209,6 +214,8 @@ public sealed class VeyroContainer
         // ADR-066: one mirror window per phone; quality is this PC's setting, the phone only consents.
         Mirror = new MirrorService(PeerSessions, TrustStore, IdentityManager.DeviceId.Value, SettingsStore, ThemeModeService);
         // ADR-067: the optional "Veyro Phone Camera" add-on; idle (a timer, nothing open) until set up.
+        // ADR-073: this PC's sound on a phone.
+        Speaker = new SpeakerService(PeerSessions, IdentityManager.DeviceId.Value);
         VirtualCamera = new VirtualCameraService(Mirror, new Veyro.Platform.Media.VirtualCameraSetup(), SettingsStore,
             connectedPhone: () => DeviceManager.ActiveDevice is { IsConnected: true } device ? device.DeviceId : null);
         NotificationToastService = new NotificationToastService(
@@ -224,6 +231,9 @@ public sealed class VeyroContainer
             rules: NotificationRules,
             // Do not disturb: by hand, or automatically while a phone is mirrored.
             quiet: () => NotificationQuiet.IsQuiet(SettingsStore.Current, Mirror.IsMirroring));
+        PhoneCapture = new PhoneCaptureActions(Capture, Clipboard, NotificationToastService,
+            phoneName: peerId => TrustStore.GetPeer(peerId)?.ShownName,
+            connectedPhone: () => DeviceManager.ActiveDevice is { IsConnected: true } device ? device.DeviceId : null);
         // ADR-036: incoming files are asked about one at a time, by dialog or actionable toast,
         // with a 60 s deadline that reaches the phone as "timeout", not "declined".
         // ADR-038: "Always accept from this phone" (pre-ticked) is saved in the trust store.

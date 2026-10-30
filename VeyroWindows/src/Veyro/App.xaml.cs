@@ -58,6 +58,13 @@ public partial class App : Application
         var container = VeyroContainer.Instance;
         // ADR-047: the tray icon is there while "keep running in the tray" is on (the default).
         container.SystemTrayService.Initialize(WindowHandle);
+        // ADR-073: Ctrl+Alt+C takes a photo with the phone, Ctrl+Alt+D scans a document.
+        if (container.SystemTrayService is Veyro.Platform.Services.SystemTrayService tray)
+        {
+            const uint ctrlAlt = 0x0002 | 0x0001;
+            tray.AddHotkey(ctrlAlt, 0x43, () => _ = container.PhoneCapture.TakeAsync(scan: false));
+            tray.AddHotkey(ctrlAlt, 0x44, () => _ = container.PhoneCapture.TakeAsync(scan: true));
+        }
         container.SystemTrayService.SetEnabled(container.SettingsStore.Current.MinimizeToTrayOnClose);
         MainWindow.Closed += Window_Closed;
         MainWindow.AppWindow.Changed += (_, change) =>
@@ -606,6 +613,8 @@ public partial class App : Application
         HandleClosedEvents = false;
         // Mirror windows first: each sends streamStop while the phone's session is still up.
         VeyroContainer.Instance.VirtualCamera.Dispose();
+        VeyroContainer.Instance.Speaker.Dispose();
+        VeyroContainer.Instance.Capture.Dispose();
         VeyroContainer.Instance.Mirror.Dispose();
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
         VeyroContainer.Instance.Photos.Dispose();

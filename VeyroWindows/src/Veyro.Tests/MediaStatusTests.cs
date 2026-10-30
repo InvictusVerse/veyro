@@ -29,11 +29,15 @@ internal sealed class FakePeerSessions : IPeerSessionRegistry
     public event Action<string, PeerMessage.CallLog>? CallLogReceived;
     public event Action<string, PeerMessage>? PhotosMessageReceived;
     public event Action<string, PeerMessage>? DeviceMessageReceived;
+    public event Action<string, PeerMessage>? StreamMessageReceived;
 
     public void Receive(string peerId, PeerMessage message)
     {
         switch (message)
         {
+            case PeerMessage.StreamState or PeerMessage.StreamStop or PeerMessage.SpeakerState or PeerMessage.SpeakerStop or PeerMessage.CaptureResult:
+                StreamMessageReceived?.Invoke(peerId, message);
+                break;
             case PeerMessage.PcLock or PeerMessage.Wallpaper or PeerMessage.Clip or PeerMessage.DeviceInfo:
                 DeviceMessageReceived?.Invoke(peerId, message);
                 break;

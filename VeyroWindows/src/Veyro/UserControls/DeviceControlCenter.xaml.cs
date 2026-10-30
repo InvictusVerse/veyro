@@ -70,6 +70,42 @@ public sealed partial class DeviceControlCenter : UserControl
 
     private void PhoneFrame_PointerEntered(object sender, PointerRoutedEventArgs e) => AnimateOverlay(true);
 
+    // ADR-073: the More menu shows what the shown phone can do now.
+    private void DeviceActions_Opening(object sender, object e)
+    {
+        var container = VeyroContainer.Instance;
+        string? id = ViewModel.Device is { IsConnected: true } device ? device.DeviceId : null;
+        bool playing = id is not null && string.Equals(container.Speaker.PeerId, id, StringComparison.OrdinalIgnoreCase);
+        SpeakerMenuItem.Text = playing ? "Stop PC sound on phone" : "Play PC sound on phone";
+        SpeakerMenuItem.IsEnabled = id is not null && (playing || container.Speaker.CanUse(id));
+        bool capture = container.PhoneCapture.CanUse(id);
+        TakePhotoMenuItem.IsEnabled = capture;
+        ScanMenuItem.IsEnabled = capture;
+    }
+
+    private async void Speaker_Click(object sender, RoutedEventArgs e)
+    {
+        var speaker = VeyroContainer.Instance.Speaker;
+        if (ViewModel.Device is not { } device) return;
+        if (string.Equals(speaker.PeerId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            await speaker.StopAsync();
+            return;
+        }
+        if (await speaker.StartAsync(device.DeviceId) is { } problem)
+            VeyroContainer.Instance.NotificationToastService.ShowStatus("PC sound not played on the phone", problem, "speaker");
+    }
+
+    private void TakePhoto_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Device is { } device) _ = VeyroContainer.Instance.PhoneCapture.TakeAsync(device.DeviceId, scan: false);
+    }
+
+    private void Scan_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Device is { } device) _ = VeyroContainer.Instance.PhoneCapture.TakeAsync(device.DeviceId, scan: true);
+    }
+
     // ADR-067: the camera window (and the virtual camera, when it is set up).
     private void PhoneCamera_Click(object sender, RoutedEventArgs e)
     {
