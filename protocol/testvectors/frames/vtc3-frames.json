@@ -1,0 +1,218 @@
+{
+  "description": "VTC3 sealed data-plane records (ProjectInfo/04-PROTOCOL.md section 7.3, ADR-058). Keys come from the key exporter (exporter-v3.json, same expSecret) with both stream-open salts in the context. Plaintexts are the VTC1 payload encodings, unchanged.",
+  "algorithm": {
+    "streamOpen": "\"VTC3\" | 0x09 | u16be tidLen | tid | u64be 0 | u32be 16 | salt(16), cleartext, first record in each direction",
+    "keys": "okm = exportKey(\"veyro-vtc3\", utf8(tid) || 0x00 || saltA || saltB, 64); keyS2R = okm[0..32] (stream id 1), keyR2S = okm[32..64] (stream id 2)",
+    "record": "\"VTC3\" | type | u16be tidLen | tid | u64be seq | u32be ctLen | ciphertext || tag; AAD = the header bytes; nonce = u32be(streamId) || u64be(seq); seq is the framer counter from 0"
+  },
+  "input": {
+    "transferId": "tx1",
+    "expSecretHex": "d095ce06243ed56caea30e07a6d86889423171a119bac175774a88f08f594db1",
+    "saltAHex": "b5b1209e51f3c29e97f56d59f4198840",
+    "saltBHex": "3baf294c225e57cbd665a5f9997a6df9"
+  },
+  "expected": {
+    "contextHex": "74783100b5b1209e51f3c29e97f56d59f41988403baf294c225e57cbd665a5f9997a6df9",
+    "okmHex": "1b03b0e109d572242d3a64164585b05116b4925ad6f5ef913018560893fdb137c13a7ffb77a5c5f44532051f9d90ffc3ca10582ee57366707ecfa8b262b2661f",
+    "keyS2RHex": "1b03b0e109d572242d3a64164585b05116b4925ad6f5ef913018560893fdb137",
+    "keyR2SHex": "c13a7ffb77a5c5f44532051f9d90ffc3ca10582ee57366707ecfa8b262b2661f",
+    "streamOpenSenderHex": "56544333090003747831000000000000000000000010b5b1209e51f3c29e97f56d59f4198840",
+    "streamOpenReceiverHex": "565443330900037478310000000000000000000000103baf294c225e57cbd665a5f9997a6df9"
+  },
+  "records": [
+    {
+      "name": "Auth",
+      "direction": "s2r",
+      "streamId": 1,
+      "seq": 0,
+      "frame": {"type":"Auth","authToken":"tok","senderDeviceId":"2C9VV72DFSF1A2SC0TN6QBAPEC","route":"LAN_TCP"},
+      "plaintextHex": "0003746f6b001a3243395656373244465346314132534330544e3651424150454302",
+      "headerHex": "56544333010003747831000000000000000000000032",
+      "nonceHex": "000000010000000000000000",
+      "recordHex": "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7"
+    },
+    {
+      "name": "ItemBegin",
+      "direction": "s2r",
+      "streamId": 1,
+      "seq": 1,
+      "frame": {"type":"ItemBegin","itemIndex":0,"sizeBytes":3,"chunkCount":1,"chunkSize":524288},
+      "plaintextHex": "0000000000000000000000030000000100080000",
+      "headerHex": "56544333030003747831000000000000000100000024",
+      "nonceHex": "000000010000000000000001",
+      "recordHex": "565443330300037478310000000000000001000000243306d1f95a204e36cebe87a2310f32af812945fc0b71bcf11c59952377020fce1c5fc4e9"
+    },
+    {
+      "name": "Chunk",
+      "direction": "s2r",
+      "streamId": 1,
+      "seq": 2,
+      "frame": {"type":"Chunk","itemIndex":0,"chunkIndex":0,"dataHex":"616263"},
+      "plaintextHex": "000000000000000000000003616263",
+      "headerHex": "5654433304000374783100000000000000020000001f",
+      "nonceHex": "000000010000000000000002",
+      "recordHex": "5654433304000374783100000000000000020000001f018b1410d98bc1ecd1b0ac3179a69c7d441064f2b1727769f1c4cb472eef14"
+    },
+    {
+      "name": "ItemEnd",
+      "direction": "s2r",
+      "streamId": 1,
+      "seq": 3,
+      "frame": {"type":"ItemEnd","itemIndex":0,"sha256Hex":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+      "plaintextHex": "00000000004062613738313662663866303163666561343134313430646535646165323232336230303336316133393631373761396362343130666636316632303031356164",
+      "headerHex": "56544333050003747831000000000000000300000056",
+      "nonceHex": "000000010000000000000003",
+      "recordHex": "56544333050003747831000000000000000300000056ab7789566ed1be6629e7a1e1b81a9820c7a0b9d91500b4ef63a8d3933146393ba39d0562c479a67f3954ea5e55c30502b43c6daf742cc1ffd38c41d2c2443219f08b8a1b8c997ebe0fef7bb7b11804fd7ba78a0762d8"
+    },
+    {
+      "name": "TransferEnd",
+      "direction": "s2r",
+      "streamId": 1,
+      "seq": 4,
+      "frame": {"type":"TransferEnd","completed":true},
+      "plaintextHex": "01",
+      "headerHex": "56544333070003747831000000000000000400000011",
+      "nonceHex": "000000010000000000000004",
+      "recordHex": "5654433307000374783100000000000000040000001109c621e4c032367408d60fbe86f0ae334f"
+    },
+    {
+      "name": "Cancel",
+      "direction": "s2r",
+      "streamId": 1,
+      "seq": 5,
+      "frame": {"type":"Cancel","reason":"user"},
+      "plaintextHex": "000475736572",
+      "headerHex": "56544333080003747831000000000000000500000016",
+      "nonceHex": "000000010000000000000005",
+      "recordHex": "565443330800037478310000000000000005000000168004a7805025ded82090fe4db6df4f0e7f93f043b829"
+    },
+    {
+      "name": "AuthAck",
+      "direction": "r2s",
+      "streamId": 2,
+      "seq": 0,
+      "frame": {"type":"AuthAck","ok":true},
+      "plaintextHex": "010000",
+      "headerHex": "56544333020003747831000000000000000000000013",
+      "nonceHex": "000000020000000000000000",
+      "recordHex": "565443330200037478310000000000000000000000138e22b91bdf1008987704784811c774d70631f9"
+    },
+    {
+      "name": "ItemResult",
+      "direction": "r2s",
+      "streamId": 2,
+      "seq": 1,
+      "frame": {"type":"ItemResult","itemIndex":0,"ok":true},
+      "plaintextHex": "00000000010000",
+      "headerHex": "56544333060003747831000000000000000100000017",
+      "nonceHex": "000000020000000000000001",
+      "recordHex": "5654433306000374783100000000000000010000001722270228cc6a7ea1a195cb1a3102036f2dae81d39caa5f"
+    },
+    {
+      "name": "Cancel",
+      "direction": "r2s",
+      "streamId": 2,
+      "seq": 2,
+      "frame": {"type":"Cancel","reason":"user"},
+      "plaintextHex": "000475736572",
+      "headerHex": "56544333080003747831000000000000000200000016",
+      "nonceHex": "000000020000000000000002",
+      "recordHex": "56544333080003747831000000000000000200000016cc58976b2d1b72e271e16034320a3644bcfa38e43bbe"
+    }
+  ],
+  "negativesNote": "Each negative feeds the records, concatenated, to a fresh reader for 'direction' (s2r: key keyS2R, stream id 1; r2s: keyR2S, stream id 2) expecting transfer id tx1. Records before failsAt decode; the read at failsAt must fail, and nothing after it is read.",
+  "negatives": [
+    {
+      "name": "replayed record",
+      "direction": "s2r",
+      "failsAt": 1,
+      "recordsHex": [
+        "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7",
+        "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7"
+      ]
+    },
+    {
+      "name": "reordered records",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330300037478310000000000000001000000243306d1f95a204e36cebe87a2310f32af812945fc0b71bcf11c59952377020fce1c5fc4e9",
+        "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7"
+      ]
+    },
+    {
+      "name": "reflected record (receiver's AuthAck read by the receiver)",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330200037478310000000000000000000000138e22b91bdf1008987704784811c774d70631f9"
+      ]
+    },
+    {
+      "name": "flipped tag bit",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b6"
+      ]
+    },
+    {
+      "name": "tampered header type",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330300037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7"
+      ]
+    },
+    {
+      "name": "tampered payload byte",
+      "direction": "s2r",
+      "failsAt": 2,
+      "recordsHex": [
+        "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7",
+        "565443330300037478310000000000000001000000243306d1f95a204e36cebe87a2310f32af812945fc0b71bcf11c59952377020fce1c5fc4e9",
+        "5654433304000374783100000000000000020000001f008b1410d98bc1ecd1b0ac3179a69c7d441064f2b1727769f1c4cb472eef14"
+      ]
+    },
+    {
+      "name": "wrong transfer id",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330100037478320000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e97c72112764086631a2fb2520dbfc5eea"
+      ]
+    },
+    {
+      "name": "record from another attempt (other salts)",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330100037478310000000000000000000000322b095470700d9aa7fc576fa451425f8a3225d55e3b231365a16b81b97d540872aeb36e6ead0e5b7e976c29a1b3bbbf7d3a43"
+      ]
+    },
+    {
+      "name": "truncated record (EOF inside it)",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330100037478310000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041"
+      ]
+    },
+    {
+      "name": "negative seq",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "565443330100037478318000000000000000000000325ec16ece00591ce78f37277c40a17bd7f87898abe89b100631a1995b8cab38f9e3e9c96b94aae35d55af80c480a914a041b7"
+      ]
+    },
+    {
+      "name": "stream-open where a sealed record is due",
+      "direction": "s2r",
+      "failsAt": 0,
+      "recordsHex": [
+        "56544333090003747831000000000000000000000010b5b1209e51f3c29e97f56d59f4198840"
+      ]
+    }
+  ]
+}

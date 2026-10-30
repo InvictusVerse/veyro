@@ -61,44 +61,111 @@ veyro-beacon = {
 ; Broadcasting the answer turns one device joining a busy network into a reply storm.
 
 ; =============================================================================================
-; L1 - Secure channel. TCP + Noise. The framing below wraps every Noise message, handshake and
-; transport alike.
+; L1 - Link protocol v3 (ADR-058). A WebSocket at /veyro carries text frames only. Normative
+; prose: 04-PROTOCOL.md sections 4 and 5. Noise is not used and never was on the wire.
 ; =============================================================================================
 
-; Handshake patterns (fixed, no negotiation, no downgrade path):
-;   session (paired)  Noise_KK_25519_ChaChaPoly_SHA256
-;   pairing           Noise_XK_25519_ChaChaPoly_SHA256
-;
-; prologue = "veyro-vlp-v1" ‖ u8(version) ‖ u8(mode)
-;   mode: 0x01 session, 0x02 pairing
-;
-; Derived after the handshake completes, with h = the Noise handshake hash:
-;   sessionId     = h[0..15]
-;   sas           = decimal(HKDF-SHA256(h, "", "veyro-sas-v1", 4) as u32 BE) mod 1000000,
-;                   zero-padded to 6 digits. Shown on both screens during pairing.
-;   pairingSecret = HKDF-SHA256(h, "", "veyro-pair-v1", 32). Stored in TrustedPeer.
+; Primitives are fixed, with no negotiation and no downgrade path: X25519, ChaCha20-Poly1305,
+; SHA-256, HKDF-SHA256, HMAC-SHA256. A v3 peer refuses any other protocolVersion.
 
-noise-frame = bstr .size (1..65535)   ; the Noise message itself, including its 16-byte tag
+b64-32 = tstr .size 44             ; standard base64 with padding of exactly 32 bytes
 
-; =============================================================================================
-; L2/L3 - Frames inside the encrypted channel.
-; =============================================================================================
-
-frame = control-frame / bulk-frame / keepalive-frame
-
-control-frame   = [1, uint .size 4, bstr]   ; type, payloadLength, CBOR-encoded message
-bulk-frame      = [2, uint .size 4, bstr]   ; type, payloadLength, chunk (see below)
-keepalive-frame = [3, uint .size 4, bstr]   ; type, payloadLength, empty payload
-
-; payloadLength limits: control <= 1 MiB, bulk <= chunkSize + 64.
-; A single frame MAY span multiple Noise transport messages; the reader reassembles by length.
-
-chunk = {
-  0: uint,   ; itemIndex
-  1: uint,   ; chunkIndex, u64
-  2: uint,   ; dataLength, u32 - equals chunkSize except for the final chunk
-  3: bstr,   ; data
+; First frame, initiator to responder. Cleartext; untrusted until keys confirm it.
+link-preamble = {
+  "id": tstr,                      ; canonical deviceId, compared byte for byte
+  "name": tstr,
+  "platform": "android" / "windows",
+  "protocolVersion": 3,
+  ? "pair": "confirm" / "qr",      ; absent = session with a stored pairing secret
+  ? "pk": b64-32,                  ; static X25519 public key; required with pair
+  "cn": b64-32,                    ; 32 fresh random bytes
+  "epk": b64-32,                   ; this connection's ephemeral X25519 public key
 }
+
+; Second frame, responder to initiator. Cleartext.
+link-preamble-ack = {
+  "mode": "session" / "pairing" / "pairing-confirm" / "busy" / "refused",
+  ? "reason": tstr,                ; refused / busy only
+  ? "pk": b64-32,                  ; pairing and pairing-confirm
+  ? "commit": b64-32,              ; pairing-confirm: SHA-256("veyro-commit-v1" || pkB || pkA || nB)
+  ? "cn": b64-32,                  ; required with session, pairing, pairing-confirm
+  ? "epk": b64-32,                 ; required with session, pairing, pairing-confirm
+}
+
+; Confirm pairing only: one cleartext nonce each way after the ack (A then B).
+pair-nonce = { "t": "pairNonce", "n": b64-32 }
+
+; Key schedule (04-PROTOCOL.md 4.1-4.6), over the exact preamble and ack bytes:
+;   transcript = SHA-256(u32be(len P) || P || u32be(len A) || A)
+;   dh         = X25519(e_local, epk_peer)
+;   session:         ikm = dh || pairingSecret,            salt = transcript
+;   pairing-confirm: ikm = dh || staticKey,                salt = SHA-256(transcript || nA || nB)
+;   pairing (QR):    ikm = dh || staticKey || qrMix,       salt = transcript
+;   staticKey  = HKDF(salt = transcript, ikm = X25519(static, pkPeer), info = "veyro-static-v3" 0 idI 0 idR)
+;   kI2R, kR2I = HKDF-Expand(prk, label 0 "i2r"/"r2i" 0 idI 0 idR, 32)
+;   expSecret (session) or chainKey (pairing) = HKDF-Expand(prk, label 0 "exp"/"chain" 0 idI 0 idR, 32)
+;   after pairOk: prk = HKDF-Extract(transcript, chainKey || newPairingSecret), session labels
+
+; Every later frame, in every mode, pairing included.
+link-wire-frame = {
+  "f": tstr,                       ; sender deviceId, must equal the peer's id byte for byte
+  "c": tstr,                       ; base64(ChaCha20-Poly1305 ciphertext || 16-byte tag)
+}
+;   nonce = u32be(0) || u64be(counter); counter starts at 0 per direction and per key, implicit
+;   aad   = utf8(f) || 0x00 || dir || u64be(counter); dir 0x01 initiator->responder, 0x02 back
+;   One tag failure, a gap, or a repeat closes the connection.
+
+; Plaintext of c.
+link-envelope = {
+  "v": 3,
+  "msgId": tstr,
+  "from": tstr,                    ; equals f
+  "seq": uint,                     ; counter + 1
+  "ts": uint,
+  "payload": { "t": tstr, * tstr => any },
+}
+
+; QR pairing: pairHello carries the proof of the scanned secret.
+;   qrProof = base64(HMAC-SHA256(HKDF-Expand(qrPrk, "veyro-qr-proof-v3", 32),
+;                    "veyro-qr-proof-v3" 0 idPhone 0 idPc 0 transcript))
+;   qrPrk   = HKDF-Extract("veyro-qr-v3", qrSecret)
+
+; QR code content (out of band, format 2):
+;   veyro:pair?v=2&id=<deviceId>&n=<name>&a=<ip:port>[,...4]&s=<qrSecret>&e=<unixSeconds>
+;   s = 16 random bytes as 22 characters of unpadded base64url, canonical
+
+; Key exporter (session mode only):
+;   exportKey(label, ctx, L) = HKDF-Expand(expSecret,
+;       u16be(15) || "veyro-export-v3" || u16be(len label) || label || u16be(len ctx) || ctx, L)
+
+; =============================================================================================
+; L2 - VTC3 data plane (raw TCP, 04-PROTOCOL.md 7.3). Big-endian integers.
+; =============================================================================================
+
+; Each data-socket attempt opens with one cleartext stream-open record per direction:
+vtc3-stream-open = [
+  magic: h'56544333',              ; "VTC3"
+  type: 0x09,
+  tidLen: uint .size 2, tid: bstr, ; UTF-8 transferId, 1..256 bytes
+  seq: 0 .size 8,
+  len: 16 .size 4,
+  salt: bstr .size 16,             ; fresh random
+]
+;   okm = exportKey("veyro-vtc3", utf8(tid) || 0x00 || saltSender || saltReceiver, 64)
+;   keyS2R = okm[0..32] (stream id 1), keyR2S = okm[32..64] (stream id 2)
+
+; Every later record:
+vtc3-record = [
+  magic: h'56544333',
+  type: uint .size 1,              ; the VTC frame type (auth, authAck, itemBegin, chunk, ...)
+  tidLen: uint .size 2, tid: bstr,
+  seq: uint .size 8,               ; equals the record counter; checked before decryption
+  len: uint .size 4,               ; ciphertext length including the tag
+  body: bstr,                      ; ChaCha20-Poly1305(payload), 16-byte tag at the end
+]
+;   nonce = u32be(streamId) || u64be(counter); aad = the 4+1+2+tidLen+8+4 header bytes
+; NOTE: the CBOR sketch below predates the JSON wire. Control messages travel as JSON inside
+; link-envelope (04-PROTOCOL.md section 6); this section is kept for the field numbering only.
 
 ; =============================================================================================
 ; Control messages. Canonical CBOR maps with INTEGER keys, so the encoding is stable across
@@ -194,12 +261,13 @@ dev-control-phone-controls = (
 ; Convergence rules
 ; =============================================================================================
 
-; Unpaired inbound connections are accepted ONLY while a bounded (<= 120 s) pairing window is
-; open, and only as Noise_XK. Everything else is closed after the first frame with no detail
-; leaked - so an attacker cannot distinguish "not paired" from "bad key".
+; An unknown device pairs only by confirm code (accepted on the other screen) or by a QR code
+; while the PC's bounded (5 min) pairing window is open; an unknown device without pair is
+; refused ("not-paired"). A failure before the first authenticated frame closes without detail.
 
-; Replay: Noise KK/XK use fresh ephemerals, so a recorded handshake cannot be replayed into a new
-; session. Nonces are per-session and strictly increasing.
+; Replay: both sides contribute a fresh ephemeral key and cn to every connection, so a recorded
+; connection cannot be replayed into a new one. Frame counters are per direction and strictly
+; increasing, and a session is registered only after the peer's first authenticated frame.
 
 ; Additive compatibility: unknown keys MUST be ignored, never rejected. Adding an optional key is
 ; allowed within a version; removing one or changing its meaning requires a version bump.

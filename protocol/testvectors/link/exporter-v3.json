@@ -1,0 +1,74 @@
+{
+  "description": "Link protocol v3 key exporter (ProjectInfo/04-PROTOCOL.md section 5.4, ADR-058). expSecret is the first vector of connection-schedule-v3.json.",
+  "algorithm": "HKDF-Expand(expSecret, u16be(15) || utf8(\"veyro-export-v3\") || u16be(len label) || utf8(label) || u16be(len context) || context, length)",
+  "expSecretHex": "d095ce06243ed56caea30e07a6d86889423171a119bac175774a88f08f594db1",
+  "vectors": [
+    {
+      "label": "veyro-vtc3",
+      "contextHex": "74783100b5b1209e51f3c29e97f56d59f41988403baf294c225e57cbd665a5f9997a6df9",
+      "length": 64,
+      "infoHex": "000f766579726f2d6578706f72742d7633000a766579726f2d76746333002474783100b5b1209e51f3c29e97f56d59f41988403baf294c225e57cbd665a5f9997a6df9",
+      "outputHex": "1b03b0e109d572242d3a64164585b05116b4925ad6f5ef913018560893fdb137c13a7ffb77a5c5f44532051f9d90ffc3ca10582ee57366707ecfa8b262b2661f"
+    },
+    {
+      "label": "veyro-screen-v3",
+      "contextHex": "00000001",
+      "length": 32,
+      "infoHex": "000f766579726f2d6578706f72742d7633000f766579726f2d73637265656e2d7633000400000001",
+      "outputHex": "c01a71d4881005257ffb818bac6c1857bea660e9712324a3aaaab32e9e0de718"
+    },
+    {
+      "label": "x",
+      "contextHex": "",
+      "length": 1,
+      "infoHex": "000f766579726f2d6578706f72742d76330001780000",
+      "outputHex": "f6"
+    },
+    {
+      "label": "veyro-camera-v3",
+      "contextHex": "",
+      "length": 100,
+      "infoHex": "000f766579726f2d6578706f72742d7633000f766579726f2d63616d6572612d76330000",
+      "outputHex": "ae7fdfdeaad07dd068a07846a58393c401b4b8fef1fe234ab31c2fc4c0bbf302639049d3293561229f6986b4c9ca833c70f5e112545b69cc415cae9446a70fdfee0d737dbb2230a7c223503726d5d514e8ac047e7da8f7c473a1ebe367ea30d2b389225a"
+    }
+  ],
+  "invalidNote": "Each must be refused with IllegalArgumentException / ArgumentException before any output.",
+  "invalid": [
+    {
+      "name": "empty label",
+      "label": "",
+      "contextLength": 0,
+      "length": 32
+    },
+    {
+      "name": "label with a space",
+      "label": "veyro vtc3",
+      "contextLength": 0,
+      "length": 32
+    },
+    {
+      "name": "label of 65 characters",
+      "label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contextLength": 0,
+      "length": 32
+    },
+    {
+      "name": "context of 1025 bytes",
+      "label": "veyro-vtc3",
+      "contextLength": 1025,
+      "length": 32
+    },
+    {
+      "name": "length 0",
+      "label": "veyro-vtc3",
+      "contextLength": 0,
+      "length": 0
+    },
+    {
+      "name": "length 8161",
+      "label": "veyro-vtc3",
+      "contextLength": 0,
+      "length": 8161
+    }
+  ]
+}

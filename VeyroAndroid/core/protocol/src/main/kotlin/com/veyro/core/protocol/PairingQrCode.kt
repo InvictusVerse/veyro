@@ -10,14 +10,16 @@ import java.nio.charset.CodingErrorAction
  * The pairing QR code a PC shows on its pairing screen (04-PROTOCOL.md section 4.2, ADR-030).
  *
  * ```
- * veyro:pair?v=1&id=<DeviceId>&n=<name>&a=<ip:port>[,<ip:port>...]&c=<6 digits>&e=<unix seconds>
+ * veyro:pair?v=2&id=<DeviceId>&n=<name>&a=<ip:port>[,<ip:port>...]&s=<secret>&e=<unix seconds>
  * ```
  *
- * Out of band, not on the wire: the scanned [code] feeds the existing PIN bootstrap unchanged.
- * Everything here is untrusted until the pairing completes and `DeviceId(publicKeyB64)` from
- * `pairOk` equals [deviceId]. [name] is display-only; the stored name comes from `pairOk`.
+ * Out of band, not on the wire. Format 2 (ADR-058): `s` is a 128-bit secret, 22 characters of
+ * unpadded base64url. The phone proves it holds it (`qrProof` in `pairHello`) and mixes it into
+ * the pairing keys, so a photo of the code plus a recording of the exchange opens nothing.
+ * Everything here is untrusted until the PC's answering key hashes to [deviceId]. [name] is
+ * display-only; the stored name comes from `pairOk`.
  *
- * [toString] redacts the code, so an accidental log line cannot leak it (AGENTS.md).
+ * [toString] redacts the secret, so an accidental log line cannot leak it (AGENTS.md).
  */
 public class PairingQrCode(
     public val deviceId: DeviceId,
@@ -25,25 +27,31 @@ public class PairingQrCode(
     public val name: String?,
     /** 1..4 private or link-local IPv4 endpoints, in the order the PC listed them. */
     public val endpoints: List<Endpoint>,
-    /** The one-time 6-digit pairing code. Secret: never log it. */
-    public val code: String,
+    /** The 16-byte one-time QR secret. Never log it; [wipe] it once pairing returns. */
+    public val secret: ByteArray,
     public val expiresAtEpochSeconds: Long,
 ) {
     override fun toString(): String =
-        "PairingQrCode(deviceId=$deviceId, endpoints=${endpoints.size}, code=<redacted>)"
+        "PairingQrCode(deviceId=$deviceId, endpoints=${endpoints.size}, secret=<redacted>)"
+
+    /** Zeroes [secret] (ADR-058 wipe rule). */
+    public fun wipe() {
+        secret.fill(0)
+    }
 
     /** Why a scanned string was rejected. Specific so the UI can say something useful. */
     public enum class Error {
         /** Not a `veyro:pair?` string at all, or structurally broken. */
         NOT_VEYRO,
-        /** `v` is not `1`. Probably a newer PC app. */
+        /** `v` is not `2`. An older (`1`) or newer PC app. */
         UNSUPPORTED_VERSION,
         /** A required key is absent or repeated. */
         MALFORMED,
         BAD_DEVICE_ID,
         BAD_NAME,
         BAD_ENDPOINTS,
-        BAD_CODE,
+        /** `s` is not 22 canonical base64url characters of a 16-byte secret. */
+        BAD_SECRET,
         BAD_EXPIRY,
         /** `now > e + 600`. The user should refresh the code on the PC. */
         EXPIRED,
@@ -59,8 +67,9 @@ public class PairingQrCode(
 
     public companion object {
         public const val PREFIX: String = "veyro:pair?"
-        public const val VERSION: String = "1"
-        public const val CODE_LENGTH: Int = 6
+        public val VERSION: String = ProtocolConstants.QR_FORMAT_VERSION.toString()
+        public const val SECRET_SIZE: Int = 16
+        public const val SECRET_LENGTH: Int = 22
         public const val MAX_NAME_BYTES: Int = 64
         public const val MAX_ENDPOINTS: Int = 4
 
@@ -70,7 +79,7 @@ public class PairingQrCode(
         /** Far above any legal code; bounds the work done on hostile input. */
         private const val MAX_RAW_LENGTH = 1024
 
-        private val REQUIRED_KEYS = listOf("v", "id", "n", "a", "c", "e")
+        private val REQUIRED_KEYS = listOf("v", "id", "n", "a", "s", "e")
 
         /**
          * Parses and validates [raw] against section 4.2.
@@ -108,24 +117,63 @@ public class PairingQrCode(
 
             val endpoints = parseEndpoints(fields.getValue("a")) ?: return invalid(Error.BAD_ENDPOINTS)
 
-            val code = fields.getValue("c")
-            if (code.length != CODE_LENGTH || !code.all { it in '0'..'9' }) return invalid(Error.BAD_CODE)
+            val secret = decodeSecret(fields.getValue("s")) ?: return invalid(Error.BAD_SECRET)
 
             val expiry = parseUnsignedLong(fields.getValue("e")) ?: return invalid(Error.BAD_EXPIRY)
-            if (nowEpochSeconds > expiry + EXPIRY_GRACE_SECONDS) return invalid(Error.EXPIRED)
+            if (nowEpochSeconds > expiry + EXPIRY_GRACE_SECONDS) {
+                secret.fill(0)
+                return invalid(Error.EXPIRED)
+            }
 
             return Result.Valid(
                 PairingQrCode(
                     deviceId = deviceId,
                     name = name.ifEmpty { null },
                     endpoints = endpoints,
-                    code = code,
+                    secret = secret,
                     expiresAtEpochSeconds = expiry,
                 ),
             )
         }
 
         private fun invalid(error: Error): Result = Result.Invalid(error)
+
+        /**
+         * Strict unpadded base64url of exactly 16 bytes: 22 characters from `[A-Za-z0-9_-]`, and
+         * the last character's low 4 bits zero (canonical). Not `Base64Url.decodeOrNull`, which
+         * also accepts `+`, `/` and `=`.
+         */
+        private fun decodeSecret(text: String): ByteArray? {
+            if (text.length != SECRET_LENGTH) return null
+            val values = IntArray(SECRET_LENGTH)
+            for (i in text.indices) {
+                values[i] = base64UrlValue(text[i])
+                if (values[i] < 0) return null
+            }
+            if (values[SECRET_LENGTH - 1] and 0x0F != 0) return null
+            val out = ByteArray(SECRET_SIZE)
+            var bits = 0
+            var acc = 0
+            var n = 0
+            for (v in values) {
+                acc = (acc shl 6) or v
+                bits += 6
+                if (bits >= 8) {
+                    bits -= 8
+                    if (n < SECRET_SIZE) out[n++] = ((acc shr bits) and 0xFF).toByte()
+                }
+            }
+            return out
+        }
+
+        private fun base64UrlValue(ch: Char): Int = when (ch) {
+            in 'A'..'Z' -> ch - 'A'
+            in 'a'..'z' -> ch - 'a' + 26
+            in '0'..'9' -> ch - '0' + 52
+            '-' -> 62
+            '_' -> 63
+            else -> -1
+        }
 
         /**
          * Strict percent-decoding to UTF-8. `+` is a space (form encoding); a literal plus is

@@ -16,6 +16,19 @@ public object ProtocolConstants {
      */
     public const val VERSION: Int = 1
 
+    /** The pairing QR string format (04-PROTOCOL.md 4.2). 2 = 128-bit secret `s` (ADR-058). */
+    public const val QR_FORMAT_VERSION: Int = 2
+
+    // ── Key exporter labels (04-PROTOCOL.md 5.4, ADR-058) ──────────────────────────────────
+    /** The VTC3 data plane. In use. */
+    public const val EXPORT_LABEL_VTC3: String = "veyro-vtc3"
+
+    /** Reserved for screen mirroring (ADR-066). Each media socket puts its stream id in the context. */
+    public const val EXPORT_LABEL_SCREEN: String = "veyro-screen-v3"
+
+    /** Reserved for the phone-as-webcam stream (ADR-067). */
+    public const val EXPORT_LABEL_CAMERA: String = "veyro-camera-v3"
+
     // ── Discovery ──────────────────────────────────────────────────────────────────────────
     public const val MDNS_SERVICE_TYPE: String = "_veyro._tcp"
     public const val MDNS_DOMAIN: String = "local."

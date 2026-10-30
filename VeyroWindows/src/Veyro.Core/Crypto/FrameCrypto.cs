@@ -1,217 +1,157 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using Veyro.Core.Link;
+using Veyro.Core.Protocol;
 
 namespace Veyro.Core.Crypto;
 
-/// <summary>A frame after sealing, before encoding for the wire.</summary>
-public sealed record SealedFrame(
-    byte[] Nonce,
-    byte[] Body,
-    byte[] Mac,
-    bool Encrypted,
-    string FromDeviceId);
-
 /// <summary>
-/// Frame cryptography for the Veyro link and connection protocol.
-/// Mirrors com.veyro.core.link.FrameCrypto. See ProjectInfo/04-PROTOCOL.md section 5 and the
-/// vectors in protocol/testvectors/link/framecrypto.json.
-///
-/// ## Two modes
-///
-/// 1. **Pairing** — the key is derived from a 6-digit PIN by PBKDF2. Payloads travel as plaintext
-///    with an HMAC over <c>(fromId ‖ nonce ‖ payload)</c>. The window is short and the PIN is
-///    single-use, so the work factor plus the attempt limit is what makes a 6-digit secret
-///    acceptable.
-///
-/// 2. **Session** — the key is a persisted 32-byte shared secret. Payloads are AES-GCM sealed, and
-///    the outer HMAC is kept as defence in depth: GCM already authenticates the ciphertext, but
-///    the outer MAC also binds the frame to the sender id on the wire, which is what stops a frame
-///    being replayed under a different claimed sender.
+/// Session frame cryptography for link protocol v3 (04-PROTOCOL.md 5, ADR-058). Mirrors
+/// com.veyro.core.link.FrameCrypto. Every frame after the ack is
+/// <c>{"f": fromDeviceId, "c": base64(ciphertext || tag)}</c>, sealed with ChaCha20-Poly1305 under
+/// the sender's direction key of this connection; nonce <c>u32be(0) || u64be(counter)</c>, AAD
+/// <c>utf8(from) || 0x00 || dirByte || u64be(counter)</c>. The receiver builds both from its own
+/// counter and the expected peer id. The stored pairing secret never seals anything.
 /// </summary>
 public static class FrameCrypto
 {
-    /// <summary>
-    /// 120k iterations. This is the only thing standing between a 6-digit PIN and an offline
-    /// attacker who captured the pairing exchange, so it is deliberately slow — roughly a tenth
-    /// of a second, unnoticeable once but expensive a million times over.
-    /// </summary>
-    public const int Pbkdf2Iterations = 120_000;
-
     public const int KeyBytes = 32;
-    public const int NonceBytes = 12;
-    public const int GcmTagBytes = 16;
+    public const byte DirI2R = 0x01;
+    public const byte DirR2I = 0x02;
+    public const uint SessionStreamId = 0;
 
-    /// <summary>
-    /// Derives the pairing bootstrap key from the PIN.
-    ///
-    /// The salt is canonically ordered <c>min(idA, idB):max(idA, idB)</c>, lower-cased. Sorting
-    /// the ids lexicographically ensures both sides derive the identical shared secret regardless
-    /// of who initiated the connection.
-    /// </summary>
-    public static byte[] DeriveBootstrapKey(string pin, string initiatorId, string targetId)
-    {
-        string a = initiatorId.ToLowerInvariant();
-        string b = targetId.ToLowerInvariant();
-        string salt = string.CompareOrdinal(a, b) <= 0 ? $"{a}:{b}" : $"{b}:{a}";
-
-        return Rfc2898DeriveBytes.Pbkdf2(
-            Encoding.UTF8.GetBytes(pin),
-            Encoding.ASCII.GetBytes(salt),
-            Pbkdf2Iterations,
-            HashAlgorithmName.SHA256,
-            KeyBytes);
-    }
-
-    public static byte[] SessionKeyFromBytes(byte[] secret)
-    {
-        if (secret.Length != KeyBytes)
-            throw new ArgumentException("session secret must be 32 bytes", nameof(secret));
-        return secret;
-    }
-
-    /// <summary>A fresh 32-byte session secret, minted by the device being paired *to*.</summary>
+    /// <summary>A fresh 32-byte pairing secret, minted by the device being paired *to*.</summary>
     public static byte[] NewSessionSecret() => RandomNumberGenerator.GetBytes(KeyBytes);
-
-    /// <summary>Six digits, uniform. Never logged.</summary>
-    public static string NewPin() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
-
-    public static SealedFrame Seal(string payloadJson, byte[] key, bool encrypt, string fromDeviceId)
-        => Seal(payloadJson, key, encrypt, fromDeviceId, RandomNumberGenerator.GetBytes(NonceBytes));
-
-    /// <summary>
-    /// Seals with a caller-supplied nonce. Exposed only so the interop vectors can pin a
-    /// deterministic frame; production callers must use the overload that generates one.
-    /// </summary>
-    public static SealedFrame Seal(
-        string payloadJson, byte[] key, bool encrypt, string fromDeviceId, byte[] nonce)
-    {
-        if (nonce.Length != NonceBytes)
-            throw new ArgumentException($"nonce must be {NonceBytes} bytes", nameof(nonce));
-
-        byte[] plain = Encoding.UTF8.GetBytes(payloadJson);
-        byte[] body;
-
-        if (encrypt)
-        {
-            // Java's Cipher.doFinal returns ciphertext||tag as one array; .NET splits them, so
-            // concatenate in that order to match the wire form.
-            byte[] ct = new byte[plain.Length];
-            byte[] tag = new byte[GcmTagBytes];
-            using var gcm = new AesGcm(key, GcmTagBytes);
-            gcm.Encrypt(nonce, plain, ct, tag);
-
-            body = new byte[ct.Length + tag.Length];
-            ct.CopyTo(body, 0);
-            tag.CopyTo(body, ct.Length);
-        }
-        else
-        {
-            body = plain;
-        }
-
-        return new SealedFrame(nonce, body, Hmac(key, fromDeviceId, nonce, body), encrypt, fromDeviceId);
-    }
-
-    /// <summary>
-    /// Returns the payload JSON, or null on any failure. Never throws on hostile input — an
-    /// exception escaping to a connection handler is a denial-of-service lever.
-    /// </summary>
-    public static string? Open(SealedFrame frame, byte[] key)
-    {
-        byte[] expected = Hmac(key, frame.FromDeviceId, frame.Nonce, frame.Body);
-
-        // Constant-time: a short-circuiting compare leaks how many leading MAC bytes an attacker
-        // guessed, which is enough to forge a tag one byte at a time.
-        if (!CryptographicOperations.FixedTimeEquals(expected, frame.Mac))
-            return null;
-
-        try
-        {
-            if (!frame.Encrypted)
-                return Encoding.UTF8.GetString(frame.Body);
-
-            if (frame.Body.Length < GcmTagBytes) return null;
-
-            int ctLen = frame.Body.Length - GcmTagBytes;
-            byte[] plain = new byte[ctLen];
-            using var gcm = new AesGcm(key, GcmTagBytes);
-            gcm.Decrypt(
-                frame.Nonce,
-                frame.Body.AsSpan(0, ctLen),
-                frame.Body.AsSpan(ctLen, GcmTagBytes),
-                plain);
-
-            return Encoding.UTF8.GetString(plain);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// <c>HMAC-SHA256(key, utf8(fromDeviceId) ‖ nonce ‖ body)</c>.
-    ///
-    /// The sender id is inside the MAC deliberately. Without it, a frame could be lifted and
-    /// re-attributed to a different peer sharing the same key — the MAC would still verify.
-    /// </summary>
-    public static byte[] Hmac(byte[] key, string fromDeviceId, byte[] nonce, byte[] body)
-    {
-        byte[] from = Encoding.UTF8.GetBytes(fromDeviceId);
-        byte[] data = new byte[from.Length + nonce.Length + body.Length];
-        from.CopyTo(data, 0);
-        nonce.CopyTo(data, from.Length);
-        body.CopyTo(data, from.Length + nonce.Length);
-        return HMACSHA256.HashData(key, data);
-    }
 
     public static string Sha256Hex(ReadOnlySpan<byte> data)
         => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+
+    /// <summary><c>utf8(from) || 0x00 || dirByte || u64be(counter)</c>.</summary>
+    public static byte[] Aad(string fromDeviceId, byte dir, long counter)
+    {
+        byte[] from = Encoding.UTF8.GetBytes(fromDeviceId);
+        byte[] aad = new byte[from.Length + 2 + 8];
+        from.CopyTo(aad, 0);
+        aad[from.Length + 1] = dir;
+        BinaryPrimitives.WriteInt64BigEndian(aad.AsSpan(from.Length + 2), counter);
+        return aad;
+    }
+
+    /// <summary>
+    /// Strict standard padded base64: length a multiple of 4, alphabet <c>[A-Za-z0-9+/]</c>, at
+    /// most two trailing <c>=</c>, no whitespace, canonical. Null otherwise.
+    /// </summary>
+    public static byte[]? DecodeStrictBase64(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length % 4 != 0) return null;
+        int padding = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            bool ok = c switch
+            {
+                >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '+' or '/' => padding == 0,
+                '=' => ++padding <= 2 && i >= value.Length - 2,
+                _ => false
+            };
+            if (!ok) return null;
+        }
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(value); }
+        catch (FormatException) { return null; }
+        return Convert.ToBase64String(bytes) == value ? bytes : null;
+    }
+
+    /// <summary>A 32-byte key or nonce field: exactly 44 characters of canonical base64 (04-PROTOCOL.md 4.1).</summary>
+    public static byte[]? DecodeKey32(string? value)
+        => value is { Length: 44 } && DecodeStrictBase64(value) is { Length: 32 } bytes ? bytes : null;
 }
 
-/// <summary>
-/// Bounded LRU of recently-seen nonces. Rejects replays regardless of timestamp.
-///
-/// 4096 entries is far beyond the expected control-frame rate, and bounding it matters: an
-/// unbounded set is a memory-exhaustion target for anything that can send us frames.
-/// </summary>
-public sealed class NonceCache(int capacity = 4096)
+/// <summary>Seals one direction's envelopes. Not thread-safe; the owner holds its send gate.</summary>
+public sealed class SessionSealer : IDisposable
 {
-    private readonly LinkedList<string> _order = new();
-    private readonly Dictionary<string, LinkedListNode<string>> _seen = new(StringComparer.Ordinal);
-    private readonly Lock _gate = new();
+    private readonly AeadStreamFramer _framer;
+    private readonly string _localDeviceId;
+    private readonly byte _dir;
 
-    public bool CheckAndStore(string nonce)
+    public SessionSealer(byte[] key, string localDeviceId, byte dir)
     {
-        lock (_gate)
-        {
-            // Deliberately does NOT refresh ordering on a hit. The Kotlin uses
-            // LinkedHashMap.containsKey, which is not an access for access-order purposes, so the
-            // cache is effectively insertion-ordered. Refreshing here would evict different
-            // entries than the Android side under load.
-            if (_seen.ContainsKey(nonce))
-                return false;
-
-            var node = _order.AddLast(nonce);
-            _seen[nonce] = node;
-
-            if (_seen.Count > capacity)
-            {
-                var eldest = _order.First!;
-                _order.RemoveFirst();
-                _seen.Remove(eldest.Value);
-            }
-
-            return true;
-        }
+        if (localDeviceId.Any(c => c is '"' or '\\' || char.IsControl(c)))
+            throw new ArgumentException("Device id must not need JSON escaping.", nameof(localDeviceId));
+        _framer = new AeadStreamFramer(key, FrameCrypto.SessionStreamId, FramerRole.Seal);
+        _localDeviceId = localDeviceId;
+        _dir = dir;
     }
 
-    public void Clear()
+    public long NextCounter => _framer.NextCounter;
+
+    /// <summary>Returns the wire text. Throws <see cref="InvalidDataException"/> when the counter is exhausted.</summary>
+    public string Seal(string envelopeJson)
     {
-        lock (_gate)
-        {
-            _order.Clear();
-            _seen.Clear();
-        }
+        byte[] plain = Encoding.UTF8.GetBytes(envelopeJson);
+        byte[] sealedBytes = new byte[plain.Length + AeadStreamFramer.TagSize];
+        _framer.Seal(FrameCrypto.Aad(_localDeviceId, _dir, _framer.NextCounter), plain, sealedBytes);
+        CryptographicOperations.ZeroMemory(plain);
+        // Written directly, byte for byte as Android writes it: the default JSON encoder would
+        // escape '+' in the base64 as \u002B. The id is a canonical device id and base64 has
+        // nothing to escape, so no JSON escaping is needed.
+        return "{\"f\":\"" + _localDeviceId + "\",\"c\":\"" + Convert.ToBase64String(sealedBytes) + "\"}";
     }
+
+    public void Dispose() => _framer.Dispose();
+}
+
+/// <summary>Opens one direction's frames from one peer. Not thread-safe; the reader owns it.</summary>
+public sealed class SessionOpener : IDisposable
+{
+    private readonly AeadStreamFramer _framer;
+    private readonly string _peerDeviceId;
+    private readonly byte _dir;
+
+    public SessionOpener(byte[] key, string peerDeviceId, byte dir)
+    {
+        _framer = new AeadStreamFramer(key, FrameCrypto.SessionStreamId, FramerRole.Open);
+        _peerDeviceId = peerDeviceId;
+        _dir = dir;
+    }
+
+    /// <summary>The counter of the next frame.</summary>
+    public long NextCounter => _framer.NextCounter;
+
+    /// <summary>
+    /// Returns the envelope JSON. Throws <see cref="UnauthorizedAccessException"/> for a tag
+    /// failure and <see cref="InvalidDataException"/> for a malformed frame.
+    /// </summary>
+    public string Open(string wireText)
+    {
+        LinkWireFrame? wire;
+        try { wire = PeerMessageJson.Decode<LinkWireFrame>(wireText); }
+        catch (Exception error) when (error is System.Text.Json.JsonException or NotSupportedException)
+        {
+            throw new InvalidDataException("Malformed VLP control frame.", error);
+        }
+        if (wire is null || wire.From is null || wire.Ciphertext is null)
+            throw new InvalidDataException("Malformed VLP control frame.");
+        // Byte-exact, before any crypto: a frame naming another sender is not ours to open.
+        if (!string.Equals(wire.From, _peerDeviceId, StringComparison.Ordinal))
+            throw new InvalidDataException("VLP frame from an unexpected sender.");
+        byte[] sealedBytes = FrameCrypto.DecodeStrictBase64(wire.Ciphertext)
+            ?? throw new InvalidDataException("Malformed VLP control frame.");
+        if (sealedBytes.Length < AeadStreamFramer.TagSize) throw new InvalidDataException("Malformed VLP control frame.");
+        byte[] plain = new byte[sealedBytes.Length - AeadStreamFramer.TagSize];
+        try
+        {
+            _framer.Open(FrameCrypto.Aad(_peerDeviceId, _dir, _framer.NextCounter), sealedBytes, plain);
+        }
+        catch (InvalidDataException error)
+        {
+            throw new UnauthorizedAccessException("VLP control frame authentication failed.", error);
+        }
+        string json = Encoding.UTF8.GetString(plain);
+        CryptographicOperations.ZeroMemory(plain);
+        return json;
+    }
+
+    public void Dispose() => _framer.Dispose();
 }

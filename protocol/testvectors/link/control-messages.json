@@ -12,6 +12,7 @@
   "handshakeVectors": [
     {
       "name": "LinkPreamble",
+      "retiredIn": 3,
       "note": "encodeDefaults = true, so platform and protocolVersion appear even when left at their defaults. LINK_PROTOCOL_VERSION is 2 since ADR-031; pair and pk are null by default and therefore omitted.",
       "json": "{\"id\":\"6JE8415YZQQYQMBD34569HVYX4\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":2}",
       "requiredKeys": ["id", "name", "platform", "protocolVersion"],
@@ -19,6 +20,7 @@
     },
     {
       "name": "LinkPreambleAck accepting a session",
+      "retiredIn": 3,
       "json": "{\"mode\":\"session\"}",
       "requiredKeys": ["mode"],
       "forbiddenKeys": ["reason"]
@@ -34,12 +36,14 @@
     },
     {
       "name": "LinkPreamble for confirm pairing",
+      "retiredIn": 3,
       "note": "04-PROTOCOL.md 4.3. pk is the sender's static X25519 public key, standard base64 with padding.",
       "json": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":2,\"pair\":\"confirm\",\"pk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\"}",
       "requiredKeys": ["id", "name", "platform", "protocolVersion", "pair", "pk"]
     },
     {
       "name": "LinkPreambleAck for confirm pairing",
+      "retiredIn": 3,
       "note": "Values from pair-confirm.json: pkB and the commitment C.",
       "json": "{\"mode\":\"pairing-confirm\",\"pk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\",\"commit\":\"SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=\"}",
       "requiredKeys": ["mode", "pk", "commit"],
@@ -50,32 +54,85 @@
       "note": "Unauthenticated text frame, not inside a LinkWireFrame. n is 32 bytes, base64 (nA from pair-confirm.json).",
       "json": "{\"t\":\"pairNonce\",\"n\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\"}",
       "requiredKeys": ["t", "n"]
+    },
+    {
+      "name": "LinkPreamble v3",
+      "note": "ADR-058, 04-PROTOCOL.md 4.1. cn and epk are 32 bytes each, standard base64 with padding, fresh per connection. Values from link/connection-schedule-v3.json.",
+      "json": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"cn\":\"unS5S5Hw4Qevag2u75fAIyRVjLR1/7eEsXHARo4p07I=\",\"epk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\"}",
+      "requiredKeys": ["id", "name", "platform", "protocolVersion", "cn", "epk"],
+      "forbiddenKeys": ["pair", "pk"]
+    },
+    {
+      "name": "LinkPreambleAck accepting a session v3",
+      "note": "A session, pairing or pairing-confirm ack carries the responder's cn and epk. A refused or busy ack carries neither.",
+      "json": "{\"mode\":\"session\",\"cn\":\"gV4ajFrS+NL03L3IkiItSHwEhsfzvexSzbNSWMKj97w=\",\"epk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\"}",
+      "requiredKeys": ["mode", "cn", "epk"],
+      "forbiddenKeys": ["reason", "pk", "commit"]
+    },
+    {
+      "name": "LinkPreamble for confirm pairing v3",
+      "note": "Values from link/pairing-schedule-v3.json (confirm).",
+      "json": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"pair\":\"confirm\",\"pk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\",\"cn\":\"e7ZxFoFf1KNm5BRI2gkIkAwC9Ch+4c2vjmzPpkTFf7o=\",\"epk\":\"gA2L8fylZwodSawJ6Y7DkztUSmC+r5AGNYjmd66EXWc=\"}",
+      "requiredKeys": ["id", "name", "platform", "protocolVersion", "pair", "pk", "cn", "epk"]
+    },
+    {
+      "name": "LinkPreambleAck for confirm pairing v3",
+      "note": "pk and commit as in pair-confirm.json, plus the responder's cn and epk.",
+      "json": "{\"mode\":\"pairing-confirm\",\"pk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\",\"commit\":\"SDrgTP6a5PIY+i7qEvbocaY0lV825gmpRytWpVLLpMM=\",\"cn\":\"/jSo7aCb13o4poVN+pW+3yK/w1JumzOx55DyDvKHhvU=\",\"epk\":\"Gf1BJUSSbliZXgj1CDv7bAVN3DH813x5sSYjLphJXjw=\"}",
+      "requiredKeys": ["mode", "pk", "commit", "cn", "epk"],
+      "forbiddenKeys": ["reason"]
+    },
+    {
+      "name": "LinkPreamble for QR pairing v3",
+      "note": "Values from link/pairing-schedule-v3.json (qr). pk is required with pair = qr.",
+      "json": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"pair\":\"qr\",\"pk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\",\"cn\":\"wVp7nYKFdwGsJ/EXpmq0SxW8OxjYqiHozIhk7OXGO7Q=\",\"epk\":\"M2gFXHZgThwrVdujWX0CEi5XAE1oNWk6AQxMzzutNCg=\"}",
+      "requiredKeys": ["id", "name", "platform", "protocolVersion", "pair", "pk", "cn", "epk"]
+    },
+    {
+      "name": "LinkPreambleAck for QR pairing v3",
+      "json": "{\"mode\":\"pairing\",\"pk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\",\"cn\":\"LwjKJEmcohz1JVq7B178R3KhE8Erar6KGx2AohfnBc8=\",\"epk\":\"FhG3NaK1nbfYMZDePEYs7ARK46+x4lOLRdY1TX5yvU4=\"}",
+      "requiredKeys": ["mode", "pk", "cn", "epk"],
+      "forbiddenKeys": ["reason", "commit"]
     }
   ],
-  "wireFrameVectors": [
-    {
+  "wireFrameVectors": [    {
       "name": "Session-mode frame carries c, not p",
+      "retiredIn": 3,
       "json": "{\"f\":\"6JE8415YZQQYQMBD34569HVYX4\",\"n\":\"AAECAwQFBgcICQoL\",\"c\":\"Y2lwaGVydGV4dA==\",\"m\":\"bWFj\"}",
       "requiredKeys": ["f", "n", "c", "m"],
       "forbiddenKeys": ["p"]
     },
     {
       "name": "Pairing-mode frame carries p, not c",
+      "retiredIn": 3,
       "json": "{\"f\":\"6JE8415YZQQYQMBD34569HVYX4\",\"n\":\"AAECAwQFBgcICQoL\",\"p\":\"cGxhaW50ZXh0\",\"m\":\"bWFj\"}",
       "requiredKeys": ["f", "n", "p", "m"],
       "forbiddenKeys": ["c"]
+    },
+    {
+      "name": "v3 frame carries exactly f and c",
+      "note": "ADR-058, 04-PROTOCOL.md 5.1. The nonce is the implicit counter and the tag is the last 16 bytes of c, so n, m and p are gone in every mode.",
+      "json": "{\"f\":\"6JE8415YZQQYQMBD34569HVYX4\",\"c\":\"Y2lwaGVydGV4dA==\"}",
+      "requiredKeys": ["f", "c"],
+      "forbiddenKeys": ["n", "m", "p"]
     }
   ],
-  "envelopeVectors": [
-    {
+  "envelopeVectors": [    {
       "name": "Envelope wrapping a ping",
+      "retiredIn": 3,
       "json": "{\"v\":2,\"msgId\":\"m-1\",\"from\":\"6JE8415YZQQYQMBD34569HVYX4\",\"seq\":7,\"ts\":1760000000000,\"payload\":{\"t\":\"ping\",\"nonce\":\"abc\"}}",
       "requiredKeys": ["v", "msgId", "from", "seq", "ts", "payload"],
       "expected": { "v": 2, "seq": 7, "payloadType": "ping" }
+    },
+    {
+      "name": "v3 envelope wrapping a ping",
+      "note": "seq equals the frame counter + 1 (04-PROTOCOL.md 5.2).",
+      "json": "{\"v\":3,\"msgId\":\"m-1\",\"from\":\"6JE8415YZQQYQMBD34569HVYX4\",\"seq\":7,\"ts\":1760000000000,\"payload\":{\"t\":\"ping\",\"nonce\":\"abc\"}}",
+      "requiredKeys": ["v", "msgId", "from", "seq", "ts", "payload"],
+      "expected": { "v": 3, "seq": 7, "payloadType": "ping" }
     }
   ],
-  "messageVectors": [
-    {
+  "messageVectors": [    {
       "name": "ping",
       "discriminator": "ping",
       "json": "{\"t\":\"ping\",\"nonce\":\"abc\"}"
@@ -99,13 +156,20 @@
     },
     {
       "name": "pairHello without a public key",
+      "retiredIn": 3,
       "discriminator": "pairHello",
       "json": "{\"t\":\"pairHello\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"appVersion\":\"1.0.0\",\"protocolVersion\":2}",
       "forbiddenKeys": ["publicKeyB64"]
     },
     {
-      "name": "pairOk",
-      "discriminator": "pairOk",
+      "name": "pairHello for QR pairing",
+      "discriminator": "pairHello",
+      "note": "ADR-058: qrProof is the 32-byte HMAC from link/pairing-schedule-v3.json (qr), standard base64.",
+      "json": "{\"t\":\"pairHello\",\"deviceId\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"deviceName\":\"Test Phone\",\"platform\":\"android\",\"appVersion\":\"1.0.0\",\"protocolVersion\":3,\"publicKeyB64\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\",\"qrProof\":\"4+Ccu44lAxvd0M33Zj3XLX03Dh9Jpl2ozb5FifgluZs=\"}",
+      "requiredKeys": ["deviceId", "deviceName", "platform", "appVersion", "protocolVersion", "publicKeyB64", "qrProof"]
+    },
+    {
+      "name": "pairOk",      "discriminator": "pairOk",
       "note": "This message carries the long-lived session secret and is always sent sealed, never in the clear.",
       "json": "{\"t\":\"pairOk\",\"deviceId\":\"6JE8415YZQQYQMBD34569HVYX4\",\"deviceName\":\"Test PC\",\"platform\":\"windows\",\"sessionSecretB64\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"}"
     },
@@ -215,6 +279,7 @@
   "notes": [
     "The preamble is unauthenticated and carries no authority. It exists so the receiver can decide which key to use; the mode decision that follows is what grants anything.",
     "pairOk is always sealed even though pairing mode is nominally plaintext, because it carries the session secret. There is no plaintext fallback and therefore no downgrade path.",
-    "Adding a nullable field with a null default is not a breaking change and does not require a VLP_VERSION bump. Removing a field or changing its meaning does."
+    "Adding a nullable field with a null default is not a breaking change and does not require a VLP_VERSION bump. Removing a field or changing its meaning does.",
+    "An entry with retiredIn: 3 describes the link protocol v2 wire shape. Its values are kept unchanged as history; LINK_PROTOCOL_VERSION 3 peers neither send nor accept it (ADR-058). In v3 every frame, pairing included, is {f, c} sealed with ChaCha20-Poly1305."
   ]
 }

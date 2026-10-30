@@ -1,0 +1,68 @@
+{
+  "description": "Link protocol v3 session-mode key schedule (ProjectInfo/04-PROTOCOL.md section 4, ADR-058). I = initiator (dialler), R = responder. preamble and ack are the exact UTF-8 text frames; the transcript hashes those bytes.",
+  "algorithm": {
+    "transcript": "SHA-256(u32be(len P) || P || u32be(len A) || A)",
+    "dh": "X25519(ephemeralPrivate_self, epk_peer)",
+    "ikm": "dh || pairingSecret",
+    "prk": "HKDF-Extract(salt = transcript, ikm)",
+    "info": "utf8(label) || 0x00 || utf8(role) || 0x00 || utf8(idI) || 0x00 || utf8(idR); label veyro-link-v3; roles i2r, r2i, exp",
+    "keys": "kI2r = HKDF-Expand(prk, info(i2r), 32); kR2i = HKDF-Expand(prk, info(r2i), 32); expSecret = HKDF-Expand(prk, info(exp), 32)"
+  },
+  "note": "The two vectors share the pairing secret and differ only in the fresh ephemeral keys and cn values, so every derived key differs: a frame recorded on one connection cannot open on another.",
+  "vectors": [
+    {
+      "name": "session, phone dials PC (first connection)",
+      "input": {
+        "idI": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+        "idR": "9NHR2CYTZRWMJXWSNTWVRKQW6R",
+        "ephemeralPrivateIHex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+        "ephemeralPrivateRHex": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+        "cnIHex": "ba74b94b91f0e107af6a0daeef97c02324558cb475ffb784b171c0468e29d3b2",
+        "cnRHex": "815e1a8c5ad2f8d2f4dcbdc892222d487c0486c7f3bdec52cdb35258c2a3f7bc",
+        "pairingSecretHex": "7809c17d1ba400e39fc5101ee8e5096db12cd9665b84a9b1db24cb15f92aa798",
+        "preamble": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"cn\":\"unS5S5Hw4Qevag2u75fAIyRVjLR1/7eEsXHARo4p07I=\",\"epk\":\"hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\"}",
+        "ack": "{\"mode\":\"session\",\"cn\":\"gV4ajFrS+NL03L3IkiItSHwEhsfzvexSzbNSWMKj97w=\",\"epk\":\"3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=\"}"
+      },
+      "expected": {
+        "ephemeralPublicIHex": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+        "ephemeralPublicRHex": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+        "preambleHex": "7b226964223a223243395656373244465346314132534330544e36514241504543222c226e616d65223a22546573742050686f6e65222c22706c6174666f726d223a22616e64726f6964222c2270726f746f636f6c56657273696f6e223a332c22636e223a22756e533553354877345165766167327537356641497952566a4c52312f37654573584841526f34703037493d222c2265706b223a226853447743596b777031523069333363744437335767322f4f67306d4f427230363653706a717162546d6f3d227d",
+        "ackHex": "7b226d6f6465223a2273657373696f6e222c22636e223a22675634616a4672532b4e4c30334c33496b694974534877456873667a766578537a624e53574d4b6a3937773d222c2265706b223a2233703762665874397762545457324843374f51314e7a2b44513868626547644e7266782b46472b494b30383d227d",
+        "transcriptHex": "1596ccb701757f8322a488e596ecc163afa7417a3dad3958059d50d9e4242ec6",
+        "dhHex": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+        "ikmHex": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e1617427809c17d1ba400e39fc5101ee8e5096db12cd9665b84a9b1db24cb15f92aa798",
+        "prkHex": "a7155fcbb24685e07f068016c61a458cb4ae3d4a6dc49fad7ab7f2401421351b",
+        "kI2rHex": "2a270dbbfa10e43078c777e94cc1ff1357c6afb7666b5a5549e67ec3a6c2b996",
+        "kR2iHex": "9e2e78b23c39504fc8b13d398cc3e69023ce96219fe3eb940261a63dda31f645",
+        "expSecretHex": "d095ce06243ed56caea30e07a6d86889423171a119bac175774a88f08f594db1"
+      }
+    },
+    {
+      "name": "session, same pairing secret, second connection",
+      "input": {
+        "idI": "2C9VV72DFSF1A2SC0TN6QBAPEC",
+        "idR": "9NHR2CYTZRWMJXWSNTWVRKQW6R",
+        "ephemeralPrivateIHex": "e28fe6349c2a351ca24dc249f1616fdbde5718cf8b2526c5e4d6e6893e9a0665",
+        "ephemeralPrivateRHex": "2b604e39791d51fa568e8832fa6594389c6d7a0489599695040b19186632926c",
+        "cnIHex": "87183ddf83e79443b5fda1184f9a40b7bbcfda406a3429e57b59e531d4d6b2d0",
+        "cnRHex": "42ed5b933b51780afabcd1e56e4394535951000653edb90c9f6eaad30783fd43",
+        "pairingSecretHex": "7809c17d1ba400e39fc5101ee8e5096db12cd9665b84a9b1db24cb15f92aa798",
+        "preamble": "{\"id\":\"2C9VV72DFSF1A2SC0TN6QBAPEC\",\"name\":\"Test Phone\",\"platform\":\"android\",\"protocolVersion\":3,\"cn\":\"hxg934PnlEO1/aEYT5pAt7vP2kBqNCnle1nlMdTWstA=\",\"epk\":\"0tsPptjfXGdXJobl8M8V8/VUAOQTMq92eV+LdAPZxxE=\"}",
+        "ack": "{\"mode\":\"session\",\"cn\":\"Qu1bkztReAr6vNHlbkOUU1lRAAZT7bkMn26q0weD/UM=\",\"epk\":\"vB35+JlpJGeieAYqCwsfi9uZIrUwtMBMTMub+ABIT1A=\"}"
+      },
+      "expected": {
+        "ephemeralPublicIHex": "d2db0fa6d8df5c67572686e5f0cf15f3f55400e41332af76795f8b7403d9c711",
+        "ephemeralPublicRHex": "bc1df9f899692467a278062a0b0b1f8bdb9922b530b4c04c4ccb9bf800484f50",
+        "preambleHex": "7b226964223a223243395656373244465346314132534330544e36514241504543222c226e616d65223a22546573742050686f6e65222c22706c6174666f726d223a22616e64726f6964222c2270726f746f636f6c56657273696f6e223a332c22636e223a22687867393334506e6c454f312f6145595435704174377650326b42714e436e6c65316e6c4d6454577374413d222c2265706b223a223074735070746a66584764584a6f626c384d3856382f5655414f51544d71393265562b4c6441505a7878453d227d",
+        "ackHex": "7b226d6f6465223a2273657373696f6e222c22636e223a22517531626b7a745265417236764e486c626b4f5555316c5241415a5437626b4d6e323671307765442f554d3d222c2265706b223a22764233352b4a6c704a47656965415971437773666939755a49725577744d424d544d75622b4142495431413d227d",
+        "transcriptHex": "5fa7890d9324033b54c4071ee686348ff123ec0d4999bdb582e53fec50f838bf",
+        "dhHex": "64af7a4c617fe9daad5be7db1933c7fd59b7018eb3bb8834e93872d7f2f1f746",
+        "ikmHex": "64af7a4c617fe9daad5be7db1933c7fd59b7018eb3bb8834e93872d7f2f1f7467809c17d1ba400e39fc5101ee8e5096db12cd9665b84a9b1db24cb15f92aa798",
+        "prkHex": "5b0f0f8f4471e4f824706c8872d20098a5de80bb83c9f4722d51322410c95aa4",
+        "kI2rHex": "6a5849d91274c5ae5c41d9aa303938991569c34decd016d9a421fca25f7fc570",
+        "kR2iHex": "b6519fcf35b41ac182431bf2b66c6267eba62a64344e826bc9111468034130f4",
+        "expSecretHex": "0068fd045bb6f9c96cc411ec3af431c6c88dca47a4583e10491bde21e4bb8538"
+      }
+    }
+  ]
+}
