@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ADR-066: a mirrored phone screen. Every control is on the PC; the phone only allows capture.
+  "Clean view" leaves only the picture, for OBS Window Capture; right-click brings the controls back.
+-->
+<UserControl
+    x:Class="Veyro.UserControls.MirrorView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="RootGrid" Background="Black">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ContextFlyout>
+            <MenuFlyout>
+                <ToggleMenuFlyoutItem
+                    x:Name="CleanViewMenuItem"
+                    Click="CleanViewMenuItem_Click"
+                    Text="Clean view (picture only)" />
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem Click="Stop_Click" Text="Stop mirroring">
+                    <MenuFlyoutItem.Icon>
+                        <FontIcon Glyph="&#xE71A;" />
+                    </MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+            </MenuFlyout>
+        </Grid.ContextFlyout>
+
+        <!--  Toolbar  -->
+        <Grid
+            x:Name="Toolbar"
+            Grid.Row="0"
+            Padding="8,6"
+            Background="{ThemeResource LayerFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="0,0,0,1"
+            ColumnSpacing="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Button
+                x:Name="SettingsButton"
+                Grid.Column="0"
+                AutomationProperties.Name="Mirroring settings"
+                ToolTipService.ToolTip="Quality and encoder">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon FontSize="14" Glyph="&#xE713;" />
+                    <TextBlock x:Name="QualityShortText" Text="Balanced" />
+                </StackPanel>
+                <Button.Flyout>
+                    <Flyout Placement="BottomEdgeAlignedLeft">
+                        <StackPanel Width="280" Spacing="12">
+                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Mirroring on this PC" />
+                            <ComboBox
+                                x:Name="QualityCombo"
+                                HorizontalAlignment="Stretch"
+                                Header="Quality"
+                                SelectionChanged="QualityCombo_SelectionChanged" />
+                            <ToggleSwitch
+                                x:Name="HardwareSwitch"
+                                Header="Hardware encoding on the phone"
+                                OffContent="Off (software, slower)"
+                                OnContent="On (recommended)"
+                                Toggled="HardwareSwitch_Toggled" />
+                            <TextBlock
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="This PC decodes on its graphics card when it can, and in software when it cannot."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+
+            <ToggleButton
+                x:Name="SoundToggle"
+                Grid.Column="1"
+                AutomationProperties.Name="Phone sound"
+                Click="SoundToggle_Click"
+                ToolTipService.ToolTip="Phone sound (what apps play on the phone, never its microphone)">
+                <FontIcon x:Name="SoundIcon" FontSize="14" Glyph="&#xE767;" />
+            </ToggleButton>
+
+            <Button
+                Grid.Column="2"
+                AutomationProperties.Name="Use in OBS Studio"
+                ToolTipService.ToolTip="Use in OBS Studio">
+                <FontIcon FontSize="14" Glyph="&#xE714;" />
+                <Button.Flyout>
+                    <Flyout Placement="BottomEdgeAlignedLeft">
+                        <StackPanel Width="320" Spacing="8">
+                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Show this phone in OBS Studio" />
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="1. In OBS, add a source: Window Capture." />
+                                <LineBreak />
+                                <Run x:Name="ObsWindowRun" Text="2. Window: [Veyro.exe] this window's title." />
+                                <LineBreak />
+                                <Run Text="3. Capture method: Windows 10 (1903 and up). Keep Client area on." />
+                                <LineBreak />
+                                <Run Text="4. For the phone's sound, add Application Audio Capture and pick Veyro.exe." />
+                            </TextBlock>
+                            <TextBlock
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="Clean view hides these controls so only the phone's picture is captured. The window can stay behind other windows, but not minimised (the phone pauses while it is)."
+                                TextWrapping="Wrap" />
+                            <Button Click="CleanViewOn_Click" Content="Turn on Clean view" />
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+
+            <ToggleButton
+                x:Name="CleanViewToggle"
+                Grid.Column="3"
+                AutomationProperties.Name="Clean view"
+                Click="CleanViewToggle_Click"
+                ToolTipService.ToolTip="Clean view: picture only (right-click to bring the controls back)">
+                <FontIcon FontSize="14" Glyph="&#xE740;" />
+            </ToggleButton>
+
+            <Button
+                x:Name="StopButton"
+                Grid.Column="5"
+                AutomationProperties.Name="Stop mirroring"
+                Click="Stop_Click"
+                ToolTipService.ToolTip="Stop mirroring">
+                <FontIcon FontSize="14" Glyph="&#xE71A;" />
+            </Button>
+        </Grid>
+
+        <!--  The phone's sound: denied, blocked or waiting, with Ask again as often as needed  -->
+        <InfoBar
+            x:Name="AudioInfoBar"
+            Grid.Row="1"
+            Margin="8,8,8,0"
+            IsClosable="False"
+            IsOpen="False"
+            Severity="Warning">
+            <InfoBar.ActionButton>
+                <Button x:Name="AudioAskButton" Click="AudioAsk_Click" Content="Ask again" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
+        <!--  The picture  -->
+        <MediaPlayerElement
+            x:Name="Player"
+            Grid.Row="2"
+            AreTransportControlsEnabled="False"
+            AutomationProperties.Name="Phone screen"
+            Stretch="Uniform" />
+
+        <!--  Status: asking, connecting, declined, stopped  -->
+        <Grid
+            x:Name="StatusPanel"
+            Grid.Row="2"
+            Padding="24"
+            Background="#E6000000">
+            <StackPanel
+                MaxWidth="340"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="12">
+                <ProgressRing
+                    x:Name="StatusRing"
+                    Width="36"
+                    Height="36"
+                    Foreground="White"
+                    IsActive="False" />
+                <FontIcon
+                    x:Name="StatusIcon"
+                    FontSize="36"
+                    Foreground="White"
+                    Glyph="&#xE8EA;"
+                    Visibility="Collapsed" />
+                <TextBlock
+                    x:Name="StatusTitle"
+                    AutomationProperties.LiveSetting="Assertive"
+                    FontSize="18"
+                    FontWeight="SemiBold"
+                    Foreground="White"
+                    HorizontalTextAlignment="Center"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    x:Name="StatusDetail"
+                    Foreground="#CCFFFFFF"
+                    HorizontalTextAlignment="Center"
+                    TextWrapping="Wrap" />
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <Button
+                        x:Name="AskAgainButton"
+                        Click="AskAgain_Click"
+                        Content="Ask again"
+                        Style="{StaticResource AccentButtonStyle}" />
+                    <Button
+                        x:Name="CloseButton"
+                        Click="Close_Click"
+                        Content="Close" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -10,8 +10,8 @@ namespace Veyro.ViewModels;
 /// </summary>
 public sealed class MainPageViewModel : BaseViewModel
 {
-    /// <summary>Shown wherever Sefirah offers scrcpy: Veyro has no screen mirroring yet.</summary>
-    public const string ScreenMirrorUnavailableText = "Screen mirroring is not available yet.";
+    /// <summary>The phone frame's tooltip (ADR-066: clicking it opens the mirror window).</summary>
+    public const string ScreenMirrorText = "Mirror this phone's screen";
 
     /// <summary>How long the pill says Connecting after start-up or a refresh.</summary>
     private static readonly TimeSpan ConnectingWindow = TimeSpan.FromSeconds(15);

@@ -57,6 +57,7 @@ public sealed class VeyroContainer
     public IBluetoothCallingService BluetoothCalling { get; }
     public CallRouter CallRouter { get; }
     public CallWindowService CallWindowService { get; }
+    public MirrorService Mirror { get; }
     public INetworkDiagnosticsService NetworkDiagnostics { get; }
     public IQrCodeRenderer QrCodeRenderer { get; }
     public IPhotoActions PhotoActions { get; }
@@ -202,6 +203,8 @@ public sealed class VeyroContainer
         BluetoothCalling = new BluetoothCallingService(SettingsStore);
         CallRouter = new CallRouter(Calls, BluetoothCalling);
         CallWindowService = new CallWindowService(BluetoothCalling, Calls, ThemeModeService);
+        // ADR-066: one mirror window per phone; quality is this PC's setting, the phone only consents.
+        Mirror = new MirrorService(PeerSessions, TrustStore, IdentityManager.DeviceId.Value, SettingsStore, ThemeModeService);
         NotificationToastService = new NotificationToastService(
             NotificationMirror, Messaging, Calls, CallRouter,
             // Invoked on toast activation, long after construction has assigned the view model.

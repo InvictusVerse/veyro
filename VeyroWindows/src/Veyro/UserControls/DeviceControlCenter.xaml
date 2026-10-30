@@ -97,7 +97,8 @@
                 AutomationProperties.Name="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
                 PointerEntered="PhoneFrame_PointerEntered"
                 PointerExited="PhoneFrame_PointerExited"
-                PointerWheelChanged="PhoneFrame_PointerWheelChanged">
+                PointerWheelChanged="PhoneFrame_PointerWheelChanged"
+                Tapped="PhoneFrame_Tapped">
                 <!--  Bezel  -->
                 <Border
                     Background="#FF1B1B1F"
@@ -129,7 +130,7 @@
                         VerticalAlignment="Top"
                         Fill="#FF0B0B0E" />
                 </Grid>
-                <!--  Sefirah starts scrcpy here. Veyro has no screen mirroring yet, and says so.  -->
+                <!--  Sefirah starts scrcpy here. Veyro opens its mirror window (ADR-066).  -->
                 <Grid
                     x:Name="PhoneFrameOverlay"
                     Margin="4"

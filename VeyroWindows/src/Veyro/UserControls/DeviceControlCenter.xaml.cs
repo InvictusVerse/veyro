@@ -19,7 +19,7 @@ public sealed partial class DeviceControlCenter : UserControl
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
     public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
     public PhoneMediaViewModel MediaViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
-    public string ScreenMirrorText => MainPageViewModel.ScreenMirrorUnavailableText;
+    public string ScreenMirrorText => MainPageViewModel.ScreenMirrorText;
 
     /// <summary>Why the Media flyout is empty.</summary>
     public string MediaEmptyText(bool connected) => connected
@@ -69,6 +69,14 @@ public sealed partial class DeviceControlCenter : UserControl
     }
 
     private void PhoneFrame_PointerEntered(object sender, PointerRoutedEventArgs e) => AnimateOverlay(true);
+
+    // ADR-066: the phone frame opens its mirror window (Sefirah starts scrcpy here).
+    private void PhoneFrame_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (ViewModel.Device is not { } device) return;
+        VeyroContainer.Instance.Mirror.Open(device.DeviceId);
+        e.Handled = true;
+    }
 
     private void PhoneFrame_PointerExited(object sender, PointerRoutedEventArgs e) => AnimateOverlay(false);
 

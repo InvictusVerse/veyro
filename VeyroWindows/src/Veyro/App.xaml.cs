@@ -604,6 +604,8 @@ public partial class App : Application
     public static void ExitApplication()
     {
         HandleClosedEvents = false;
+        // Mirror windows first: each sends streamStop while the phone's session is still up.
+        VeyroContainer.Instance.Mirror.Dispose();
         VeyroContainer.Instance.LinkServer.StopAsync().GetAwaiter().GetResult();
         VeyroContainer.Instance.Photos.Dispose();
         VeyroContainer.Instance.NotificationToastService.Dispose();
