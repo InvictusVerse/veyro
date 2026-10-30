@@ -70,9 +70,16 @@ public sealed class LinkClient
         TrustedPeer trustedPeer,
         IReadOnlyList<string> filePaths,
         IProgress<long>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // ADR-064: the plan the caller already built from filePaths, so a folder is walked once.
+        OutgoingPlan? planned = null)
     {
-        TransferPlan plan = BuildPlan(filePaths);
+        OutgoingPlan outgoing = planned ?? OutgoingPlanner.Build(filePaths);
+        // ADR-064: folders only to a phone that says it takes them (FOLDER_TRANSFER).
+        if (outgoing.HasFolders && sessions.IsConnected(trustedPeer.DeviceId) &&
+            (sessions.GetPeerCapabilities(trustedPeer.DeviceId) & PeerCapabilities.FolderTransfer) == 0)
+            throw new NotSupportedException("The phone cannot receive folders. Update Veyro on the phone.");
+        TransferPlan plan = BuildPlan(outgoing);
         IOutboundTransferChannel? channel = null;
         if (sessions.IsConnected(trustedPeer.DeviceId))
         {
@@ -101,7 +108,7 @@ public sealed class LinkClient
         IReadOnlyList<string> filePaths,
         IProgress<long>? progress = null,
         CancellationToken ct = default)
-        => SendOverNewConnectionAsync(peer, trustedPeer, BuildPlan(filePaths), progress, ct);
+        => SendOverNewConnectionAsync(peer, trustedPeer, BuildPlan(OutgoingPlanner.Build(filePaths)), progress, ct);
 
     private async Task<BulkTransferResult> SendOverNewConnectionAsync(
         PeerDevice peer,
@@ -345,23 +352,23 @@ public sealed class LinkClient
 
     private sealed record TransferPlan(string TransferId, IReadOnlyList<PlannedItem> Items, PeerMessage.TransferOffer Offer);
 
-    private TransferPlan BuildPlan(IReadOnlyList<string> filePaths)
+    /// <summary>
+    /// Files and whole folders (ADR-064, <see cref="OutgoingPlanner"/>): the offer lists every file
+    /// and a folder's empty directories (isDir); only the files stream.
+    /// </summary>
+    private TransferPlan BuildPlan(OutgoingPlan outgoing)
     {
-        if (filePaths.Count == 0) throw new ArgumentException("At least one file is required.", nameof(filePaths));
-        var items = filePaths
-            .Where(File.Exists)
-            .Select((path, index) => new PlannedItem(
-                index,
-                path,
-                RelativePath.SanitizeOutgoingSegment(Path.GetFileName(path)),
-                new FileInfo(path).Length))
+        if (outgoing.Entries.Count == 0 && outgoing.Skipped == 0) throw new ArgumentException("At least one file is required.", nameof(outgoing));
+        var items = outgoing.Files
+            .Select(entry => new PlannedItem(entry.Index, entry.SourcePath!, entry.RelativePath, entry.Size))
             .ToList();
-        if (items.Count == 0) throw new FileNotFoundException("No selected file exists.");
+        if (items.Count == 0)
+            throw new FileNotFoundException(outgoing.FolderName is null ? "No selected file exists." : "The folder has no files to send.");
         string transferId = Guid.NewGuid().ToString("N");
         var offer = new PeerMessage.TransferOffer(
             transferId,
-            items.Select(item => new LinkItem(item.Index, item.RelativePath, item.Size, File.GetLastWriteTimeUtc(item.Path).Ticks, false)).ToList(),
-            items.Sum(item => item.Size),
+            outgoing.Entries.Select(entry => new LinkItem(entry.Index, entry.RelativePath, entry.Size, entry.ModifiedTicks, entry.IsDirectory)).ToList(),
+            outgoing.TotalBytes,
             _localName,
             // Wire name is "LAN_TCP" (04-PROTOCOL 7.1). "LanTcp".ToUpperInvariant() gave "LANTCP",
             // which Android did not recognise: it answered with a WebSocket-only decision and

@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyro.core.designsystem.icons.VeyroIcons
@@ -110,6 +111,8 @@ internal fun PairedDeviceCard(
     onRename: () -> Unit,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Send folder (ADR-064); null when this device cannot receive folders. */
+    onSendFolder: (() -> Unit)? = null,
 ) {
     val status = deviceCardStatus(device, now)
     val tone = toneColors(status.tone)
@@ -210,6 +213,9 @@ internal fun PairedDeviceCard(
             ) {
                 if (canLock) {
                     CardAction(VeyroIcons.Lock, "Lock", colors.onSurfaceVariant, onLock, Modifier.weight(1f))
+                }
+                if (onSendFolder != null) {
+                    CardAction(VeyroIcons.Folder, "Send folder", colors.onSurfaceVariant, onSendFolder, Modifier.weight(1f))
                 }
                 CardAction(VeyroIcons.SettingsFill, "Settings", colors.onSurfaceVariant, onOpenSettings, Modifier.weight(1f))
                 CardAction(VeyroIcons.Edit, "Rename", colors.onSurfaceVariant, onRename, Modifier.weight(1f))
@@ -333,7 +339,9 @@ private fun CardAction(icon: ImageVector, label: String, tint: Color, onClick: (
             text = label,
             style = MaterialTheme.typography.labelMedium,
             color = tint,
-            maxLines = 1,
+            // Two lines, so "Send folder" fits beside four other actions on a narrow phone.
+            maxLines = 2,
+            textAlign = TextAlign.Center,
             overflow = TextOverflow.Ellipsis,
         )
     }

@@ -138,6 +138,13 @@ public sealed partial class DeviceControlCenter : UserControl
         await App.PickAndSendFilesAsync();
     }
 
+    /// <summary>ADR-064: the folder picker; the whole folder goes as soon as one is chosen.</summary>
+    private async void SendFolderAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Device is null) return;
+        await App.PickAndSendFolderAsync();
+    }
+
     private void OpenReceivedFolderAction_Click(object sender, RoutedEventArgs e)
     {
         string dir = VeyroContainer.Instance.SettingsStore.Current.DownloadDirectory;

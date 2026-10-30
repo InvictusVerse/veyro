@@ -325,6 +325,12 @@
                                         <FontIcon Glyph="&#xE898;" />
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
+                                <!--  ADR-064: a whole folder, its structure kept.  -->
+                                <MenuFlyoutItem Click="SendFolderAction_Click" Text="Send folder">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8B7;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutItem Click="OpenReceivedFolderAction_Click" Text="Open received files">
                                     <MenuFlyoutItem.Icon>
                                         <FontIcon Glyph="&#xEC50;" />

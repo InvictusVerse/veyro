@@ -63,12 +63,77 @@ public class AndroidMediaStorePublisher(
         // If user specified custom destination folder, write there instead of MediaStore
         val customDir = customDestinationDir?.invoke()
         if (customDir != null && customDir.exists()) {
-            // The same subfolders inside the chosen folder, so it stays as tidy as the default.
-            val sorted = File(customDir, ReceivedFolders.subfolder(fileName, resolvedMimeType))
+            // The same subfolders inside the chosen folder, so it stays as tidy as the default;
+            // an item of a received folder keeps that folder's structure (ADR-064).
+            val parent = relativePath.substringBeforeLast('/', missingDelimiterValue = "")
+            val sorted = insideOrNull(customDir, parent.ifEmpty { ReceivedFolders.subfolder(fileName, resolvedMimeType) })
+                ?: return@withContext StoragePublishResult.Failed("PATH_REJECTED")
             return@withContext publishToCustomDir(sourceFile, sorted, fileName, resolvedMimeType)
         }
 
-        publishToMediaStore(sourceFile, fileName, resolvedMimeType, sizeBytes)
+        publishToMediaStore(sourceFile, fileName, resolvedMimeType, sizeBytes, ReceivedFolders.dirFor(relativePath, resolvedMimeType))
+    }
+
+    /**
+     * ADR-064: a received folder's top name is taken when one of the type folders has it, when
+     * this app already saved something under it, or (Android 11+, where shared storage can be
+     * looked at by path) when a folder of that name is already there.
+     */
+    override suspend fun folderExists(name: String): Boolean = withContext(Dispatchers.IO) {
+        if (ReceivedFolders.isTypeFolder(name)) return@withContext true
+        val customDir = customDestinationDir?.invoke()
+        if (customDir != null && customDir.exists()) {
+            return@withContext insideOrNull(customDir, name)?.exists() != false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && sharedVeyroDir()?.let { File(it, name).exists() } == true) {
+            return@withContext true
+        }
+        // Rows this app owns under the name, finished or still pending. LIKE wildcards in the
+        // name are escaped; a backslash cannot occur (REQ-T11).
+        val escaped = name.replace("%", "\\%").replace("_", "\\_")
+        val args = Bundle().apply {
+            putString(
+                ContentResolver.QUERY_ARG_SQL_SELECTION,
+                "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '\\'",
+            )
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(context.packageName, "${ReceivedFolders.ROOT}/$escaped/%"))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+            putInt(ContentResolver.QUERY_ARG_LIMIT, 1)
+        }
+        runCatching {
+            context.contentResolver.query(downloads(), arrayOf(MediaStore.MediaColumns._ID), args, null)?.use { it.count > 0 } == true
+        }.onFailure { VeyroLog.w(TAG) { "Folder check failed (${it.javaClass.simpleName})" } }.getOrDefault(false)
+    }
+
+    /**
+     * An empty directory of a received folder (ADR-064). MediaStore has no rows for directories,
+     * so it is made by path: in the chosen folder, or on Android 11+ in Download/Veyro, where an
+     * app may create directories without a permission. Android 10 cannot; it is counted instead.
+     */
+    override suspend fun createDirectory(relativePath: String): Boolean = withContext(Dispatchers.IO) {
+        val customDir = customDestinationDir?.invoke()
+        val root = when {
+            customDir != null && customDir.exists() -> customDir
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> sharedVeyroDir()
+            else -> null
+        } ?: return@withContext false
+        val dir = insideOrNull(root, relativePath) ?: return@withContext false
+        runCatching { dir.mkdirs() || dir.isDirectory }.getOrDefault(false)
+    }
+
+    /** Download/Veyro on the primary volume, by path. */
+    @Suppress("DEPRECATION") // The path is only read and made, never written through File for a file.
+    private fun sharedVeyroDir(): File? = runCatching {
+        File(android.os.Environment.getExternalStorageDirectory(), ReceivedFolders.ROOT)
+    }.getOrNull()
+
+    /** [root]/[relativePath] when it stays inside [root] after canonicalisation (REQ-T11). */
+    private fun insideOrNull(root: File, relativePath: String): File? {
+        if (!com.veyro.core.protocol.RelativePath.isValid(relativePath)) return null
+        return runCatching {
+            val base = root.canonicalFile
+            File(base, relativePath).canonicalFile.takeIf { it.path.startsWith(base.path + File.separator) }
+        }.getOrNull()
     }
 
     /**
@@ -122,7 +187,8 @@ public class AndroidMediaStorePublisher(
             if (customDir != null && customDir.exists()) return@withContext null // staged there, then renamed
             val fileName = relativePath.substringAfterLast('/')
             val resolvedMimeType = mimeType ?: detectMimeType(fileName)
-            val relativeDir = ReceivedFolders.pathFor(fileName, resolvedMimeType)
+            // A received folder keeps its structure (ADR-064); a loose file goes by type.
+            val relativeDir = ReceivedFolders.dirFor(relativePath, resolvedMimeType)
             val resolver = context.contentResolver
             val uri = runCatching { resolver.insert(downloads(), pendingValues(fileName, resolvedMimeType, relativeDir)) }
                 .onFailure { VeyroLog.w(TAG) { "Direct insert failed (${it.javaClass.simpleName})" } }
@@ -280,6 +346,7 @@ public class AndroidMediaStorePublisher(
         fileName: String,
         mimeType: String,
         sizeBytes: Long,
+        relativeDir: String,
     ): StoragePublishResult {
         val contentResolver = context.contentResolver
 
@@ -287,7 +354,6 @@ public class AndroidMediaStorePublisher(
         // collection is the only one that accepts every type; MediaStore still indexes images,
         // videos and audio there by MIME type, so they show in Gallery and music apps as before.
         val collectionUri = downloads()
-        val relativeDir = ReceivedFolders.pathFor(fileName, mimeType)
         val values = pendingValues(fileName, mimeType, relativeDir)
 
         val insertedUri: Uri

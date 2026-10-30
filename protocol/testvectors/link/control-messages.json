@@ -123,6 +123,14 @@
       "forbiddenKeys": ["senderWifiP2pAddress"]
     },
     {
+      "name": "offer of a folder",
+      "discriminator": "offer",
+      "note": "ADR-064, sent only to a peer with FOLDER_TRANSFER (0x0002). Every path starts with the folder's name. Files come first; then each empty directory as an item with isDir true and size 0, which is offered but never streamed. totalBytes counts the files only.",
+      "json": "{\"t\":\"offer\",\"transferId\":\"tx-2\",\"items\":[{\"index\":0,\"relPath\":\"Trip/a.jpg\",\"size\":1024,\"mtime\":1760000000000,\"isDir\":false},{\"index\":1,\"relPath\":\"Trip/Day 2/b.jpg\",\"size\":2048,\"mtime\":1760000000000,\"isDir\":false},{\"index\":2,\"relPath\":\"Trip/Empty\",\"size\":0,\"mtime\":1760000000000,\"isDir\":true}],\"totalBytes\":3072,\"senderName\":\"Test PC\",\"preferredRoutes\":[\"LAN_TCP\"]}",
+      "requiredKeys": ["t", "transferId", "items", "totalBytes", "senderName", "preferredRoutes"],
+      "forbiddenKeys": ["senderWifiP2pAddress"]
+    },
+    {
       "name": "decision accepting over LAN_TCP",
       "discriminator": "decision",
       "note": "Every optional field that is null must be omitted. authToken is the ephemeral per-transfer credential for the VTC1 socket.",

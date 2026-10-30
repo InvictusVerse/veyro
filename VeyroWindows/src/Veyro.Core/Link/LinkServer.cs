@@ -96,7 +96,7 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
 
     /// <summary>What this listener's sessions support, sent in HelloAck.</summary>
     public const int LocalCapabilities =
-        PeerCapabilities.FileTransfer | PeerCapabilities.Resume | PeerCapabilities.NotificationMirror |
+        PeerCapabilities.FileTransfer | PeerCapabilities.FolderTransfer | PeerCapabilities.Resume | PeerCapabilities.NotificationMirror |
         PeerCapabilities.Clipboard |
         PeerCapabilities.MediaControl | PeerCapabilities.DeviceStatus |
         PeerCapabilities.Messaging | PeerCapabilities.Calls | PeerCapabilities.Photos |
@@ -1112,10 +1112,10 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
                 return;
             }
 
-            var inboundItems = offer.Items
-                .Where(item => !item.IsDir)
-                .Select(item => new InboundTransferItem(item.Index, item.RelPath, item.Size))
-                .ToList();
+            // ADR-064: a folder keeps its structure; a top folder whose name is taken in the
+            // destination is saved as "Name (2)". BulkTransfer still validates every path.
+            InboundFolderLayout layout = InboundFolderLayout.Plan(destinationRoot, offer.Items, renameTakenFolders: claim is null);
+            var inboundItems = layout.Files.ToList();
             Directory.CreateDirectory(destinationRoot);
             var resume = BulkTransfer.BuildResume(destinationRoot, inboundItems);
             BulkTransferResult result;
@@ -1165,6 +1165,9 @@ public sealed class LinkServer : IAsyncDisposable, ILinkSessionRunner
             {
                 tcp.Stop();
             }
+            // The folder's empty directories, once its files are in (ADR-064).
+            int directoriesNotMade = layout.CreateEmptyDirectories(destinationRoot);
+            if (directoriesNotMade > 0) VeyroTrace.Warn($"Inbound folder: {directoriesNotMade} empty directories not created");
             await secure.SendAsync(new PeerMessage.TransferEnd(offer.TransferId, true), ct).ConfigureAwait(false);
             if (claim is not null)
             {

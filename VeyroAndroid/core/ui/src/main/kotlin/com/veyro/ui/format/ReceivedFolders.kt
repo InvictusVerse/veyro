@@ -34,4 +34,17 @@ public object ReceivedFolders {
 
     /** "Download/Veyro/Photos" for a file. */
     public fun pathFor(fileName: String, mimeType: String? = null): String = "$ROOT/${subfolder(fileName, mimeType)}"
+
+    /**
+     * The folder an item lands in. A loose file goes to its type folder; an item of a received
+     * folder keeps the folder's structure ("Trip/day 1/a.jpg" -> "Download/Veyro/Trip/day 1",
+     * ADR-064). [relativePath] is already validated (REQ-T11).
+     */
+    public fun dirFor(relativePath: String, mimeType: String? = null): String {
+        val parent = relativePath.substringBeforeLast('/', missingDelimiterValue = "")
+        return if (parent.isEmpty()) pathFor(relativePath, mimeType) else "$ROOT/$parent"
+    }
+
+    /** A received folder is never saved into a type folder: "Photos" arrives as "Photos (2)". */
+    public fun isTypeFolder(name: String): Boolean = ALL.any { it.equals(name, ignoreCase = true) }
 }

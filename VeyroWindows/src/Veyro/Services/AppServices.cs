@@ -292,13 +292,29 @@ public sealed class FileTransferService : IFileTransferService
         if (filePaths.Count == 0) return;
         if (ActiveTransfer is { } running && !IsFinished(running)) return; // one at a time, as the banner shows
 
-        var items = filePaths
-            .Where(File.Exists)
-            .Select((p, idx) => new TransferItem(idx, Path.GetFileName(p), new FileInfo(p).Length, string.Empty))
+        // ADR-064: files and whole folders; a folder is walked once, off the UI thread, and that
+        // same plan is what is offered.
+        OutgoingPlan plan;
+        try
+        {
+            plan = await Task.Run(() => OutgoingPlanner.Build(filePaths)).ConfigureAwait(true);
+        }
+        catch (FolderTooLargeException error)
+        {
+            ShowFailedBeforeStart(target, error.Message);
+            return;
+        }
+        if (plan.FileCount == 0)
+        {
+            if (plan.FolderName is { } empty) ShowFailedBeforeStart(target, $"{empty} has no files to send.");
+            return;
+        }
+        if (plan.Skipped > 0) VeyroTrace.Info($"Outbound plan left out {plan.Skipped} item(s)");
+        var items = plan.Files
+            .Select(entry => new TransferItem(entry.Index, entry.RelativePath, entry.Size, string.Empty))
             .ToList();
-        if (items.Count == 0) return;
 
-        long totalBytes = items.Sum(i => i.SizeBytes);
+        long totalBytes = plan.TotalBytes;
         ActiveTransfer = new ActiveTransfer(
             TransferId: Guid.NewGuid().ToString("N")[..8],
             PeerDeviceId: target.DeviceId,
@@ -310,7 +326,8 @@ public sealed class FileTransferService : IFileTransferService
             TotalBytes: totalBytes,
             SpeedBytesPerSecond: 0,
             EstimatedRemaining: null,
-            CurrentFileName: items.Count == 1 ? items[0].RelativePath : $"{items.Count} files",
+            // "Photos folder, 120 files" for a folder (ADR-064).
+            CurrentFileName: plan.Skipped > 0 ? $"{plan.Describe()}, {plan.Skipped} left out" : plan.Describe(),
             Items: items);
 
         ActiveTransferChanged?.Invoke(ActiveTransfer);
@@ -355,7 +372,7 @@ public sealed class FileTransferService : IFileTransferService
             });
             var client = new LinkClient(_identityManager.DeviceId.Value, _settingsStore.Current.DeviceName);
             BulkTransferResult result = await client.SendFilesAsync(
-                _sessions, peer, trusted, filePaths, progress, _transferCancellation.Token).ConfigureAwait(true);
+                _sessions, peer, trusted, filePaths, progress, _transferCancellation.Token, planned: plan).ConfigureAwait(true);
             var verifiedItems = items.Select(item => item with { Verification = VerificationOutcome.Verified }).ToList();
             ActiveTransfer = ActiveTransfer with
             {
@@ -381,6 +398,26 @@ public sealed class FileTransferService : IFileTransferService
         {
             ActiveTransferChanged?.Invoke(ActiveTransfer);
         }
+    }
+
+    /// <summary>A send that cannot start (a folder too big or with no files) still says why in the banner.</summary>
+    private void ShowFailedBeforeStart(PairedDeviceUiModel target, string message)
+    {
+        ActiveTransfer = new ActiveTransfer(
+            TransferId: Guid.NewGuid().ToString("N")[..8],
+            PeerDeviceId: target.DeviceId,
+            PeerDisplayName: target.Name,
+            IsIncoming: false,
+            Stage: TransferStage.Failed,
+            Route: TransferRoute.LanTcp,
+            BytesTransferred: 0,
+            TotalBytes: 0,
+            SpeedBytesPerSecond: 0,
+            EstimatedRemaining: null,
+            CurrentFileName: "Nothing sent",
+            Items: [],
+            ErrorMessage: message);
+        ActiveTransferChanged?.Invoke(ActiveTransfer);
     }
 
     public void CancelCurrentTransfer()

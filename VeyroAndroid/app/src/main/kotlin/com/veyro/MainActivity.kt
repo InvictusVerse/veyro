@@ -86,6 +86,18 @@ public class MainActivity : ComponentActivity() {
         (application as VeyroApplication).container.sendFiles(targets, files)
     }
 
+    /** Send folder (ADR-064): the system folder picker; the tree grant needs no storage permission. */
+    private val pickFolder = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        val targets = sendTargets.toList()
+        val wasPending = sendPending
+        sendTargets = ArrayList()
+        sendPending = false
+        if (!wasPending || uri == null) return@registerForActivityResult
+        (application as VeyroApplication).container.sendFolder(targets, uri)
+    }
+
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
@@ -148,6 +160,7 @@ public class MainActivity : ComponentActivity() {
                             viewModelFactory = factory,
                             transferCoordinator = container.transferCoordinator,
                             onSendFiles = ::launchSendPicker,
+                            onSendFolder = ::launchFolderPicker,
                             onRequestMessagingPermissions = ::requestMessagingPermissions,
                             onRequestPhotosPermission = ::requestPhotosPermission,
                             openClipboard = openClipboard,
@@ -213,6 +226,18 @@ public class MainActivity : ComponentActivity() {
         } catch (e: android.content.ActivityNotFoundException) {
             sendPending = false
             VeyroLog.w(TAG) { "No document picker on this device" }
+        }
+    }
+
+    /** Send folder from Home or a device card (ADR-064): the folder picker, then straight to the devices. */
+    private fun launchFolderPicker(deviceIds: List<String>) {
+        sendTargets = ArrayList(deviceIds)
+        sendPending = true
+        try {
+            pickFolder.launch(null)
+        } catch (e: android.content.ActivityNotFoundException) {
+            sendPending = false
+            VeyroLog.w(TAG) { "No folder picker on this device" }
         }
     }
 

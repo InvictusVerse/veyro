@@ -61,7 +61,10 @@ public sealed class TransferConsentUi(INotificationToastService toasts) : ITrans
                     {
                         new TextBlock
                         {
-                            Text = $"{request.Peer.ShownName} wants to send {(count == 1 ? "1 file" : $"{count:N0} files")} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)}).",
+                            // ADR-064: "Pixel wants to send the Photos folder, 120 files (1.2 GB)."
+                            Text = InboundFolderLayout.FolderNameOf(request.Offer.Items) is { } folder
+                                ? $"{request.Peer.ShownName} wants to send the {OutgoingPlan.FolderSummary(folder, count)} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)})."
+                                : $"{request.Peer.ShownName} wants to send {(count == 1 ? "1 file" : $"{count:N0} files")} ({TransferProgressMath.FormatBytes(request.Offer.TotalBytes)}).",
                             TextWrapping = TextWrapping.Wrap
                         },
                         always,

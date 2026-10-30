@@ -58,6 +58,8 @@ public fun DevicesScreen(
     modifier: Modifier = Modifier,
     /** Opens the system file picker and sends the result to this device (ADR-038). */
     onSendFiles: (DeviceId) -> Unit = {},
+    /** Opens the system folder picker and sends the folder to this device (ADR-064); null hides it. */
+    onSendFolder: ((DeviceId) -> Unit)? = null,
 ) {
     val home by homeViewModel.state.collectAsStateWithLifecycle()
     val trust by devicesViewModel.state.collectAsStateWithLifecycle()
@@ -153,6 +155,9 @@ public fun DevicesScreen(
                             onRename = { renamingId = device.deviceId.value },
                             onRemove = { removingId = device.deviceId.value },
                             modifier = Modifier.animateItem(),
+                            onSendFolder = onSendFolder
+                                ?.takeIf { home.canSendFolder(device) }
+                                ?.let { send -> { send(device.deviceId) } },
                         )
                     }
                 }

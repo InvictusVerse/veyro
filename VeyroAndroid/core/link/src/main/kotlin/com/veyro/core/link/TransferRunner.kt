@@ -33,7 +33,6 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
-import java.io.RandomAccessFile
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -273,10 +272,13 @@ public class TransferRunner(
         onProgress: ((bytesSent: Long, totalBytes: Long, item: TransferItem, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)? = null,
         /** Set when this send answers a peer request (`photoFetch`, ADR-034); goes on the offer. */
         requestId: String? = null,
-        resolveFile: (TransferItem) -> File,
+        /** Where each item's bytes come from (ADR-064); null reads the file [resolveFile] names. */
+        openSource: ((TransferItem) -> SendSource?)? = null,
+        resolveFile: (TransferItem) -> File = { throw IllegalStateException("no source for item #${it.index}") },
     ): SendOutcome {
+        val sources = openSource ?: { item -> SendSource.of(resolveFile(item)) }
         val outcome = try {
-            sendOffered(session, items, senderName, transferId, onProgress, requestId, resolveFile)
+            sendOffered(session, items, senderName, transferId, onProgress, requestId, sources)
         } catch (c: kotlinx.coroutines.CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -303,7 +305,7 @@ public class TransferRunner(
         transferId: String,
         onProgress: ((bytesSent: Long, totalBytes: Long, item: TransferItem, stage: TransferStage, speedBps: Long, etaSec: Long?) -> Unit)?,
         requestId: String?,
-        resolveFile: (TransferItem) -> File,
+        openSource: (TransferItem) -> SendSource?,
     ): SendOutcome = withContext(dispatchers.io) {
         cancelled = false
         val files = items.filterNot { it.isDirectory }
@@ -330,7 +332,8 @@ public class TransferRunner(
             session.send(
                 PeerMessage.TransferOffer(
                     transferId = transferId,
-                    items = files.map { it.toLinkItem() },
+                    // A folder's empty directories go on the offer too (ADR-064); only files stream.
+                    items = items.map { it.toLinkItem() },
                     totalBytes = totalBytes,
                     senderName = senderName,
                     preferredRoutes = preferredRoutes,
@@ -540,8 +543,8 @@ public class TransferRunner(
                         return@withContext SendOutcome.Cancelled
                     }
 
-                    val source = resolveFile(item)
-                    if (!source.isFile) {
+                    val source = openSource(item)
+                    if (source == null) {
                         VeyroLog.e(TAG) { "[$transferId] Source file missing for item #${item.index}" }
                         results += ItemResult(
                             item.index, item.relativePath, 0,
@@ -591,8 +594,8 @@ public class TransferRunner(
                         null
                     }
 
-                    // Open file handle once per item for high performance chunk streaming
-                    RandomAccessFile(source, "r").use { sourceRaf ->
+                    // Open the source once per item for high performance chunk streaming
+                    source.use { src ->
                         for (chunkIndex in needed) {
                             if (cancelled || remoteCancelled) {
                                 VeyroLog.w(TAG) { "[$transferId] Transfer cancelled during chunk streaming" }
@@ -613,11 +616,10 @@ public class TransferRunner(
                             }
 
                             val offset = ChunkMath.offsetOf(chunkIndex, CHUNK_SIZE)
-                            val length = ChunkMath.lengthOf(chunkIndex, source.length(), CHUNK_SIZE)
+                            val length = ChunkMath.lengthOf(chunkIndex, src.length, CHUNK_SIZE)
                             val data = ByteArray(length)
                             metrics.recordSourceRead(length.toLong()) {
-                                sourceRaf.seek(offset)
-                                sourceRaf.readFully(data)
+                                src.read(offset, data)
                             }
                             streamDigest?.update(data)
 
@@ -656,7 +658,7 @@ public class TransferRunner(
 
                     // Verify file digest and send ItemEnd
                     val hash = metrics.recordSha256 {
-                        streamDigest?.digest()?.hex() ?: ChunkMath.hashFile(source)
+                        streamDigest?.digest()?.hex() ?: source.sha256()
                     }
                     VeyroLog.i(TAG) { "[$transferId] Item #${item.index} stream complete, sent ItemEnd (sha256=$hash), awaiting ItemResult..." }
                     onProgress?.invoke(sent, totalBytes, item, TransferStage.VERIFYING, 0L, null)
@@ -938,7 +940,8 @@ public class TransferRunner(
                 transferId = transferId,
                 expectedAuthToken = authToken,
                 expectedPeerDeviceId = session.peerDeviceId,
-                offerItems = domainItems,
+                // Empty directories carry no data; the coordinator creates them after (ADR-064).
+                offerItems = domainItems.filterNot { it.isDirectory },
                 destinationDir = destinationDir,
                 chunkSize = CHUNK_SIZE,
                 publisher = publisher,

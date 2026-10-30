@@ -361,7 +361,13 @@ private fun AlwaysAcceptRow(peerName: String, checked: Boolean, enabled: Boolean
     }
 }
 
-private fun headline(offer: IncomingOffer): String = when (offer.fileCount) {
+private fun headline(offer: IncomingOffer): String = when {
+    // ADR-064: "Office PC is sending the Photos folder, 120 files".
+    offer.folderName != null -> "${offer.peerName} is sending the ${offer.summary()}"
+    else -> countHeadline(offer)
+}
+
+private fun countHeadline(offer: IncomingOffer): String = when (offer.fileCount) {
     0 -> "${offer.peerName} is sending an empty folder"
     1 -> "${offer.peerName} is sending a file"
     else -> "${offer.peerName} is sending ${offer.fileCount} files"

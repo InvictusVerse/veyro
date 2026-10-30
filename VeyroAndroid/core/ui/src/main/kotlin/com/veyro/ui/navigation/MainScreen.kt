@@ -34,6 +34,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.veyro.core.designsystem.icons.VeyroIcons
+import com.veyro.core.model.DeviceId
 import com.veyro.ui.devices.DevicesScreen
 import com.veyro.ui.devices.DevicesViewModel
 import com.veyro.ui.history.HistoryScreen
@@ -82,6 +83,8 @@ internal fun MainScreen(
     homeNavController: NavHostController = rememberNavController(),
     /** ADR-061: Home's local network notice. */
     onFixLocalNetwork: () -> Unit = {},
+    /** Send folder: the system folder picker, then straight to the chosen devices (ADR-064). */
+    onSendFolder: ((deviceIds: List<String>) -> Unit)? = null,
 ) {
     val backStackState by homeNavController.currentBackStackEntryAsState()
     val currentDestination = backStackState?.destination
@@ -160,6 +163,7 @@ internal fun MainScreen(
                     onOpenClipboard = { rootNavController.navigate(VeyroDestination.Clipboard) },
                     onFixLocalNetwork = onFixLocalNetwork,
                     onOpenKeepConnected = { rootNavController.navigate(VeyroDestination.KeepConnected) },
+                    onSendFolder = onSendFolder?.let { send -> { ids: List<DeviceId> -> send(ids.map { it.value }) } },
                 )
             }
 
@@ -171,6 +175,7 @@ internal fun MainScreen(
                     onDeviceClick = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
                     onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
                     onSendFiles = { onSendFiles(listOf(it.value)) },
+                    onSendFolder = onSendFolder?.let { send -> { id: DeviceId -> send(listOf(id.value)) } },
                 )
             }
 

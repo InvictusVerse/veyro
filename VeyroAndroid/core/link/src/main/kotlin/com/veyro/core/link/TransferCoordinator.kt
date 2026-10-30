@@ -3,6 +3,8 @@ package com.veyro.core.link
 import com.veyro.core.common.AppDispatchers
 import com.veyro.core.common.VeyroLog
 import com.veyro.core.model.ActiveTransfer
+import com.veyro.core.model.Capabilities
+import com.veyro.core.model.Capability
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.Endpoint
 import com.veyro.core.model.Transfer
@@ -11,6 +13,9 @@ import com.veyro.core.model.TransferItem
 import com.veyro.core.model.TransferProgress
 import com.veyro.core.model.TransferStage
 import com.veyro.core.model.TransferState
+import com.veyro.core.model.folderName
+import com.veyro.core.transfer.FilesystemStoragePublisher
+import com.veyro.core.transfer.FolderReceive
 import com.veyro.core.transfer.ItemResult
 import com.veyro.core.transfer.TransferStoragePublisher
 import com.veyro.core.protocol.RelativePath
@@ -89,6 +94,7 @@ public class TransferCoordinator(
         private const val DISCOVERY_WAIT_MS = 5_000L
         private const val RECEIVE_RETRY_DELAY_MS = 250L
         private const val OFFER_RECHECK_MS = 1_000L
+        private const val HELLO_WAIT_MS = 3_000L
     }
 
     public val progress: Flow<TransferProgress> = runner.progress
@@ -178,16 +184,23 @@ public class TransferCoordinator(
         // The transfer this loop last authorized; only that one is this loop's to mark failed.
         var handledId: String? = null
         while (connection.isConnected) {
+            // ADR-064: one per offer, so a received folder keeps one saved name ("Photos (2)")
+            // for all its items, and its empty directories are made once its files are in.
+            var folders: FolderReceive? = null
             val results = runCatching {
+                val destination = destinationProvider().also { it.mkdirs() }
+                val received = FolderReceive(storagePublisher ?: inPlace(destination)).also { folders = it }
                 runner.receive(
                     session = connection,
-                    destinationDir = destinationProvider().also { it.mkdirs() },
+                    destinationDir = destination,
                     authorize = { offer ->
                         handledId = offer.transferId
-                        authorize(connection, offer)
+                        authorize(connection, offer).also { accepted ->
+                            if (accepted) onFolderAccepted(offer, received)
+                        }
                     },
                     declineReason = { id -> declineReasons.remove(id) ?: DeclineReason.DECLINED.wire },
-                    publisher = storagePublisher,
+                    publisher = storagePublisher?.let { received },
                     onProgress = { bytesRecv, totalBytes, item, stage, speedBps, etaSec ->
                         val now = System.currentTimeMillis()
                         val started = _activeTransfer.value?.startedAtEpochMillis ?: now
@@ -265,6 +278,9 @@ public class TransferCoordinator(
                     else -> TransferState.FAILED
                 }
                 val primaryUri = receiveResult.firstOrNull { it.destinationUri != null }?.destinationUri
+                // ADR-064: a folder's empty directories, once at least one of its files is in.
+                val dirsNotCreated = if (anyOk) folders?.createEmptyDirectories() ?: 0 else 0
+                val savedFolder = folders?.folderName
 
                 _activeTransfer.value = _activeTransfer.value?.copy(
                     stage = TransferStage.RECORDING_HISTORY,
@@ -311,7 +327,13 @@ public class TransferCoordinator(
 
                 _activeTransfer.value = _activeTransfer.value?.copy(
                     stage = if (allOk) TransferStage.COMPLETED else TransferStage.FAILED,
-                    statusText = if (allOk) "Received ${receiveResult.size} file(s) (Verified)" else "Transfer completed with errors",
+                    statusText = when {
+                        !allOk -> "Transfer completed with errors"
+                        savedFolder != null -> "Received ${folderSummary(savedFolder, receiveResult.size)}" +
+                            if (dirsNotCreated > 0) ", $dirsNotCreated empty folder(s) not created" else ""
+                        else -> "Received ${receiveResult.size} file(s) (Verified)"
+                    },
+                    folderName = savedFolder ?: _activeTransfer.value?.folderName,
                     destinationUri = primaryUri,
                     isVerified = allOk,
                     bytesTransferred = receiveResult.sumOf { it.bytesWritten },
@@ -333,6 +355,25 @@ public class TransferCoordinator(
     }
 
     public suspend fun destinationDirectory(): File = destinationProvider().also { it.mkdirs() }
+
+    /**
+     * An accepted offer, before any item opens: picks the saved name of a folder's top folder and
+     * shows it in the banner (ADR-064).
+     */
+    private suspend fun onFolderAccepted(offer: PeerMessage.TransferOffer, folders: FolderReceive) {
+        folders.prepare(offer.items.map { it.toDomain() })
+        val saved = folders.folderName ?: return
+        _activeTransfer.update { current -> if (current?.transferId == offer.transferId) current.copy(folderName = saved) else current }
+    }
+
+    /**
+     * Without a publisher items are committed where they land, under the names they came with,
+     * so a folder is not renamed; only its empty directories are made, inside [destination].
+     */
+    private fun inPlace(destination: File): TransferStoragePublisher =
+        object : TransferStoragePublisher by FilesystemStoragePublisher(destination) {
+            override suspend fun folderExists(name: String): Boolean = false
+        }
 
     // ── Sending ────────────────────────────────────────────────────────────────────────────
 
@@ -459,16 +500,8 @@ public class TransferCoordinator(
             peerDeviceId = peerDeviceId,
             peerDisplayName = peerName,
             direction = TransferDirection.SEND,
-            items = files.mapIndexed { index, file ->
-                TransferItem(
-                    index = index,
-                    relativePath = RelativePath.sanitizeOutgoingSegment(file.effectiveName),
-                    sizeBytes = file.sizeBytes,
-                    lastModifiedEpochMillis = file.lastModifiedEpochMillis,
-                    isDirectory = false,
-                )
-            },
-            totalBytes = files.sumOf { it.sizeBytes },
+            items = plannedItems(files).map { it.first },
+            totalBytes = files.sumOf { if (it.isDirectory) 0L else it.sizeBytes },
             state = TransferState.CANCELLED,
             startedAtEpochMillis = now,
             finishedAtEpochMillis = now,
@@ -485,8 +518,11 @@ public class TransferCoordinator(
         VeyroLog.i(TAG) { "[$transferId] User initiated transfer to $peerName ($peerDeviceId) with ${files.size} file(s)" }
         if (files.isEmpty()) return@withContext SendResult.Failed("Nothing selected")
 
-        val totalSourceBytes = files.sumOf { it.sizeBytes }
-        VeyroLog.i(TAG) { "[$transferId] Source files: ${files.size}, total size: $totalSourceBytes bytes" }
+        val totalSourceBytes = files.sumOf { if (it.isDirectory) 0L else it.sizeBytes }
+        val fileCount = files.count { !it.isDirectory }
+        if (fileCount == 0) return@withContext SendResult.Failed("There are no files to send")
+        val folder = plannedItems(files).map { it.first }.folderName()
+        VeyroLog.i(TAG) { "[$transferId] Source files: $fileCount, total size: $totalSourceBytes bytes" }
 
         val startedAt = System.currentTimeMillis()
         _activeTransfer.value = ActiveTransfer(
@@ -494,17 +530,18 @@ public class TransferCoordinator(
             direction = TransferDirection.SEND,
             peerDeviceId = peerDeviceId,
             peerDisplayName = peerName,
-            currentFileName = files.firstOrNull()?.effectiveName ?: "",
+            currentFileName = files.firstOrNull { !it.isDirectory }?.effectiveName ?: "",
             currentFileIndex = 0,
-            totalFiles = files.size,
+            totalFiles = fileCount,
             bytesTransferred = 0L,
             totalBytes = totalSourceBytes,
             bytesPerSecond = 0L,
             etaSeconds = null,
             stage = TransferStage.PREPARING,
-            statusText = "Staging ${files.size} file(s)...",
+            statusText = if (folder != null) "Preparing ${folderSummary(folder, fileCount)}..." else "Staging $fileCount file(s)...",
             startedAtEpochMillis = startedAt,
             elapsedMillis = 0L,
+            folderName = folder,
         )
 
         val staged = try {
@@ -546,6 +583,19 @@ public class TransferCoordinator(
             }
             val session = (sessionResolution as SessionResolution.Ready).session
 
+            // ADR-064: folders only to a device that says it takes them. Its hello can trail a
+            // fresh connection by a moment.
+            if (staged.hasFolders && !receivesFolders(session)) {
+                val reason = "$peerName cannot receive folders. Update Veyro on $peerName."
+                VeyroLog.w(TAG) { "[$transferId] Peer does not advertise FOLDER_TRANSFER; folder not offered" }
+                _activeTransfer.value = _activeTransfer.value?.copy(
+                    stage = TransferStage.FAILED,
+                    statusText = reason,
+                    errorMessage = reason,
+                )
+                return@withContext SendResult.Failed(reason)
+            }
+
             VeyroLog.i(TAG) { "[$transferId] Active session ready; dispatching transfer through runner" }
             when (val outcome = runner.send(
                 session = session,
@@ -564,7 +614,7 @@ public class TransferCoordinator(
                         stage = stage,
                         statusText = when (stage) {
                             TransferStage.AWAITING_CONSENT -> "Waiting for $peerName to accept..."
-                            TransferStage.TRANSFERRING -> "Sending ${item.fileName} (${item.index + 1}/${staged.items.size})"
+                            TransferStage.TRANSFERRING -> "Sending ${item.fileName} (${item.index + 1}/${staged.fileCount})"
                             TransferStage.VERIFYING -> "Verifying ${item.fileName}..."
                             TransferStage.COMPLETED -> "Transfer completed"
                             TransferStage.CANCELLED -> "Transfer cancelled"
@@ -574,7 +624,7 @@ public class TransferCoordinator(
                         elapsedMillis = (now - startedAt).coerceAtLeast(0L),
                     )
                 },
-                resolveFile = { item -> staged.files.getValue(item.index) },
+                openSource = staged::sourceFor,
             )) {
                 is TransferRunner.SendOutcome.Done -> {
                     VeyroLog.i(TAG) { "[$transferId] Transfer completed: ${outcome.results.size} items" }
@@ -610,7 +660,11 @@ public class TransferCoordinator(
                     }
                     _activeTransfer.value = _activeTransfer.value?.copy(
                         stage = if (allOk) TransferStage.COMPLETED else TransferStage.FAILED,
-                        statusText = if (allOk) "Sent ${staged.items.size} file(s), all verified" else "Completed with errors",
+                        statusText = when {
+                            !allOk -> "Completed with errors"
+                            folder != null -> "Sent ${folderSummary(folder, staged.fileCount)}, all verified"
+                            else -> "Sent ${staged.fileCount} file(s), all verified"
+                        },
                         bytesTransferred = totalSourceBytes,
                         isVerified = allOk,
                         route = outcome.route,
@@ -723,8 +777,17 @@ public class TransferCoordinator(
             )
             SendResult.Failed(t.message ?: "Connection lost")
         } finally {
+            staged.close()
             runCatching { File(stagingDir, transferId).deleteRecursively() }
         }
+    }
+
+    /** True once [session]'s peer advertised FOLDER_TRANSFER, waiting briefly for its hello. */
+    private suspend fun receivesFolders(session: PeerConnection): Boolean {
+        val capabilities = session.peerCapabilities.value.takeUnless { it == Capabilities.NONE }
+            ?: withTimeoutOrNull(HELLO_WAIT_MS) { session.peerCapabilities.first { it != Capabilities.NONE } }
+            ?: Capabilities.NONE
+        return Capability.FOLDER_TRANSFER in capabilities
     }
 
     /**
@@ -750,14 +813,16 @@ public class TransferCoordinator(
                 VeyroLog.w(TAG) { "[$transferId] Requested send: staging failed (${t.javaClass.simpleName})" }
                 return@withContext SendResult.Failed("Could not read the requested file")
             }
-            val outcome = runner.send(
-                session = session,
-                items = staged.items,
-                senderName = localName(),
-                transferId = transferId,
-                requestId = requestId,
-                resolveFile = { item -> staged.files.getValue(item.index) },
-            )
+            val outcome = staged.use {
+                runner.send(
+                    session = session,
+                    items = staged.items,
+                    senderName = localName(),
+                    transferId = transferId,
+                    requestId = requestId,
+                    openSource = staged::sourceFor,
+                )
+            }
             VeyroLog.i(TAG) { "[$transferId] Requested send finished: ${outcome.javaClass.simpleName}" }
             when (outcome) {
                 is TransferRunner.SendOutcome.Done -> SendResult.Success(outcome.results)
@@ -846,6 +911,8 @@ public class TransferCoordinator(
 
         val files = offer.items.filterNot { it.isDir }
         val senderName = peerId?.let { runCatching { peerDisplayName(it) }.getOrNull() } ?: offer.senderName
+        // The sender's name for it; untrusted, shown only. The saved name may differ (ADR-064).
+        val folder = offer.items.map { it.toDomain() }.folderName()
         val uiOffer = IncomingOffer(
             transferId = transferId,
             peerName = senderName,
@@ -857,6 +924,7 @@ public class TransferCoordinator(
                 IncomingOffer.ListedFile(name = it.relPath.substringAfterLast('/'), sizeBytes = it.size)
             },
             expiresAtEpochMillis = clock() + OFFER_TIMEOUT_MS,
+            folderName = folder,
         )
 
         val autoAccept = peerId != null && autoAcceptFor(peerId)
@@ -876,6 +944,7 @@ public class TransferCoordinator(
             statusText = if (autoAccept) "Receiving from $senderName..." else "Incoming transfer from $senderName",
             startedAtEpochMillis = System.currentTimeMillis(),
             elapsedMillis = 0L,
+            folderName = folder,
         )
 
         if (autoAccept) {
@@ -942,16 +1011,81 @@ public class TransferCoordinator(
 
     // ── Staging ────────────────────────────────────────────────────────────────────────────
 
-    private class Staged(val items: List<TransferItem>, val files: Map<Int, File>)
+    /**
+     * What a send streams: staged copies by item index, and a folder's files read straight from
+     * their streams (ADR-064). [close] closes every source it handed out, whatever path the send
+     * took out of the runner.
+     */
+    private class Staged(
+        val items: List<TransferItem>,
+        private val files: Map<Int, File>,
+        private val streamed: Map<Int, OutgoingFile>,
+    ) : java.io.Closeable {
+        private val opened = Collections.synchronizedList(ArrayList<SendSource>())
+
+        val fileCount: Int get() = items.count { !it.isDirectory }
+        val hasFolders: Boolean get() = items.any { it.isDirectory || '/' in it.relativePath }
+        val folderName: String? get() = items.folderName()
+
+        fun sourceFor(item: TransferItem): SendSource? {
+            files[item.index]?.let { return SendSource.of(it) }
+            val outgoing = streamed[item.index] ?: return null
+            // Opened now, so a file that vanished since the folder was read fails alone.
+            val first = try {
+                outgoing.openStream()
+            } catch (e: Exception) {
+                VeyroLog.w(TAG) { "Item #${item.index} could not be opened (${e.javaClass.simpleName})" }
+                return null
+            }
+            var handedOut = false
+            return SendSource.ofStream(item.sizeBytes) {
+                if (handedOut) outgoing.openStream() else first.also { handedOut = true }
+            }.also { opened += it }
+        }
+
+        override fun close() {
+            synchronized(opened) { opened.forEach { runCatching { it.close() } } }
+        }
+    }
+
+    /**
+     * The items in offer order: files first, then a folder's empty directories (ADR-064), so an
+     * item's index is also its place among the files ("file 3 of 120"). Sizes as claimed.
+     */
+    private fun plannedItems(files: List<OutgoingFile>): List<Pair<TransferItem, OutgoingFile>> {
+        val ordered = files.filterNot { it.isDirectory } + files.filter { it.isDirectory }
+        return ordered.mapIndexed { index, outgoing ->
+            TransferItem(
+                index = index,
+                relativePath = outgoing.relativePath ?: RelativePath.sanitizeOutgoingSegment(outgoing.effectiveName),
+                sizeBytes = if (outgoing.isDirectory) 0L else outgoing.sizeBytes,
+                lastModifiedEpochMillis = outgoing.lastModifiedEpochMillis,
+                isDirectory = outgoing.isDirectory,
+            ) to outgoing
+        }
+    }
 
     private suspend fun stage(transferId: String, files: List<OutgoingFile>): Staged {
         val context = currentCoroutineContext()
-        val dir = File(stagingDir, transferId).apply { mkdirs() }
-        val items = ArrayList<TransferItem>(files.size)
-        val byIndex = HashMap<Int, File>(files.size)
-        val buffer = ByteArray(256 * 1024)
-        files.forEachIndexed { index, outgoing ->
-            val local = File(dir, "staged-$index")
+        val dir = File(stagingDir, transferId)
+        val planned = plannedItems(files)
+        val items = ArrayList<TransferItem>(planned.size)
+        val byIndex = HashMap<Int, File>()
+        val streamed = HashMap<Int, OutgoingFile>()
+        val buffer by lazy(LazyThreadSafetyMode.NONE) { ByteArray(256 * 1024) }
+        for ((item, outgoing) in planned) {
+            if (outgoing.isDirectory) {
+                items += item
+                continue
+            }
+            // ADR-064: no copy. Streamed while sending, so a folder of gigabytes needs no room.
+            if (outgoing.streamed) {
+                streamed[item.index] = outgoing
+                items += item
+                continue
+            }
+            dir.mkdirs()
+            val local = File(dir, "staged-${item.index}")
             outgoing.openStream().use { input ->
                 local.outputStream().use { output ->
                     // ADR-055: Cancel is checked between buffers; a 4 GB video takes a while to copy.
@@ -963,17 +1097,11 @@ public class TransferCoordinator(
                     }
                 }
             }
-            byIndex[index] = local
-            items += TransferItem(
-                index = index,
-                relativePath = RelativePath.sanitizeOutgoingSegment(outgoing.effectiveName),
-                // What was actually copied, not what the picker claimed.
-                sizeBytes = local.length(),
-                lastModifiedEpochMillis = outgoing.lastModifiedEpochMillis,
-                isDirectory = false,
-            )
+            byIndex[item.index] = local
+            // What was actually copied, not what the picker claimed.
+            items += item.copy(sizeBytes = local.length())
         }
-        return Staged(items, byIndex)
+        return Staged(items, byIndex, streamed)
     }
 }
 
@@ -985,6 +1113,18 @@ public data class OutgoingFile(
     val effectiveName: String,
     val sizeBytes: Long,
     val lastModifiedEpochMillis: Long,
+    /**
+     * The path on the wire for an item of a folder ("Photos/2024/a.jpg", every segment already
+     * sanitised, ADR-064). Null sends the file under [effectiveName] alone.
+     */
+    val relativePath: String? = null,
+    /** An empty directory of a folder: offered so it exists on the other side, never streamed. */
+    val isDirectory: Boolean = false,
+    /**
+     * Read straight from [openStream] while it is sent, with no staged copy (a folder's files,
+     * ADR-064). [sizeBytes] must then be exact: a stream that ends elsewhere fails the send.
+     */
+    val streamed: Boolean = false,
     val openStream: () -> InputStream,
 )
 
@@ -1001,6 +1141,8 @@ public data class IncomingOffer(
     val files: List<ListedFile> = emptyList(),
     /** When the offer is declined with `timeout` if nobody answers ([TransferCoordinator.OFFER_TIMEOUT_MS]). */
     val expiresAtEpochMillis: Long = 0L,
+    /** The folder's name when the offer is one folder (ADR-064); [fileCount] counts its files. */
+    val folderName: String? = null,
 ) {
     /** One row of the prompt. User data: shown, never logged. */
     public data class ListedFile(val name: String, val sizeBytes: Long)
@@ -1010,6 +1152,7 @@ public data class IncomingOffer(
     }
 
     public fun summary(): String = when {
+        folderName != null -> folderSummary(folderName, fileCount)
         fileCount <= 0 -> "an empty transfer"
         fileCount == 1 -> topLevelNames.firstOrNull() ?: "1 file"
         else -> "$fileCount files"

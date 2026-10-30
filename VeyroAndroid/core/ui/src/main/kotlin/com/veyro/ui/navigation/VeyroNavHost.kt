@@ -82,6 +82,8 @@ public fun VeyroNavHost(
     onClipboardOpened: () -> Unit = {},
     /** ADR-061: asks for the local network permission, or opens App info when only that works. */
     onFixLocalNetwork: () -> Unit = {},
+    /** Opens the system folder picker and sends the folder to these device ids (ADR-064). */
+    onSendFolder: ((deviceIds: List<String>) -> Unit)? = null,
 ) {
     val navController = rememberNavController()
     LaunchedEffect(openClipboard) {
@@ -136,6 +138,7 @@ public fun VeyroNavHost(
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
                     onSendFiles = onSendFiles,
                     onFixLocalNetwork = onFixLocalNetwork,
+                    onSendFolder = onSendFolder,
                 )
             }
 

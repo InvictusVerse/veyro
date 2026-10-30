@@ -91,6 +91,8 @@ public fun HomeScreen(
     onFixLocalNetwork: () -> Unit = {},
     /** ADR-061: the "Keep Veyro connected" checklist. */
     onOpenKeepConnected: () -> Unit = {},
+    /** Opens the system folder picker and sends the folder to these devices (ADR-064); null hides it. */
+    onSendFolder: ((List<DeviceId>) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -117,6 +119,8 @@ public fun HomeScreen(
 
     var refreshing by rememberSaveable { mutableStateOf(false) }
     var askSendTo by rememberSaveable { mutableStateOf(false) }
+    // What the "Send to" choice is for: the folder picker (ADR-064) or the file picker.
+    var askSendFolder by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(refreshing) {
         if (refreshing) {
             delay(1_500)
@@ -193,9 +197,18 @@ public fun HomeScreen(
                         val send: () -> Unit = {
                             // Several devices connected: ask which. Otherwise straight to the one.
                             if (state.sendNeedsChoice) {
+                                askSendFolder = false
                                 askSendTo = true
                             } else {
                                 viewModel.defaultSendTarget()?.let { onSendFiles(listOf(it)) }
+                            }
+                        }
+                        val sendFolder: () -> Unit = {
+                            if (state.sendNeedsChoice) {
+                                askSendFolder = true
+                                askSendTo = true
+                            } else {
+                                viewModel.defaultSendTarget()?.let { onSendFolder?.invoke(listOf(it)) }
                             }
                         }
                         Row(modifier = Modifier.fillMaxWidth()) {
@@ -218,6 +231,18 @@ public fun HomeScreen(
                                 onClick = send,
                                 modifier = Modifier.weight(1f),
                             )
+                            // ADR-064: next to Send files, for a device that takes folders.
+                            if (onSendFolder != null) {
+                                Spacer(Modifier.width(12.dp))
+                                ActionTile(
+                                    label = "Send folder",
+                                    icon = VeyroIcons.Folder,
+                                    enabled = state.canSendFolderToSelected,
+                                    onClick = sendFolder,
+                                    disabledReason = "${pc.name} cannot receive folders",
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                         }
                     }
                 }
@@ -297,14 +322,18 @@ public fun HomeScreen(
     }
 
     if (askSendTo) {
+        val folderSend = onSendFolder?.takeIf { askSendFolder }
         SendToDialog(
-            connected = state.connectedDevices,
+            connected = if (folderSend != null) state.connectedDevices.filter { state.canSendFolder(it) } else state.connectedDevices,
             preselected = state.selectedPc?.takeIf { it.isConnected }?.deviceId,
             onDismiss = { askSendTo = false },
             onConfirm = { targets ->
                 askSendTo = false
-                if (targets.isNotEmpty()) onSendFiles(targets)
+                if (targets.isNotEmpty()) {
+                    if (folderSend != null) folderSend(targets) else onSendFiles(targets)
+                }
             },
+            confirmLabel = if (folderSend != null) "Choose folder" else "Choose files",
         )
     }
 }
@@ -319,6 +348,7 @@ private fun SendToDialog(
     preselected: DeviceId?,
     onDismiss: () -> Unit,
     onConfirm: (List<DeviceId>) -> Unit,
+    confirmLabel: String = "Choose files",
 ) {
     // Null means "All connected".
     var choice by rememberSaveable { mutableStateOf(preselected?.value ?: connected.firstOrNull()?.deviceId?.value) }
@@ -337,7 +367,7 @@ private fun SendToDialog(
             TextButton(onClick = {
                 val id = choice
                 onConfirm(if (id == null) connected.map { it.deviceId } else listOfNotNull(connected.firstOrNull { it.deviceId.value == id }?.deviceId))
-            }) { Text("Choose files") }
+            }) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

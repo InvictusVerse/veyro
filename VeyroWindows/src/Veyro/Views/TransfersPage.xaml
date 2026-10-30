@@ -35,6 +35,13 @@
                         <TextBlock Text="Open received files" />
                     </StackPanel>
                 </Button>
+                <!--  ADR-064: a whole folder, its structure kept.  -->
+                <Button Click="SendFolder_Click" IsEnabled="{x:Bind Main.HasActiveDevice, Mode=OneWay}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xE8B7;" />
+                        <TextBlock Text="Send folder" />
+                    </StackPanel>
+                </Button>
                 <Button
                     Click="SendFiles_Click"
                     IsEnabled="{x:Bind Main.HasActiveDevice, Mode=OneWay}"
@@ -53,7 +60,7 @@
             HorizontalAlignment="Left"
             FontSize="13"
             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-            Text="Drop files anywhere in this window, or choose Send files. Every file is checked with SHA-256 on arrival."
+            Text="Drop files or folders anywhere in this window, or choose Send files or Send folder. Every file is checked with SHA-256 on arrival."
             TextWrapping="Wrap" />
 
         <TextBlock
