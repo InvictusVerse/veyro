@@ -187,8 +187,12 @@ public sealed class ClipboardViewModel : BaseViewModel
     public Task CopyAsync(ClipRowViewModel row) => _service.CopyToPcAsync(row.Item);
 
     /// <summary>"Copy code": only the digits.</summary>
+    /// <remarks>
+    /// Through <see cref="ClipboardService.CopyTextToPcAsync"/> (ADR-063): not sent back to the
+    /// phones as a new clip, and kept out of Win+V history.
+    /// </remarks>
     public Task CopyCodeAsync(ClipRowViewModel row) =>
-        row.Code.Length > 0 && _service.Sink is { } sink ? sink.SetTextAsync(row.Code) : CopyAsync(row);
+        row.Code.Length > 0 ? _service.CopyTextToPcAsync(row.Code) : CopyAsync(row);
 
     public void Remove(ClipRowViewModel row) => _service.Remove(row.Item.Id);
 
