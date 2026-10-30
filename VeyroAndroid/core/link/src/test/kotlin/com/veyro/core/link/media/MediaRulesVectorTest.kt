@@ -88,6 +88,19 @@ class MediaRulesVectorTest {
     }
 
     @Test
+    fun `the media socket is dialled only where the PC can be`() {
+        val subnets = listOf("192.168.31.20" to 24)
+        // The address the session reached the PC on, or one in the phone's own subnet.
+        assertEquals("192.168.31.191", StreamRules.chooseDialHost("192.168.31.191", "192.168.31.191", emptyList()))
+        assertEquals("192.168.31.7", StreamRules.chooseDialHost("192.168.31.7", "10.0.0.5", subnets))
+        // Anything else falls back to the session's own address.
+        assertEquals("10.0.0.5", StreamRules.chooseDialHost("192.168.40.7", "10.0.0.5", subnets))
+        assertEquals("10.0.0.5", StreamRules.chooseDialHost("8.8.8.8", "::ffff:10.0.0.5", subnets))
+        assertEquals(null, StreamRules.chooseDialHost("192.168.40.7", null, subnets))
+        assertEquals(null, StreamRules.chooseDialHost("192.168.40.7", "8.8.4.4", subnets))
+    }
+
+    @Test
     fun `private IPv4 only`() {
         for (ok in listOf("10.0.0.1", "172.16.0.9", "172.31.255.255", "192.168.31.191", "169.254.1.2")) assertTrue(ok, StreamRules.isPrivateIpv4(ok))
         for (bad in listOf("8.8.8.8", "172.32.0.1", "192.169.0.1", "10.0.0", "10.0.0.256", "010.0.0.1", "::1", "", "a.b.c.d")) assertFalse(bad, StreamRules.isPrivateIpv4(bad))

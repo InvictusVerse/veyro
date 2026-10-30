@@ -173,6 +173,41 @@ public object StreamRules {
         return b[0] == 10 || (b[0] == 172 && b[1] in 16..31) || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254)
     }
 
+    /**
+     * Where the phone dials the PC's media socket (04-PROTOCOL.md 6.9): [advertised]
+     * (`streamStart.host`) only when it is the address this session's PC was reached on
+     * ([sessionRemote]) or inside one of the phone's own subnets ([localSubnets]: address and
+     * prefix length); otherwise [sessionRemote]. Null when neither is a private IPv4. So a PC
+     * cannot point the phone at another machine on some other network.
+     */
+    public fun chooseDialHost(advertised: String, sessionRemote: String?, localSubnets: List<Pair<String, Int>>): String? {
+        val remote = sessionRemote?.trim()?.removePrefix("::ffff:")?.takeIf { isPrivateIpv4(it) }
+        if (isPrivateIpv4(advertised)) {
+            if (advertised == remote) return advertised
+            if (localSubnets.any { (address, prefix) -> sameSubnet(advertised, address, prefix) }) return advertised
+        }
+        return remote
+    }
+
+    private fun sameSubnet(a: String, b: String, prefix: Int): Boolean {
+        if (prefix !in 1..32) return false
+        val x = ipv4ToInt(a) ?: return false
+        val y = ipv4ToInt(b) ?: return false
+        val mask = if (prefix == 32) -1 else (-1 shl (32 - prefix))
+        return (x and mask) == (y and mask)
+    }
+
+    private fun ipv4ToInt(host: String): Int? {
+        val parts = host.split('.')
+        if (parts.size != 4) return null
+        var value = 0
+        for (p in parts) {
+            val b = p.toIntOrNull()?.takeIf { it in 0..255 && p.length in 1..3 } ?: return null
+            value = (value shl 8) or b
+        }
+        return value
+    }
+
     /** A `streamStart` the phone may act on. Camera is reserved (ADR-067) and not accepted yet. */
     public fun isValid(m: StreamStart): Boolean =
         sidBytes(m.sid) != null && m.source == SOURCE_SCREEN && isCodec(m.codec) &&
