@@ -23,7 +23,10 @@ public sealed class EphemeralKey : IDisposable
     private EphemeralKey(byte[] privateKey)
     {
         _privateKey = privateKey;
-        PublicKey = X25519Crypto.FromSeed(privateKey).PublicKey;
+        (byte[] encodedPrivate, byte[] publicKey) = X25519Crypto.FromSeed(privateKey);
+        // Only the public half is kept; the second private encoding is wiped (review issue 6).
+        CryptographicOperations.ZeroMemory(encodedPrivate);
+        PublicKey = publicKey;
     }
 
     /// <summary>The public half (<c>epk</c> on the wire).</summary>
