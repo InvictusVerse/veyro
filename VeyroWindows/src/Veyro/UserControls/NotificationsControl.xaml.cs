@@ -26,8 +26,12 @@ public sealed partial class NotificationsControl : UserControl
     public NotificationsControl()
     {
         InitializeComponent();
-        ShowQuietState(Settings.Current);
-        Settings.SettingsChanged += OnSettingsChanged;
+        Loaded += (_, _) =>
+        {
+            ShowQuietState(Settings.Current);
+            Settings.SettingsChanged -= OnSettingsChanged; // never subscribe twice
+            Settings.SettingsChanged += OnSettingsChanged;
+        };
         Unloaded += (_, _) => Settings.SettingsChanged -= OnSettingsChanged;
     }
 
