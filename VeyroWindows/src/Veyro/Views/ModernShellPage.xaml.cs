@@ -1,10 +1,11 @@
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace Veyro.Views;
 
 /// <summary>
-/// ADR-074: the Modern layout's window, a left rail and the page. The same requests the Classic
+/// ADR-074: the Modern layout's window, a narrow rail and the page. The same requests the Classic
 /// <see cref="MainPage"/> handles (open a conversation, device settings, pairing) are handled here.
 /// Choosing Classic in Settings swaps the window back to MainPage.
 /// </summary>
@@ -15,7 +16,7 @@ public sealed partial class ModernShellPage : Page
 
     private static WeakReference<ModernShellPage>? _current;
 
-    /// <summary>Lets Home open another page of this window (See all notifications, Clipboard...).</summary>
+    /// <summary>Lets Home open another page of this window (Clipboard, Transfers).</summary>
     public static void Open(string tag)
     {
         if (_current?.TryGetTarget(out ModernShellPage? shell) == true) shell.NavigateTo(tag);
@@ -27,15 +28,16 @@ public sealed partial class ModernShellPage : Page
         { "Messages", typeof(MessagesPage) },
         { "Calls", typeof(CallsPage) },
         { "Photos", typeof(PhotosPage) },
-        { "Notifications", typeof(NotificationsPage) },
         { "Transfers", typeof(TransfersPage) },
         { "Clipboard", typeof(ClipboardPage) },
+        { "Settings", typeof(SettingsPage) },
     };
 
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
     public MessagesViewModel MessagesViewModel => VeyroContainer.Instance.MessagesViewModel;
 
     private string? _pendingSettingsSection;
+    private string? _selected;
     private bool _subscribed;
 
     public ModernShellPage()
@@ -46,7 +48,7 @@ public sealed partial class ModernShellPage : Page
         Loaded += (_, _) =>
         {
             Subscribe();
-            if (Rail.SelectedItem is null)
+            if (_selected is null)
             {
                 if (!string.IsNullOrEmpty(_pendingSettingsSection)) OpenSettings(_pendingSettingsSection);
                 else NavigateTo("Home");
@@ -100,61 +102,54 @@ public sealed partial class ModernShellPage : Page
     {
         // The phone pages hide without a phone; go Home, which then offers pairing.
         if (e.PropertyName == nameof(MainPageViewModel.HasActiveDevice) && !ViewModel.HasActiveDevice &&
-            Rail.SelectedItem is NavigationViewItem { Tag: "Calls" or "Messages" or "Photos" or "Notifications" })
+            _selected is "Calls" or "Messages" or "Photos")
         {
             NavigateTo("Home");
         }
     }
 
+    private void Rail_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string tag) return;
+        if (tag == "Settings") OpenSettings(null);
+        else NavigateTo(tag);
+    }
+
     public void NavigateTo(string tag)
     {
-        NavigationViewItem? item = tag switch
-        {
-            "Home" => HomeItem,
-            "Messages" => MessagesItem,
-            "Calls" => CallsItem,
-            "Photos" => PhotosItem,
-            "Notifications" => NotificationsItem,
-            "Transfers" => TransfersItem,
-            "Clipboard" => ClipboardItem,
-            _ => null,
-        };
-        if (item is null) return;
-        if (ReferenceEquals(Rail.SelectedItem, item)) ContentFrame.Navigate(_pages[tag]);
-        else Rail.SelectedItem = item;
+        if (!_pages.TryGetValue(tag, out Type? page)) return;
+        ContentFrame.Navigate(page, tag == "Settings" ? _pendingSettingsSection : null, new EntranceNavigationTransitionInfo());
+        if (tag == "Settings") _pendingSettingsSection = null;
+        Select(tag);
     }
 
     private void OpenSettings(string? section)
     {
         _pendingSettingsSection = section;
-        if (ReferenceEquals(Rail.SelectedItem, Rail.SettingsItem))
-        {
-            ContentFrame.Navigate(typeof(SettingsPage), _pendingSettingsSection);
-            _pendingSettingsSection = null;
-        }
-        else
-        {
-            Rail.SelectedItem = Rail.SettingsItem;
-        }
+        NavigateTo("Settings");
     }
 
     private void OpenPairing()
     {
-        Rail.SelectedItem = null;
         ContentFrame.Navigate(typeof(PairDevicePage));
+        Select(null);
+        PageTitle.Text = "Pair a phone";
     }
 
-    private void Rail_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    /// <summary>Highlights the rail item of the page on screen.</summary>
+    private void Select(string? tag)
     {
-        var transition = new EntranceNavigationTransitionInfo();
-        if (args.IsSettingsSelected)
+        _selected = tag;
+        var selected = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"];
+        var accent = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"];
+        var normal = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+        foreach (Button item in RailItems.Children.OfType<Button>().Append(SettingsItem))
         {
-            ContentFrame.Navigate(typeof(SettingsPage), _pendingSettingsSection, transition);
-            _pendingSettingsSection = null;
-            return;
+            bool on = (item.Tag as string) == tag;
+            item.Background = on ? selected : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            item.Foreground = on ? accent : normal;
         }
-        if (args.SelectedItemContainer is NavigationViewItem { Tag: string tag } && _pages.TryGetValue(tag, out Type? page))
-            ContentFrame.Navigate(page, null, transition);
+        if (tag is not null) PageTitle.Text = tag;
     }
 
     private void Root_DragOver(object sender, DragEventArgs e)

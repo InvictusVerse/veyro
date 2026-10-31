@@ -187,6 +187,25 @@ public sealed partial class ClipboardService : IDisposable
         return BroadcastAsync(new PeerMessage.Clip(NewId(), PeerMessage.Clip.KindText, Text: text, Ts: Now()));
     }
 
+    /// <summary>
+    /// ADR-074: Home's "Send clipboard": the user sends the PC's current text on purpose, so the
+    /// "send copies to phones" setting and the repeat filter do not apply; a phone whose own
+    /// clipboard switch is off still gets nothing. False when there is nothing to send or no phone.
+    /// </summary>
+    public async Task<bool> SendTextNowAsync(string text)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length > PeerMessage.Clip.MaxTextChars) return false;
+        bool any;
+        lock (_gate)
+        {
+            any = _sessions.GetConnectedPeers().Any(p =>
+                (_sessions.GetPeerCapabilities(p) & PeerCapabilities.Clipboard) != 0 && !_receiveOff.Contains(p));
+        }
+        if (!any) return false;
+        await BroadcastAsync(new PeerMessage.Clip(NewId(), PeerMessage.Clip.KindText, Text: text, Ts: Now())).ConfigureAwait(false);
+        return true;
+    }
+
     /// <summary>The PC clipboard changed (image, already PNG within the cap).</summary>
     public Task OnLocalImageCopiedAsync(byte[] png)
     {

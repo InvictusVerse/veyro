@@ -1,8 +1,9 @@
 <!--
-    ADR-074: Modern Home, as in the approved mockup. A phone card (picture to mirror, name, live
-    status, Mirror screen / Send files / Send folder / Reconnect), Phone tools tiles, Quick
-    controls tiles with volume and brightness, Now playing and Recent. Every value is reported by
-    the phone or the session registry; with no phone the card offers pairing instead.
+    ADR-074: Modern Home, laid out like NectarLink. Left: the phone card with what is playing, the
+    main actions, and the notification feed (reply, actions, history, this PC's pop-up pause in its
+    bell). Right: phone controls (the phone's own DND, flashlight, sound, volume, brightness, PC
+    sound on phone), camera tools, and a timeline of recent transfers. Every value is reported by
+    the phone or the session registry; with no phone the page offers pairing instead.
 -->
 <Page
     x:Class="Veyro.Views.HomePage"
@@ -20,109 +21,116 @@
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="CornerRadius" Value="18" />
         </Style>
 
-        <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="16" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Margin" Value="0,12,0,0" />
+        <Style x:Key="ChipStyle" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource ControlFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="15" />
+            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
         </Style>
 
-        <!--  Rounded pill actions in the phone card  -->
-        <Style x:Key="PillButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
-            <Setter Property="Height" Value="40" />
-            <Setter Property="Padding" Value="18,0" />
-            <Setter Property="CornerRadius" Value="20" />
-        </Style>
-        <Style x:Key="PillAccentButtonStyle" BasedOn="{StaticResource AccentButtonStyle}" TargetType="Button">
-            <Setter Property="Height" Value="40" />
-            <Setter Property="Padding" Value="18,0" />
-            <Setter Property="CornerRadius" Value="20" />
-        </Style>
-
-        <!--  Phone tool tile  -->
-        <Style x:Key="ToolTileStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
-            <Setter Property="MinHeight" Value="124" />
-            <Setter Property="Padding" Value="16,14" />
+        <!--  Action tile: icon badge top-left, label bottom-left  -->
+        <Style x:Key="ActionTileStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Height" Value="84" />
+            <Setter Property="Padding" Value="14,12" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
-            <Setter Property="VerticalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Stretch" />
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
-            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="CornerRadius" Value="16" />
         </Style>
 
-        <!--  Quick control tile  -->
-        <Style x:Key="QuickTileStyle" BasedOn="{StaticResource DefaultToggleButtonStyle}" TargetType="ToggleButton">
-            <Setter Property="MinHeight" Value="76" />
-            <Setter Property="Padding" Value="14,10" />
-            <Setter Property="HorizontalAlignment" Value="Stretch" />
-            <Setter Property="VerticalAlignment" Value="Stretch" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="CornerRadius" Value="14" />
-        </Style>
-        <Style x:Key="QuickButtonTileStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
-            <Setter Property="MinHeight" Value="76" />
-            <Setter Property="Padding" Value="14,10" />
-            <Setter Property="HorizontalAlignment" Value="Stretch" />
-            <Setter Property="VerticalAlignment" Value="Stretch" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-            <Setter Property="CornerRadius" Value="14" />
+        <Style x:Key="BadgeStyle" TargetType="Border">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="CornerRadius" Value="15" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="Background" Value="{ThemeResource AccentFillColorTertiaryBrush}" />
         </Style>
 
-        <!--  The round icon at the top-left of a tool tile  -->
-        <Style x:Key="TileIconBadgeStyle" TargetType="Border">
-            <Setter Property="Width" Value="40" />
-            <Setter Property="Height" Value="40" />
-            <Setter Property="CornerRadius" Value="20" />
-            <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}" />
-            <Setter Property="Opacity" Value="0.9" />
+        <!--  Small square icon button in a tile's top-right corner  -->
+        <Style x:Key="CornerButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+
+        <!--  Phone control: rounded square toggle with the label under the icon  -->
+        <Style x:Key="ControlToggleStyle" BasedOn="{StaticResource DefaultToggleButtonStyle}" TargetType="ToggleButton">
+            <Setter Property="Height" Value="58" />
+            <Setter Property="Padding" Value="2" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="CornerRadius" Value="16" />
+        </Style>
+        <Style x:Key="ControlButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Height" Value="58" />
+            <Setter Property="Padding" Value="2" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="CornerRadius" Value="16" />
+        </Style>
+
+        <Style x:Key="CardTitleStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
         </Style>
     </Page.Resources>
 
-    <ScrollViewer
-        x:Name="PageScroller"
-        HorizontalScrollBarVisibility="Disabled"
-        SizeChanged="PageScroller_SizeChanged"
-        VerticalScrollBarVisibility="Auto">
-        <!--  Width set from the visible area (at most 1180), so tiles shrink instead of pushing past the edge  -->
-        <StackPanel
-            x:Name="PageContent"
-            HorizontalAlignment="Center"
-            Padding="24,16,24,28"
-            Spacing="12">
+    <Grid Padding="20,8,20,20">
 
-            <!--  ── Phone card ──  -->
-            <Border Padding="24" Style="{StaticResource CardStyle}">
-                <Grid>
-                    <!--  A paired phone  -->
-                    <Grid ColumnSpacing="28" Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <!--  ── A paired phone ──  -->
+        <Grid ColumnSpacing="16" Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.75*" />
+                <ColumnDefinition Width="*" MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <!--  Left column  -->
+            <Grid RowSpacing="14">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!--  Phone card: picture, name, chips | now playing  -->
+                <Border Padding="18" Style="{StaticResource CardStyle}">
+                    <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="1.15*" />
                         </Grid.ColumnDefinitions>
 
                         <Grid
                             x:Name="PhoneFrame"
-                            Width="104"
-                            Height="200"
+                            Width="84"
+                            Height="168"
                             AutomationProperties.Name="Mirror the phone's screen"
                             PointerEntered="PhoneFrame_PointerEntered"
                             PointerExited="PhoneFrame_PointerExited"
                             PointerWheelChanged="PhoneFrame_PointerWheelChanged"
-                            Tapped="PhoneFrame_Tapped">
+                            Tapped="PhoneFrame_Tapped"
+                            ToolTipService.ToolTip="Click to mirror the phone's screen">
                             <Border
                                 Background="#FF1B1B1F"
                                 BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1"
-                                CornerRadius="18" />
-                            <Grid Margin="5" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
-                                <Border CornerRadius="14">
+                                CornerRadius="16" />
+                            <Grid Margin="4" Opacity="{x:Bind ViewModel.Device.StatusOpacity, Mode=OneWay, FallbackValue=0.4}">
+                                <Border CornerRadius="12">
                                     <Border.Background>
                                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                                             <GradientStop Offset="0" Color="#FF3A4A6B" />
@@ -130,28 +138,28 @@
                                         </LinearGradientBrush>
                                     </Border.Background>
                                 </Border>
-                                <Border CornerRadius="14" Visibility="{x:Bind StatusViewModel.HasWallpaper, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Border CornerRadius="12" Visibility="{x:Bind StatusViewModel.HasWallpaper, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <Border.Background>
                                         <ImageBrush ImageSource="{x:Bind StatusViewModel.Wallpaper, Mode=OneWay}" Stretch="UniformToFill" />
                                     </Border.Background>
                                 </Border>
                                 <Ellipse
-                                    Width="6"
-                                    Height="6"
-                                    Margin="0,8,0,0"
+                                    Width="5"
+                                    Height="5"
+                                    Margin="0,7,0,0"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Top"
                                     Fill="#FF0B0B0E" />
                             </Grid>
                             <Border
                                 x:Name="PhoneOverlay"
-                                Margin="5"
+                                Margin="4"
                                 Background="#99000000"
-                                CornerRadius="14"
+                                CornerRadius="12"
                                 Opacity="0">
-                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
-                                    <FontIcon FontSize="22" Foreground="White" Glyph="&#xEC15;" />
-                                    <TextBlock FontSize="11" Foreground="White" Text="Click to mirror" />
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                                    <FontIcon FontSize="20" Foreground="White" Glyph="&#xEC15;" />
+                                    <TextBlock FontSize="10" Foreground="White" Text="Mirror" />
                                 </StackPanel>
                             </Border>
                         </Grid>
@@ -159,9 +167,9 @@
                         <StackPanel
                             Grid.Column="1"
                             VerticalAlignment="Center"
-                            Spacing="12">
+                            Spacing="10">
                             <TextBlock
-                                FontSize="28"
+                                FontSize="22"
                                 FontWeight="SemiBold"
                                 Text="{x:Bind ViewModel.Device.Name, Mode=OneWay}"
                                 TextTrimming="CharacterEllipsis"
@@ -171,559 +179,566 @@
                                 AutomationProperties.Name="Phone shown in Veyro"
                                 Background="Transparent"
                                 BorderThickness="0"
-                                FontSize="24"
+                                FontSize="20"
                                 FontWeight="SemiBold"
                                 ItemsSource="{x:Bind ViewModel.PairedDevices, Mode=OneWay}"
                                 SelectedItem="{x:Bind ViewModel.Device, Mode=TwoWay}"
                                 Visibility="{x:Bind ViewModel.HasMultipleDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate x:DataType="models:PairedDeviceUiModel">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="{x:Bind Name, Mode=OneWay}" />
-                                            <TextBlock
-                                                VerticalAlignment="Center"
-                                                FontSize="12"
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Text="{x:Bind ConnectionStatusText, Mode=OneWay}" />
-                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind Name, Mode=OneWay}" />
                                     </DataTemplate>
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
 
-                            <!--  Live status: connection (click for details), then what the phone reported  -->
-                            <StackPanel Orientation="Horizontal" Spacing="18">
-                                <Button
-                                    Padding="6,2"
-                                    AutomationProperties.Name="Connection details"
-                                    Background="Transparent"
-                                    BorderThickness="0"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    ToolTipService.ToolTip="Connection details">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Grid Width="9" Height="9" VerticalAlignment="Center">
-                                            <Ellipse Fill="{ThemeResource SystemFillColorSuccessBrush}" Visibility="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                            <Ellipse Fill="{ThemeResource SystemFillColorCautionBrush}" Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                            <Ellipse Fill="{ThemeResource SystemFillColorNeutralBrush}" Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                        </Grid>
-                                        <TextBlock Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
-                                    </StackPanel>
-                                    <Button.Flyout>
-                                        <Flyout>
-                                            <StackPanel MaxWidth="340" Spacing="8">
-                                                <TextBlock Text="{x:Bind ViewModel.ConnectionHelpText, Mode=OneWay}" TextWrapping="Wrap" />
-                                                <TextBlock
-                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                                    Text="{x:Bind ViewModel.NetworkText, Mode=OneWay}"
-                                                    TextWrapping="Wrap" />
-                                                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Fingerprint" />
-                                                <TextBlock
-                                                    FontFamily="Consolas"
-                                                    IsTextSelectionEnabled="True"
-                                                    Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}"
-                                                    TextWrapping="Wrap" />
-                                            </StackPanel>
-                                        </Flyout>
-                                    </Button.Flyout>
-                                </Button>
-                                <StackPanel
-                                    VerticalAlignment="Center"
-                                    Orientation="Horizontal"
-                                    Spacing="6"
-                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
-                                    Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <FontIcon FontSize="15" Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
-                                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind StatusViewModel.BatteryText, Mode=OneWay}" />
-                                </StackPanel>
-                                <StackPanel
-                                    VerticalAlignment="Center"
-                                    Orientation="Horizontal"
-                                    Spacing="6"
-                                    Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <FontIcon FontSize="15" Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}" Opacity="{x:Bind StatusViewModel.WifiOpacity, Mode=OneWay}" />
-                                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxWidth="160" />
-                                </StackPanel>
-                                <StackPanel
-                                    VerticalAlignment="Center"
-                                    Orientation="Horizontal"
-                                    Spacing="6"
-                                    Visibility="{x:Bind StatusViewModel.HasCell, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <FontIcon FontSize="15" Glyph="{x:Bind StatusViewModel.CellGlyph, Mode=OneWay}" Opacity="{x:Bind StatusViewModel.CellOpacity, Mode=OneWay}" />
-                                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxWidth="160" />
-                                </StackPanel>
-                                <FontIcon
-                                    VerticalAlignment="Center"
-                                    FontSize="15"
-                                    Glyph="&#xE702;"
-                                    Opacity="{x:Bind StatusViewModel.BluetoothOpacity, Mode=OneWay}"
-                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.BluetoothLabel, Mode=OneWay}"
-                                    Visibility="{x:Bind StatusViewModel.HasBluetooth, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                            </StackPanel>
-
-                            <StackPanel Margin="0,4,0,0" Orientation="Horizontal" Spacing="10">
-                                <Button
-                                    Click="Mirror_Click"
-                                    IsEnabled="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay}"
-                                    Style="{StaticResource PillAccentButtonStyle}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon FontSize="14" Glyph="&#xEC15;" />
-                                        <TextBlock Text="Mirror screen" />
-                                    </StackPanel>
-                                </Button>
-                                <Button Click="SendFiles_Click" Style="{StaticResource PillButtonStyle}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon FontSize="14" Glyph="&#xE898;" />
-                                        <TextBlock Text="Send files" />
-                                    </StackPanel>
-                                </Button>
-                                <Button Click="SendFolder_Click" Style="{StaticResource PillButtonStyle}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon FontSize="14" Glyph="&#xE8B7;" />
-                                        <TextBlock Text="Send folder" />
-                                    </StackPanel>
-                                </Button>
-                                <Button Click="Reconnect_Click" Style="{StaticResource PillButtonStyle}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                                        <TextBlock Text="Reconnect" />
-                                    </StackPanel>
-                                </Button>
-                            </StackPanel>
-
-                            <TextBlock
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Style="{StaticResource CaptionTextBlockStyle}"
-                                Text="Drop files anywhere on this window to send them to the phone. Connection details and fingerprint: click the connection status."
-                                TextWrapping="Wrap" />
-                        </StackPanel>
-                    </Grid>
-
-                    <!--  No phone paired: pair one, or pick a phone discovery sees  -->
-                    <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.HasNoActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                        <TextBlock FontSize="24" FontWeight="SemiBold" Text="No phone paired" />
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="Install Veyro on your Android phone, then pair it with this PC."
-                            TextWrapping="Wrap" />
-                        <Button
-                            HorizontalAlignment="Left"
-                            Click="PairPhone_Click"
-                            Style="{StaticResource PillAccentButtonStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon FontSize="14" Glyph="&#xED14;" />
-                                <TextBlock Text="Pair a phone" />
-                            </StackPanel>
-                        </Button>
-                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Available devices" />
-                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.DiscoveredDevices, Mode=OneWay}">
-                            <ItemsRepeater.Layout>
-                                <StackLayout Orientation="Vertical" Spacing="8" />
-                            </ItemsRepeater.Layout>
-                            <ItemsRepeater.ItemTemplate>
-                                <DataTemplate x:DataType="models:DiscoveredDeviceUiModel">
-                                    <Button
-                                        MaxWidth="480"
-                                        Padding="12"
-                                        HorizontalAlignment="Stretch"
-                                        HorizontalContentAlignment="Left"
-                                        Click="DiscoveredDevice_Click"
-                                        CornerRadius="10"
-                                        Tag="{x:Bind DeviceId}">
-                                        <Grid ColumnSpacing="12">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
-                                            <StackPanel Grid.Column="1" Spacing="4">
-                                                <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" />
-                                                <TextBlock
-                                                    FontSize="12"
-                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                    Text="{x:Bind VerificationKey}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Button>
-                                </DataTemplate>
-                            </ItemsRepeater.ItemTemplate>
-                        </ItemsRepeater>
-                        <TextBlock
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="No phone with Veyro open is visible on this network. Keep both devices on the same Wi-Fi or hotspot."
-                            TextWrapping="Wrap"
-                            Visibility="{x:Bind ViewModel.HasNoDiscoveredDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                    </StackPanel>
-                </Grid>
-            </Border>
-
-            <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-
-                <!--  ── Phone tools (ADR-067, ADR-073) ──  -->
-                <TextBlock Style="{StaticResource SectionTitleStyle}" Text="Phone tools" />
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <Button
-                        x:Name="WebcamTile"
-                        Grid.Column="0"
-                        AutomationProperties.Name="Use phone as webcam"
-                        Click="Webcam_Click"
-                        Style="{StaticResource ToolTileStyle}">
-                        <Grid RowSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <Border Style="{StaticResource TileIconBadgeStyle}">
-                                    <FontIcon FontSize="18" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Glyph="&#xE960;" />
-                                </Border>
-                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Webcam" />
-                            </StackPanel>
-                            <TextBlock Grid.Row="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" Text="Use the phone camera on this PC" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="2" FontSize="12" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Text="Open camera ›" />
-                        </Grid>
-                    </Button>
-
-                    <Button
-                        x:Name="SpeakerTile"
-                        Grid.Column="1"
-                        AutomationProperties.Name="Play PC sound on phone"
-                        Click="Speaker_Click"
-                        Style="{StaticResource ToolTileStyle}">
-                        <Grid RowSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Border Style="{StaticResource TileIconBadgeStyle}">
-                                    <FontIcon FontSize="18" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Glyph="&#xE7F5;" />
-                                </Border>
-                                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Text="PC sound on phone" TextWrapping="Wrap" />
-                                <Border
-                                    x:Name="SpeakerPill"
-                                    Grid.Column="2"
-                                    Padding="10,3"
-                                    VerticalAlignment="Center"
-                                    Background="{ThemeResource ControlFillColorSecondaryBrush}"
-                                    CornerRadius="11">
-                                    <TextBlock x:Name="SpeakerPillText" FontSize="12" FontWeight="SemiBold" Text="Off" />
-                                </Border>
-                            </Grid>
-                            <TextBlock
-                                x:Name="SpeakerText"
-                                Grid.Row="1"
-                                FontSize="12"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="Hear this PC through the phone"
-                                TextWrapping="Wrap" />
-                            <TextBlock
-                                x:Name="SpeakerLink"
-                                Grid.Row="2"
-                                FontSize="12"
-                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                                Text="Start ›" />
-                        </Grid>
-                    </Button>
-
-                    <Button
-                        x:Name="PhotoTile"
-                        Grid.Column="2"
-                        AutomationProperties.Name="Take photo with phone"
-                        Click="TakePhoto_Click"
-                        Style="{StaticResource ToolTileStyle}">
-                        <Grid RowSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <Border Style="{StaticResource TileIconBadgeStyle}">
-                                    <FontIcon FontSize="18" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Glyph="&#xE722;" />
-                                </Border>
-                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Take photo" />
-                            </StackPanel>
-                            <TextBlock Grid.Row="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" Text="Lands on the clipboard · Ctrl+Alt+C" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="2" FontSize="12" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Text="Ask the phone ›" />
-                        </Grid>
-                    </Button>
-
-                    <Button
-                        x:Name="ScanTile"
-                        Grid.Column="3"
-                        AutomationProperties.Name="Scan document with phone"
-                        Click="Scan_Click"
-                        Style="{StaticResource ToolTileStyle}">
-                        <Grid RowSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <Border Style="{StaticResource TileIconBadgeStyle}">
-                                    <FontIcon FontSize="18" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Glyph="&#xE8A5;" />
-                                </Border>
-                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Scan document" />
-                            </StackPanel>
-                            <TextBlock Grid.Row="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" Text="Flattened page · Ctrl+Alt+D" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="2" FontSize="12" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Text="Ask the phone ›" />
-                        </Grid>
-                    </Button>
-                </Grid>
-
-                <!--  ── Quick controls (ADR-038, ADR-060): a click is a request; the phone's report decides ──  -->
-                <TextBlock Style="{StaticResource SectionTitleStyle}" Text="Quick controls" />
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="2*" />
-                    </Grid.ColumnDefinitions>
-
-                    <Grid Grid.Column="0" Background="Transparent" ToolTipService.ToolTip="{x:Bind StatusViewModel.TorchTip, Mode=OneWay}">
-                        <ToggleButton
-                            x:Name="TorchToggle"
-                            AutomationProperties.Name="{x:Bind StatusViewModel.TorchTip, Mode=OneWay}"
-                            Click="Torch_Click"
-                            IsChecked="{x:Bind StatusViewModel.IsTorchOn, Mode=OneWay}"
-                            IsEnabled="{x:Bind StatusViewModel.CanTorch, Mode=OneWay}"
-                            Style="{StaticResource QuickTileStyle}">
-                            <StackPanel Spacing="4">
+                            <!--  Connection chip: click for details and the fingerprint  -->
+                            <Button
+                                Padding="12,5"
+                                AutomationProperties.Name="Connection details"
+                                Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                CornerRadius="15">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="16" Glyph="&#xEA80;" />
-                                    <TextBlock FontWeight="SemiBold" Text="Flashlight" />
+                                    <Grid Width="8" Height="8" VerticalAlignment="Center">
+                                        <Ellipse Fill="{ThemeResource SystemFillColorSuccessBrush}" Visibility="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Ellipse Fill="{ThemeResource SystemFillColorCautionBrush}" Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Ellipse Fill="{ThemeResource SystemFillColorNeutralBrush}" Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    </Grid>
+                                    <TextBlock FontSize="13" Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
+                                    <FontIcon
+                                        FontSize="13"
+                                        Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}"
+                                        ToolTipService.ToolTip="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}"
+                                        Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                 </StackPanel>
-                                <TextBlock FontSize="12" Opacity="0.75" Text="{x:Bind OnOff(StatusViewModel.IsTorchOn), Mode=OneWay}" />
+                                <Button.Flyout>
+                                    <Flyout>
+                                        <StackPanel MaxWidth="340" Spacing="8">
+                                            <TextBlock Text="{x:Bind ViewModel.ConnectionHelpText, Mode=OneWay}" TextWrapping="Wrap" />
+                                            <TextBlock
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Style="{StaticResource CaptionTextBlockStyle}"
+                                                Text="{x:Bind ViewModel.NetworkText, Mode=OneWay}"
+                                                TextWrapping="Wrap" />
+                                            <TextBlock
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Style="{StaticResource CaptionTextBlockStyle}"
+                                                Text="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}"
+                                                TextWrapping="Wrap" />
+                                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Fingerprint" />
+                                            <TextBlock
+                                                FontFamily="Consolas"
+                                                IsTextSelectionEnabled="True"
+                                                Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}"
+                                                TextWrapping="Wrap" />
+                                            <Button Click="Reconnect_Click" Content="Reconnect" />
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+
+                            <Border
+                                Style="{StaticResource ChipStyle}"
+                                ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
+                                Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="13" Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
+                                    <TextBlock FontSize="13" Text="{x:Bind BatteryChip(StatusViewModel.BatteryText, StatusViewModel.IsCharging), Mode=OneWay}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <Rectangle
+                            Grid.Column="2"
+                            Width="1"
+                            Margin="0,6"
+                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                        <!--  Now playing on the phone  -->
+                        <Grid Grid.Column="3" VerticalAlignment="Center">
+                            <userControls:MediaSessionsControl />
+                            <StackPanel
+                                VerticalAlignment="Center"
+                                Spacing="6"
+                                Visibility="{x:Bind MediaViewModel.HasNoSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <FontIcon HorizontalAlignment="Left" FontSize="22" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Glyph="&#xEC4F;" />
+                                <TextBlock FontWeight="SemiBold" Text="Nothing playing" />
+                                <TextBlock
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Music and videos playing on the phone show here with controls."
+                                    TextWrapping="Wrap" />
                             </StackPanel>
-                        </ToggleButton>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!--  Main actions  -->
+                <Grid Grid.Row="1" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0">
+                        <Button
+                            AutomationProperties.Name="Mirror screen"
+                            Click="Mirror_Click"
+                            IsEnabled="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay}"
+                            Style="{StaticResource ActionTileStyle}">
+                            <Grid>
+                                <Border Style="{StaticResource BadgeStyle}">
+                                    <FontIcon FontSize="14" Glyph="&#xEC15;" />
+                                </Border>
+                                <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Mirror screen" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </Button>
                     </Grid>
 
-                    <!--  This PC's Do not disturb for phone pop-ups (ADR-067)  -->
-                    <ToggleButton
-                        x:Name="QuietToggle"
-                        Grid.Column="1"
-                        AutomationProperties.Name="Do not disturb on this PC"
-                        Click="Quiet_Click"
-                        Style="{StaticResource QuickTileStyle}"
-                        ToolTipService.ToolTip="No phone notification pop-ups on this PC">
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon FontSize="16" Glyph="&#xE708;" />
-                                <TextBlock FontWeight="SemiBold" Text="Do not disturb" TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                            <TextBlock x:Name="QuietText" FontSize="12" Opacity="0.75" Text="Off" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                    </ToggleButton>
+                    <Grid Grid.Column="1">
+                        <Button
+                            AutomationProperties.Name="Send files"
+                            Click="SendFiles_Click"
+                            Style="{StaticResource ActionTileStyle}"
+                            ToolTipService.ToolTip="Send files (or drop them on this window)">
+                            <Grid>
+                                <Border Style="{StaticResource BadgeStyle}">
+                                    <FontIcon FontSize="14" Glyph="&#xE724;" />
+                                </Border>
+                                <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Send files" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </Button>
+                        <Button
+                            Margin="0,10,10,0"
+                            AutomationProperties.Name="Send folder"
+                            Click="SendFolder_Click"
+                            Style="{StaticResource CornerButtonStyle}"
+                            ToolTipService.ToolTip="Send a whole folder">
+                            <FontIcon FontSize="15" Glyph="&#xE8B7;" />
+                        </Button>
+                    </Grid>
+
+                    <Grid Grid.Column="2">
+                        <Button
+                            AutomationProperties.Name="Send clipboard"
+                            Click="SendClipboard_Click"
+                            IsEnabled="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay}"
+                            Style="{StaticResource ActionTileStyle}"
+                            ToolTipService.ToolTip="Send the text on this PC's clipboard to the phone">
+                            <Grid>
+                                <Border Style="{StaticResource BadgeStyle}">
+                                    <FontIcon FontSize="14" Glyph="&#xE77F;" />
+                                </Border>
+                                <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Send clipboard" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </Button>
+                        <Button
+                            Margin="0,10,10,0"
+                            AutomationProperties.Name="Clipboard history"
+                            Click="ClipboardPage_Click"
+                            Style="{StaticResource CornerButtonStyle}"
+                            ToolTipService.ToolTip="Clipboard history">
+                            <FontIcon FontSize="15" Glyph="&#xF0E3;" />
+                        </Button>
+                    </Grid>
 
                     <ToggleButton
                         x:Name="RingToggle"
-                        Grid.Column="2"
+                        Grid.Column="3"
+                        Height="84"
+                        Padding="14,12"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch"
                         AutomationProperties.Name="{x:Bind StatusViewModel.RingButtonText, Mode=OneWay}"
                         Click="Ring_Click"
+                        CornerRadius="16"
                         IsChecked="{x:Bind StatusViewModel.IsRinging, Mode=OneWay}"
                         IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
-                        Style="{StaticResource QuickTileStyle}"
                         ToolTipService.ToolTip="Ring the phone at full volume for up to 30 seconds">
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon FontSize="16" Glyph="&#xE8EA;" />
-                                <TextBlock FontWeight="SemiBold" Text="Find phone" TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                            <TextBlock FontSize="12" Opacity="0.75" Text="{x:Bind RingText(StatusViewModel.IsRinging), Mode=OneWay}" />
-                        </StackPanel>
+                        <Grid>
+                            <Border Style="{StaticResource BadgeStyle}">
+                                <FontIcon FontSize="14" Glyph="&#xEA8F;" />
+                            </Border>
+                            <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="{x:Bind FindText(StatusViewModel.IsRinging), Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                        </Grid>
                     </ToggleButton>
+                </Grid>
 
-                    <Button
-                        Grid.Column="3"
-                        AutomationProperties.Name="{x:Bind StatusViewModel.SoundLabel, Mode=OneWay}"
-                        IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
-                        Style="{StaticResource QuickButtonTileStyle}">
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon FontSize="16" Glyph="{x:Bind StatusViewModel.SoundGlyph, Mode=OneWay}" />
-                                <TextBlock FontWeight="SemiBold" Text="Phone sound" TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                            <TextBlock FontSize="12" Opacity="0.75" Text="{x:Bind StatusViewModel.SoundLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                        <Button.Flyout>
-                            <MenuFlyout>
-                                <MenuFlyoutItem Click="RingerNormal_Click" Text="Ring">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xEA8F;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Click="RingerVibrate_Click" Text="Vibrate">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE877;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Click="RingerSilent_Click" Text="Silent">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE7ED;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutSeparator />
-                                <MenuFlyoutItem Click="PhoneDnd_Click" Text="{x:Bind StatusViewModel.DndButtonLabel, Mode=OneWay}">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE708;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </Button.Flyout>
-                    </Button>
+                <!--  Notifications: the full feed with reply, actions, history and the PC pop-up pause  -->
+                <Border
+                    Grid.Row="2"
+                    Padding="16,14,16,4"
+                    Style="{StaticResource CardStyle}">
+                    <userControls:NotificationsControl />
+                </Border>
+            </Grid>
 
-                    <Border
-                        Grid.Column="4"
-                        Padding="16,8"
-                        CornerRadius="14"
-                        Style="{StaticResource CardStyle}">
-                        <Grid ColumnSpacing="12" RowSpacing="2">
+            <!--  Right column  -->
+            <Grid Grid.Column="1" RowSpacing="14">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!--  Phone controls (ADR-038, ADR-060, ADR-073): a click is a request; the phone's report decides  -->
+                <Border Padding="16" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid>
+                            <TextBlock Style="{StaticResource CardTitleStyle}" Text="Phone controls" />
+                            <Button
+                                x:Name="SoundDisplayButton"
+                                Padding="6,2"
+                                HorizontalAlignment="Right"
+                                AutomationProperties.Name="Sound and display"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}">
+                                <TextBlock FontSize="13" Text="Sound and display" />
+                                <Button.Flyout>
+                                    <Flyout>
+                                        <StackPanel Width="290" Spacing="10">
+                                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Sound and display" />
+                                            <Grid ColumnSpacing="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <ToggleButton
+                                                    x:Name="RingerNormalToggle"
+                                                    Padding="6"
+                                                    HorizontalAlignment="Stretch"
+                                                    Click="RingerNormal_Click"
+                                                    IsChecked="{x:Bind StatusViewModel.IsRingerNormal, Mode=OneWay}">
+                                                    <StackPanel Spacing="4">
+                                                        <FontIcon Glyph="&#xEA8F;" />
+                                                        <TextBlock FontSize="12" HorizontalAlignment="Center" Text="Ring" />
+                                                    </StackPanel>
+                                                </ToggleButton>
+                                                <ToggleButton
+                                                    x:Name="RingerVibrateToggle"
+                                                    Grid.Column="1"
+                                                    Padding="6"
+                                                    HorizontalAlignment="Stretch"
+                                                    Click="RingerVibrate_Click"
+                                                    IsChecked="{x:Bind StatusViewModel.IsRingerVibrate, Mode=OneWay}">
+                                                    <StackPanel Spacing="4">
+                                                        <FontIcon Glyph="&#xE877;" />
+                                                        <TextBlock FontSize="12" HorizontalAlignment="Center" Text="Vibrate" />
+                                                    </StackPanel>
+                                                </ToggleButton>
+                                                <ToggleButton
+                                                    x:Name="RingerSilentToggle"
+                                                    Grid.Column="2"
+                                                    Padding="6"
+                                                    HorizontalAlignment="Stretch"
+                                                    Click="RingerSilent_Click"
+                                                    IsChecked="{x:Bind StatusViewModel.IsRingerSilent, Mode=OneWay}">
+                                                    <StackPanel Spacing="4">
+                                                        <FontIcon Glyph="&#xE7ED;" />
+                                                        <TextBlock FontSize="12" HorizontalAlignment="Center" Text="Silent" />
+                                                    </StackPanel>
+                                                </ToggleButton>
+                                            </Grid>
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Media volume" />
+                                            <Slider
+                                                AutomationProperties.Name="Phone media volume"
+                                                IsEnabled="{x:Bind StatusViewModel.CanVolume, Mode=OneWay}"
+                                                Maximum="100"
+                                                Minimum="0"
+                                                StepFrequency="1"
+                                                Value="{x:Bind StatusViewModel.ShownMediaVolume, Mode=OneWay}"
+                                                ValueChanged="Volume_ValueChanged" />
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Screen brightness" />
+                                            <Slider
+                                                AutomationProperties.Name="Phone screen brightness"
+                                                IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
+                                                Maximum="100"
+                                                Minimum="0"
+                                                StepFrequency="1"
+                                                Value="{x:Bind StatusViewModel.ShownBrightness, Mode=OneWay}"
+                                                ValueChanged="Brightness_ValueChanged" />
+                                            <ToggleSwitch
+                                                Header="Automatic brightness"
+                                                IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
+                                                IsOn="{x:Bind StatusViewModel.IsAutoBrightness, Mode=OneWay}"
+                                                Toggled="AutoBrightness_Toggled" />
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                        </Grid>
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <!--  The phone's own Do not disturb (not this PC's pop-ups: that is the bell on Notifications)  -->
+                            <ToggleButton
+                                x:Name="PhoneDndToggle"
+                                AutomationProperties.Name="{x:Bind StatusViewModel.DndButtonLabel, Mode=OneWay}"
+                                Click="PhoneDnd_Click"
+                                IsChecked="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay}"
+                                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                                Style="{StaticResource ControlToggleStyle}"
+                                ToolTipService.ToolTip="{x:Bind StatusViewModel.DndButtonLabel, Mode=OneWay}">
+                                <StackPanel Spacing="3">
+                                    <FontIcon FontSize="16" Glyph="&#xE708;" />
+                                    <TextBlock HorizontalAlignment="Center" FontSize="11" Text="DND" />
+                                </StackPanel>
+                            </ToggleButton>
+                            <Grid Grid.Column="1" Background="Transparent" ToolTipService.ToolTip="{x:Bind StatusViewModel.TorchTip, Mode=OneWay}">
+                                <ToggleButton
+                                    x:Name="TorchToggle"
+                                    AutomationProperties.Name="{x:Bind StatusViewModel.TorchTip, Mode=OneWay}"
+                                    Click="Torch_Click"
+                                    IsChecked="{x:Bind StatusViewModel.IsTorchOn, Mode=OneWay}"
+                                    IsEnabled="{x:Bind StatusViewModel.CanTorch, Mode=OneWay}"
+                                    Style="{StaticResource ControlToggleStyle}">
+                                    <StackPanel Spacing="3">
+                                        <FontIcon FontSize="16" Glyph="&#xEA80;" />
+                                        <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Torch" />
+                                    </StackPanel>
+                                </ToggleButton>
+                            </Grid>
+                            <ToggleButton
+                                x:Name="SilentToggle"
+                                Grid.Column="2"
+                                AutomationProperties.Name="Silent"
+                                Click="SilentTile_Click"
+                                IsChecked="{x:Bind StatusViewModel.IsRingerSilent, Mode=OneWay}"
+                                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                                Style="{StaticResource ControlToggleStyle}"
+                                ToolTipService.ToolTip="{x:Bind StatusViewModel.SoundLabel, Mode=OneWay}">
+                                <StackPanel Spacing="3">
+                                    <FontIcon FontSize="16" Glyph="&#xE7ED;" />
+                                    <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Silent" />
+                                </StackPanel>
+                            </ToggleButton>
+                            <ToggleButton
+                                x:Name="VibrateToggle"
+                                Grid.Column="3"
+                                AutomationProperties.Name="Vibrate"
+                                Click="VibrateTile_Click"
+                                IsChecked="{x:Bind StatusViewModel.IsRingerVibrate, Mode=OneWay}"
+                                IsEnabled="{x:Bind StatusViewModel.CanControl, Mode=OneWay}"
+                                Style="{StaticResource ControlToggleStyle}"
+                                ToolTipService.ToolTip="{x:Bind StatusViewModel.SoundLabel, Mode=OneWay}">
+                                <StackPanel Spacing="3">
+                                    <FontIcon FontSize="16" Glyph="&#xE877;" />
+                                    <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Vibrate" />
+                                </StackPanel>
+                            </ToggleButton>
+                        </Grid>
+
+                        <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <StackPanel
-                                VerticalAlignment="Center"
-                                Orientation="Horizontal"
-                                Spacing="8"
-                                ToolTipService.ToolTip="{x:Bind StatusViewModel.VolumeTip, Mode=OneWay}">
-                                <FontIcon FontSize="14" Glyph="&#xE995;" />
-                                <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Phone volume" />
+                            <FontIcon VerticalAlignment="Center" FontSize="15" Glyph="&#xE7F5;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock FontSize="13" Text="PC sound on phone" />
+                                <TextBlock
+                                    x:Name="SpeakerText"
+                                    FontSize="11"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Play this PC's sound through the phone" />
                             </StackPanel>
-                            <Slider
-                                Grid.Column="1"
-                                AutomationProperties.Name="Phone media volume"
-                                IsEnabled="{x:Bind StatusViewModel.CanVolume, Mode=OneWay}"
-                                Maximum="100"
-                                Minimum="0"
-                                StepFrequency="1"
-                                Value="{x:Bind StatusViewModel.ShownMediaVolume, Mode=OneWay}"
-                                ValueChanged="Volume_ValueChanged" />
-                            <StackPanel
-                                Grid.Row="1"
-                                VerticalAlignment="Center"
-                                Orientation="Horizontal"
-                                Spacing="8"
-                                ToolTipService.ToolTip="{x:Bind StatusViewModel.BrightnessTip, Mode=OneWay}">
-                                <FontIcon FontSize="14" Glyph="&#xE706;" />
-                                <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Brightness" />
-                            </StackPanel>
-                            <Slider
-                                Grid.Row="1"
-                                Grid.Column="1"
-                                AutomationProperties.Name="Phone screen brightness"
-                                IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
-                                Maximum="100"
-                                Minimum="0"
-                                StepFrequency="1"
-                                Value="{x:Bind StatusViewModel.ShownBrightness, Mode=OneWay}"
-                                ValueChanged="Brightness_ValueChanged" />
+                            <ToggleSwitch
+                                x:Name="SpeakerSwitch"
+                                Grid.Column="2"
+                                MinWidth="0"
+                                AutomationProperties.Name="PC sound on phone"
+                                OffContent=""
+                                OnContent=""
+                                Toggled="SpeakerSwitch_Toggled">
+                                <!--  The default reserves 154 px for a label; this switch has none  -->
+                                <ToggleSwitch.Resources>
+                                    <x:Double x:Key="ToggleSwitchThemeMinWidth">0</x:Double>
+                                    <Thickness x:Key="ToggleSwitchTopHeaderMargin">0</Thickness>
+                                </ToggleSwitch.Resources>
+                            </ToggleSwitch>
                         </Grid>
-                    </Border>
-                </Grid>
+                    </StackPanel>
+                </Border>
 
-                <TextBlock
-                    Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                    Style="{StaticResource CaptionTextBlockStyle}"
-                    Text="{x:Bind StatusViewModel.StatusText, Mode=OneWay}"
-                    TextWrapping="Wrap"
-                    Visibility="{x:Bind StatusViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-
-                <!--  ── Now playing and Recent ──  -->
-                <Grid Margin="0,12,0,0" ColumnSpacing="12">
+                <!--  Camera tools (ADR-067, ADR-073)  -->
+                <Grid Grid.Row="1" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-
-                    <Border Padding="20" Style="{StaticResource CardStyle}">
-                        <StackPanel Spacing="12">
-                            <TextBlock FontSize="14" FontWeight="SemiBold" Text="Now playing on the phone" />
-                            <userControls:MediaSessionsControl />
-                            <TextBlock
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="Nothing is playing on the phone."
-                                Visibility="{x:Bind MediaViewModel.HasNoSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        </StackPanel>
-                    </Border>
-
-                    <Border
+                    <Grid>
+                        <Button
+                            x:Name="PhotoTile"
+                            AutomationProperties.Name="Take photo with phone"
+                            Click="TakePhoto_Click"
+                            Style="{StaticResource ActionTileStyle}"
+                            ToolTipService.ToolTip="Take a photo on the phone; it lands on this PC's clipboard (Ctrl+Alt+C)">
+                            <Grid>
+                                <Border Style="{StaticResource BadgeStyle}">
+                                    <FontIcon FontSize="14" Glyph="&#xE722;" />
+                                </Border>
+                                <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Continuity camera" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </Button>
+                        <Button
+                            x:Name="ScanButton"
+                            Margin="0,10,10,0"
+                            AutomationProperties.Name="Scan document with phone"
+                            Click="Scan_Click"
+                            Style="{StaticResource CornerButtonStyle}"
+                            ToolTipService.ToolTip="Scan a document (Ctrl+Alt+D)">
+                            <FontIcon FontSize="15" Glyph="&#xE8A5;" />
+                        </Button>
+                    </Grid>
+                    <Button
+                        x:Name="WebcamTile"
                         Grid.Column="1"
-                        Padding="20"
-                        Style="{StaticResource CardStyle}">
-                        <StackPanel Spacing="10">
-                            <TextBlock FontSize="14" FontWeight="SemiBold" Text="Recent" />
-                            <ItemsRepeater ItemsSource="{x:Bind Recent}">
-                                <ItemsRepeater.Layout>
-                                    <StackLayout Orientation="Vertical" Spacing="10" />
-                                </ItemsRepeater.Layout>
-                                <ItemsRepeater.ItemTemplate>
-                                    <DataTemplate x:DataType="viewModels:NotificationItemViewModel">
-                                        <Grid ColumnSpacing="10">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="24" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <Image
-                                                Width="20"
-                                                Height="20"
-                                                VerticalAlignment="Top"
-                                                Source="{x:Bind Icon, Mode=OneWay}"
-                                                Visibility="{x:Bind HasIcon, Mode=OneWay}" />
-                                            <FontIcon
-                                                VerticalAlignment="Top"
-                                                FontSize="14"
-                                                Glyph="&#xE91C;"
-                                                Visibility="{x:Bind HasNoIcon, Mode=OneWay}" />
-                                            <StackPanel Grid.Column="1" Spacing="1">
-                                                <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
-                                                    <Run FontWeight="SemiBold" Text="{x:Bind Title, Mode=OneWay}" />
-                                                    <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="{x:Bind AppName, Mode=OneWay}" />
-                                                </TextBlock>
-                                                <TextBlock
-                                                    FontSize="12"
-                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                    Text="{x:Bind Text, Mode=OneWay}"
-                                                    TextTrimming="CharacterEllipsis" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsRepeater.ItemTemplate>
-                            </ItemsRepeater>
-                            <TextBlock
-                                x:Name="RecentEmpty"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind NotificationsViewModel.NoCurrentText, Mode=OneWay}"
-                                TextWrapping="Wrap" />
-                            <HyperlinkButton
-                                Padding="0"
-                                Click="SeeAll_Click"
-                                Content="See all notifications ›" />
-                        </StackPanel>
-                    </Border>
+                        AutomationProperties.Name="Phone as webcam"
+                        Click="Webcam_Click"
+                        Style="{StaticResource ActionTileStyle}">
+                        <Grid>
+                            <Border Style="{StaticResource BadgeStyle}">
+                                <FontIcon FontSize="14" Glyph="&#xE714;" />
+                            </Border>
+                            <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Phone as webcam" TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </Button>
                 </Grid>
+
+                <!--  Timeline: recent transfers  -->
+                <Border
+                    Grid.Row="2"
+                    Padding="16"
+                    Style="{StaticResource CardStyle}">
+                    <Grid RowSpacing="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid>
+                            <TextBlock Style="{StaticResource CardTitleStyle}" Text="Timeline" />
+                            <Button
+                                Padding="6,2"
+                                HorizontalAlignment="Right"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Click="ViewAll_Click"
+                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}">
+                                <TextBlock FontSize="13" Text="View all" />
+                            </Button>
+                        </Grid>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <ItemsRepeater ItemsSource="{x:Bind Timeline}">
+                                    <ItemsRepeater.Layout>
+                                        <StackLayout Orientation="Vertical" Spacing="12" />
+                                    </ItemsRepeater.Layout>
+                                    <ItemsRepeater.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:TransferHistoryItemViewModel">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <FontIcon
+                                                    VerticalAlignment="Top"
+                                                    FontSize="14"
+                                                    Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                    Glyph="{x:Bind Glyph}" />
+                                                <StackPanel Grid.Column="1" Spacing="1">
+                                                    <TextBlock FontSize="13" FontWeight="SemiBold" Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind Detail}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsRepeater.ItemTemplate>
+                                </ItemsRepeater>
+                                <TextBlock
+                                    x:Name="TimelineEmpty"
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Files you send or receive show here."
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!--  ── No phone paired: pair one, or pick a phone discovery sees ──  -->
+        <Border
+            MaxWidth="620"
+            Padding="28"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Style="{StaticResource CardStyle}"
+            Visibility="{x:Bind ViewModel.HasNoActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel Spacing="12">
+                <TextBlock FontSize="24" FontWeight="SemiBold" Text="No phone paired" />
+                <TextBlock
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="Install Veyro on your Android phone, then pair it with this PC."
+                    TextWrapping="Wrap" />
+                <Button
+                    HorizontalAlignment="Left"
+                    Click="PairPhone_Click"
+                    CornerRadius="18"
+                    Style="{StaticResource AccentButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xED14;" />
+                        <TextBlock Text="Pair a phone" />
+                    </StackPanel>
+                </Button>
+                <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Available devices" />
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.DiscoveredDevices, Mode=OneWay}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Orientation="Vertical" Spacing="8" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="models:DiscoveredDeviceUiModel">
+                            <Button
+                                Padding="12"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Click="DiscoveredDevice_Click"
+                                CornerRadius="12"
+                                Tag="{x:Bind DeviceId}">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{x:Bind VerificationKey}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+                <TextBlock
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="No phone with Veyro open is visible on this network. Keep both devices on the same Wi-Fi or hotspot."
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind ViewModel.HasNoDiscoveredDevices, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
             </StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+        </Border>
+    </Grid>
 </Page>

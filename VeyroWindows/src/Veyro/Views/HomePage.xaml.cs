@@ -1,27 +1,28 @@
 using System.Collections.Specialized;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace Veyro.Views;
 
 /// <summary>
-/// ADR-074: Modern Home. The same actions as the Classic control center, all visible. Tool tiles
-/// follow what the shown phone can do now (connected, capabilities, the speaker's state) and are
-/// refreshed on changes and every few seconds while the page is shown. Recent lists the phone's
-/// newest notifications (missed calls and messages arrive there too).
+/// ADR-074: Modern Home, laid out like NectarLink. Tool buttons follow what the shown phone can do
+/// now (connected, capabilities, the speaker's state); they are refreshed on changes and every few
+/// seconds while the page is shown. The timeline is the newest transfers from the transfer store.
 /// </summary>
 public sealed partial class HomePage : Page
 {
-    private const int RecentCount = 4;
+    private const int TimelineCount = 6;
 
     public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
     public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
     public PhoneMediaViewModel MediaViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
-    public NotificationsViewModel NotificationsViewModel => VeyroContainer.Instance.NotificationsViewModel;
+    private TransfersPageViewModel Transfers => VeyroContainer.Instance.TransfersPageViewModel;
 
-    public ObservableCollection<NotificationItemViewModel> Recent { get; } = [];
+    public ObservableCollection<TransferHistoryItemViewModel> Timeline { get; } = [];
 
     private DispatcherQueueTimer? _refresh;
+    private bool _settingSpeaker;
 
     public HomePage()
     {
@@ -31,30 +32,20 @@ public sealed partial class HomePage : Page
         Unloaded += OnUnloaded;
     }
 
-    public string OnOff(bool on) => on ? "On" : "Off";
+    public string BatteryChip(string battery, bool charging) => charging ? $"{battery} · Charging" : battery;
 
-    private const double MaxContentWidth = 1180;
-
-    /// <summary>The page is exactly as wide as what is visible (at most 1180), never wider.</summary>
-    private void PageScroller_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        double width = Math.Min(MaxContentWidth, Math.Max(320, e.NewSize.Width));
-        if (Math.Abs(PageContent.Width - width) > 0.5) PageContent.Width = width;
-    }
-
-    public string RingText(bool ringing) => ringing ? "Ringing. Click to stop" : "Ring the phone";
+    public string FindText(bool ringing) => ringing ? "Stop ringing" : "Find phone";
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         var container = VeyroContainer.Instance;
         ViewModel.PropertyChanged += OnViewModelChanged;
         container.Speaker.Changed += OnSpeakerChanged;
-        container.SettingsStore.SettingsChanged += OnSettingsChanged;
-        NotificationsViewModel.Notifications.CollectionChanged += OnNotificationsChanged;
+        Transfers.History.CollectionChanged += OnHistoryChanged;
         _refresh ??= CreateRefreshTimer();
         _refresh.Start();
         RefreshTools();
-        RefreshRecent();
+        RefreshTimeline();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -62,8 +53,7 @@ public sealed partial class HomePage : Page
         var container = VeyroContainer.Instance;
         ViewModel.PropertyChanged -= OnViewModelChanged;
         container.Speaker.Changed -= OnSpeakerChanged;
-        container.SettingsStore.SettingsChanged -= OnSettingsChanged;
-        NotificationsViewModel.Notifications.CollectionChanged -= OnNotificationsChanged;
+        Transfers.History.CollectionChanged -= OnHistoryChanged;
         _refresh?.Stop();
     }
 
@@ -83,15 +73,13 @@ public sealed partial class HomePage : Page
         if (problem is not null) VeyroContainer.Instance.NotificationToastService.ShowStatus("PC sound on the phone", problem, "speaker");
     }
 
-    private void OnSettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(RefreshTools);
+    private void OnHistoryChanged(object? sender, NotifyCollectionChangedEventArgs e) => DispatcherQueue.TryEnqueue(RefreshTimeline);
 
-    private void OnNotificationsChanged(object? sender, NotifyCollectionChangedEventArgs e) => DispatcherQueue.TryEnqueue(RefreshRecent);
-
-    private void RefreshRecent()
+    private void RefreshTimeline()
     {
-        Recent.Clear();
-        foreach (NotificationItemViewModel item in NotificationsViewModel.Notifications.Take(RecentCount)) Recent.Add(item);
-        RecentEmpty.Visibility = Recent.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        Timeline.Clear();
+        foreach (TransferHistoryItemViewModel item in Transfers.History.Take(TimelineCount)) Timeline.Add(item);
+        TimelineEmpty.Visibility = Timeline.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private string? ConnectedId => ViewModel.Device is { IsConnected: true } device ? device.DeviceId : null;
@@ -103,21 +91,15 @@ public sealed partial class HomePage : Page
         WebcamTile.IsEnabled = id is not null;
 
         bool mine = id is not null && string.Equals(container.Speaker.PeerId, id, StringComparison.OrdinalIgnoreCase);
-        SpeakerTile.IsEnabled = id is not null && (mine || container.Speaker.CanUse(id));
-        SpeakerPillText.Text = mine ? "On" : "Off";
-        SpeakerPill.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[mine ? "AccentFillColorDefaultBrush" : "ControlFillColorSecondaryBrush"];
-        SpeakerPillText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[mine ? "TextOnAccentFillColorPrimaryBrush" : "TextFillColorPrimaryBrush"];
-        SpeakerText.Text = !mine ? "Hear this PC through the phone" : container.Speaker.IsPlaying ? "Playing now" : "Starting on the phone...";
-        SpeakerLink.Text = mine ? "Stop ›" : "Start ›";
-        SpeakerTile.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[mine ? "AccentFillColorDefaultBrush" : "CardStrokeColorDefaultBrush"];
+        _settingSpeaker = true;
+        SpeakerSwitch.IsEnabled = id is not null && (mine || container.Speaker.CanUse(id));
+        SpeakerSwitch.IsOn = mine;
+        _settingSpeaker = false;
+        SpeakerText.Text = !mine ? "Play this PC's sound through the phone" : container.Speaker.IsPlaying ? "Playing now" : "Starting on the phone...";
 
         bool capture = container.PhoneCapture.CanUse(id);
         PhotoTile.IsEnabled = capture;
-        ScanTile.IsEnabled = capture;
-
-        AppSettings s = container.SettingsStore.Current;
-        QuietToggle.IsChecked = s.NotificationPopupsPaused;
-        QuietText.Text = s.NotificationPopupsPaused ? "On" : s.QuietWhileMirroring ? "Auto while mirroring" : "Off";
+        ScanButton.IsEnabled = capture;
     }
 
     // ── Phone card ───────────────────────────────────────────────────────────────────
@@ -155,6 +137,31 @@ public sealed partial class HomePage : Page
         if (ViewModel.Device is not null) await App.PickAndSendFolderAsync();
     }
 
+    /// <summary>Sends the text on this PC's clipboard now, whatever the auto-send setting says.</summary>
+    private async void SendClipboard_Click(object sender, RoutedEventArgs e)
+    {
+        var toasts = VeyroContainer.Instance.NotificationToastService;
+        string? text = null;
+        try
+        {
+            DataPackageView view = Clipboard.GetContent();
+            if (view.Contains(StandardDataFormats.Text)) text = await view.GetTextAsync();
+        }
+        catch (Exception error) when (error is UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            // The clipboard is held by another app for a moment.
+        }
+        if (string.IsNullOrEmpty(text))
+        {
+            toasts.ShowStatus("Clipboard not sent", "There is no text on this PC's clipboard.", "clip-send");
+            return;
+        }
+        bool sent = await VeyroContainer.Instance.Clipboard.SendTextNowAsync(text);
+        if (!sent) toasts.ShowStatus("Clipboard not sent", "No connected phone takes clipboard copies. Check \"Auto-fetch clipboard\" in Veyro on the phone.", "clip-send");
+    }
+
+    private void ClipboardPage_Click(object sender, RoutedEventArgs e) => ModernShellPage.Open("Clipboard");
+
     private async void Reconnect_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshDiscoveryAsync();
 
     private void PairPhone_Click(object sender, RoutedEventArgs e) => ViewModel.RequestPairing();
@@ -164,6 +171,8 @@ public sealed partial class HomePage : Page
         if ((sender as FrameworkElement)?.Tag is string deviceId) await PairingFlow.PairWithDiscoveredAsync(XamlRoot, DispatcherQueue, deviceId, ViewModel);
     }
 
+    private void ViewAll_Click(object sender, RoutedEventArgs e) => ModernShellPage.Open("Transfers");
+
     // ── Phone tools ──────────────────────────────────────────────────────────────────
 
     private void Webcam_Click(object sender, RoutedEventArgs e)
@@ -171,11 +180,13 @@ public sealed partial class HomePage : Page
         if (ConnectedId is { } id) VeyroContainer.Instance.Mirror.OpenCamera(id);
     }
 
-    private async void Speaker_Click(object sender, RoutedEventArgs e)
+    private async void SpeakerSwitch_Toggled(object sender, RoutedEventArgs e)
     {
+        if (_settingSpeaker || ConnectedId is not { } id) return;
         var speaker = VeyroContainer.Instance.Speaker;
-        if (ConnectedId is not { } id) return;
-        if (string.Equals(speaker.PeerId, id, StringComparison.OrdinalIgnoreCase))
+        bool mine = string.Equals(speaker.PeerId, id, StringComparison.OrdinalIgnoreCase);
+        if (SpeakerSwitch.IsOn == mine) return;
+        if (mine)
             await speaker.StopAsync();
         else if (await speaker.StartAsync(id) is { } problem)
             VeyroContainer.Instance.NotificationToastService.ShowStatus("PC sound not played on the phone", problem, "speaker");
@@ -192,7 +203,14 @@ public sealed partial class HomePage : Page
         if (ConnectedId is { } id) _ = VeyroContainer.Instance.PhoneCapture.TakeAsync(id, scan: true);
     }
 
-    // ── Quick controls: a toggle shows the reported state until the phone confirms ──
+    // ── Phone controls: a toggle shows the reported state until the phone confirms ──
+
+    private async void PhoneDnd_Click(object sender, RoutedEventArgs e)
+    {
+        bool requested = !StatusViewModel.IsDndOn;
+        PhoneDndToggle.IsChecked = StatusViewModel.IsDndOn;
+        await StatusViewModel.RequestDndAsync(requested);
+    }
 
     private async void Torch_Click(object sender, RoutedEventArgs e)
     {
@@ -201,25 +219,38 @@ public sealed partial class HomePage : Page
         await StatusViewModel.RequestTorchAsync(requested);
     }
 
-    private async void Quiet_Click(object sender, RoutedEventArgs e)
-    {
-        bool on = QuietToggle.IsChecked == true;
-        await VeyroContainer.Instance.SettingsStore.UpdateAsync(s => s with { NotificationPopupsPaused = on });
-    }
-
     private async void Ring_Click(object sender, RoutedEventArgs e)
     {
         RingToggle.IsChecked = StatusViewModel.IsRinging;
         await StatusViewModel.ToggleRingAsync();
     }
 
-    private async void PhoneDnd_Click(object sender, RoutedEventArgs e) => await StatusViewModel.RequestDndAsync(!StatusViewModel.IsDndOn);
+    // Silent and Vibrate tiles: on picks that mode, off goes back to ringing.
+    private async void SilentTile_Click(object sender, RoutedEventArgs e)
+    {
+        bool wasSilent = StatusViewModel.IsRingerSilent;
+        SilentToggle.IsChecked = wasSilent;
+        await StatusViewModel.RequestRingerAsync(wasSilent ? 2 : 0);
+    }
 
-    private async void RingerSilent_Click(object sender, RoutedEventArgs e) => await StatusViewModel.RequestRingerAsync(0);
+    private async void VibrateTile_Click(object sender, RoutedEventArgs e)
+    {
+        bool wasVibrate = StatusViewModel.IsRingerVibrate;
+        VibrateToggle.IsChecked = wasVibrate;
+        await StatusViewModel.RequestRingerAsync(wasVibrate ? 2 : 1);
+    }
 
-    private async void RingerVibrate_Click(object sender, RoutedEventArgs e) => await StatusViewModel.RequestRingerAsync(1);
+    private async void RingerSilent_Click(object sender, RoutedEventArgs e) => await RequestRingerAsync(sender, 0);
 
-    private async void RingerNormal_Click(object sender, RoutedEventArgs e) => await StatusViewModel.RequestRingerAsync(2);
+    private async void RingerVibrate_Click(object sender, RoutedEventArgs e) => await RequestRingerAsync(sender, 1);
+
+    private async void RingerNormal_Click(object sender, RoutedEventArgs e) => await RequestRingerAsync(sender, 2);
+
+    private async Task RequestRingerAsync(object sender, int index)
+    {
+        if (sender is ToggleButton toggle) toggle.IsChecked = StatusViewModel.RingerIndex == index;
+        await StatusViewModel.RequestRingerAsync(index);
+    }
 
     // A value equal to the shown one came from the binding (the phone reported it): not a request.
     private void Volume_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -234,5 +265,9 @@ public sealed partial class HomePage : Page
         if (value != (int)Math.Round(StatusViewModel.ShownBrightness)) StatusViewModel.RequestBrightness(value);
     }
 
-    private void SeeAll_Click(object sender, RoutedEventArgs e) => ModernShellPage.Open("Notifications");
+    private async void AutoBrightness_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleSwitch toggle && toggle.IsOn != StatusViewModel.IsAutoBrightness)
+            await StatusViewModel.RequestAutoBrightnessAsync(toggle.IsOn);
+    }
 }

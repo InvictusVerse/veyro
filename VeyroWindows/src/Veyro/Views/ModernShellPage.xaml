@@ -1,7 +1,7 @@
 <!--
-    ADR-074: the Modern layout's window. A left rail (Home, Messages, Calls, Photos, Notifications,
-    Transfers, Clipboard, Settings) and the page. Home is the full-width phone dashboard.
-    The Classic layout is MainPage; Settings > General > Layout switches between the two.
+    ADR-074: the Modern layout's window, laid out like NectarLink. A narrow rail with the label
+    under each icon (Home, Messages, Calls, Photos, Transfers, Clipboard; Settings at the bottom)
+    and the page. The Classic layout is MainPage; Settings > General > Layout switches.
 -->
 <Page
     x:Class="Veyro.Views.ModernShellPage"
@@ -13,6 +13,16 @@
 
     <Page.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+        <Style x:Key="RailButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Width" Value="64" />
+            <Setter Property="Height" Value="56" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="12" />
+        </Style>
     </Page.Resources>
 
     <Grid
@@ -23,101 +33,122 @@
             <RowDefinition Height="32" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="80" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
         <userControls:TitleBar
             Grid.Row="0"
+            Grid.ColumnSpan="2"
             HorizontalAlignment="Left"
             VerticalAlignment="Top" />
 
-        <NavigationView
-            x:Name="Rail"
-            Grid.Row="1"
-            IsBackButtonVisible="Collapsed"
-            IsSettingsVisible="True"
-            OpenPaneLength="220"
-            PaneDisplayMode="Left"
-            SelectionChanged="Rail_SelectionChanged">
-            <NavigationView.Resources>
-                <Thickness x:Key="NavigationViewContentGridBorderThickness">1,1,0,0</Thickness>
-                <CornerRadius x:Key="NavigationViewContentGridCornerRadius">10,0,0,0</CornerRadius>
-            </NavigationView.Resources>
-            <NavigationView.MenuItems>
-                <NavigationViewItem
-                    x:Name="HomeItem"
-                    Content="Home"
-                    Tag="Home">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE80F;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem
+        <!--  Rail  -->
+        <Grid Grid.Row="1" Padding="0,4,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel x:Name="RailItems" Spacing="4">
+                <Button x:Name="HomeItem" Click="Rail_Click" Style="{StaticResource RailButtonStyle}" Tag="Home" AutomationProperties.Name="Home">
+                    <StackPanel Spacing="3">
+                        <FontIcon FontSize="18" Glyph="&#xE80F;" />
+                        <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Home" />
+                    </StackPanel>
+                </Button>
+                <Button
                     x:Name="MessagesItem"
-                    Content="Messages"
+                    AutomationProperties.Name="Messages"
+                    Click="Rail_Click"
+                    Style="{StaticResource RailButtonStyle}"
                     Tag="Messages"
                     Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE8BD;" />
-                    </NavigationViewItem.Icon>
-                    <NavigationViewItem.InfoBadge>
+                    <Grid>
+                        <StackPanel Spacing="3">
+                            <FontIcon FontSize="18" Glyph="&#xE8BD;" />
+                            <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Messages" />
+                        </StackPanel>
                         <InfoBadge
-                            AutomationProperties.Name="Unread messages"
+                            Margin="0,-2,-6,0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
                             Visibility="{x:Bind MessagesViewModel.HasUnread, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"
                             Value="{x:Bind MessagesViewModel.UnreadCount, Mode=OneWay}" />
-                    </NavigationViewItem.InfoBadge>
-                </NavigationViewItem>
-                <NavigationViewItem
+                    </Grid>
+                </Button>
+                <Button
                     x:Name="CallsItem"
-                    Content="Calls"
+                    AutomationProperties.Name="Calls"
+                    Click="Rail_Click"
+                    Style="{StaticResource RailButtonStyle}"
                     Tag="Calls"
                     Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE717;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem
+                    <StackPanel Spacing="3">
+                        <FontIcon FontSize="18" Glyph="&#xE717;" />
+                        <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Calls" />
+                    </StackPanel>
+                </Button>
+                <Button
                     x:Name="PhotosItem"
-                    Content="Photos"
+                    AutomationProperties.Name="Photos"
+                    Click="Rail_Click"
+                    Style="{StaticResource RailButtonStyle}"
                     Tag="Photos"
                     Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE91B;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem
-                    x:Name="NotificationsItem"
-                    Content="Notifications"
-                    Tag="Notifications"
-                    Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xEA8F;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem
-                    x:Name="TransfersItem"
-                    Content="Transfers"
-                    Tag="Transfers">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE898;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem
-                    x:Name="ClipboardItem"
-                    Content="Clipboard"
-                    Tag="Clipboard">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xF0E3;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-            </NavigationView.MenuItems>
+                    <StackPanel Spacing="3">
+                        <FontIcon FontSize="18" Glyph="&#xE91B;" />
+                        <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Photos" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="TransfersItem" Click="Rail_Click" Style="{StaticResource RailButtonStyle}" Tag="Transfers" AutomationProperties.Name="Transfers">
+                    <StackPanel Spacing="3">
+                        <FontIcon FontSize="18" Glyph="&#xE898;" />
+                        <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Transfers" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="ClipboardItem" Click="Rail_Click" Style="{StaticResource RailButtonStyle}" Tag="Clipboard" AutomationProperties.Name="Clipboard">
+                    <StackPanel Spacing="3">
+                        <FontIcon FontSize="18" Glyph="&#xF0E3;" />
+                        <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Clipboard" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <Button
+                x:Name="SettingsItem"
+                Grid.Row="1"
+                AutomationProperties.Name="Settings"
+                Click="Rail_Click"
+                Style="{StaticResource RailButtonStyle}"
+                Tag="Settings">
+                <StackPanel Spacing="3">
+                    <FontIcon FontSize="18" Glyph="&#xE713;" />
+                    <TextBlock HorizontalAlignment="Center" FontSize="11" Text="Settings" />
+                </StackPanel>
+            </Button>
+        </Grid>
 
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <userControls:ActiveTransferBanner Grid.Row="0" />
-                <Frame x:Name="ContentFrame" Grid.Row="1" />
-            </Grid>
-        </NavigationView>
+        <!--  Page  -->
+        <Grid
+            Grid.Row="1"
+            Grid.Column="1"
+            Background="{ThemeResource LayerFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1,1,0,0"
+            CornerRadius="12,0,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock
+                x:Name="PageTitle"
+                Margin="24,14,0,4"
+                FontSize="20"
+                FontWeight="SemiBold"
+                Text="Home" />
+            <userControls:ActiveTransferBanner Grid.Row="1" />
+            <Frame x:Name="ContentFrame" Grid.Row="2" />
+        </Grid>
     </Grid>
 </Page>
