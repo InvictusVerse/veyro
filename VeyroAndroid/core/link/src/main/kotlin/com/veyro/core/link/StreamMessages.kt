@@ -43,7 +43,13 @@ public data class StreamScreen(val w: Int, val h: Int, val maxFps: Int)
 
 /** One phone camera (ADR-067). [facing]: `back`, `front` or `external`. */
 @Serializable
-public data class StreamCamera(val id: String, val facing: String, val sizes: List<StreamSize> = emptyList())
+public data class StreamCamera(
+    val id: String,
+    val facing: String,
+    val sizes: List<StreamSize> = emptyList(),
+    /** This lens has a flash the PC may switch on as a light (`streamConfig.torch`). */
+    val flash: Boolean? = null,
+)
 
 /** A camera size in the sensor's landscape orientation (w >= h) and its highest frame rate. */
 @Serializable
@@ -133,6 +139,8 @@ public data class StreamConfig(
     val camera: String? = null,
     val w: Int? = null,
     val h: Int? = null,
+    /** Camera sessions: the lens's flash on as a steady light, or off. Ignored for a lens without flash. */
+    val torch: Boolean? = null,
 ) : PeerMessage
 
 /** PC to phone: send a keyframe (decode error, overflow). At most one per 500 ms is honoured. */

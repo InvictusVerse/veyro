@@ -47,7 +47,8 @@ public sealed class NotificationToastService : INotificationToastService
     private readonly Func<bool> _quiet;
     private readonly string _fallbackDataDirectory;
     private readonly object _ringingGate = new();
-    private readonly HashSet<string> _ringingShown = new(StringComparer.Ordinal);
+    /// <summary>Ringing calls with a toast, and the caller line it shows.</summary>
+    private readonly Dictionary<string, string> _ringingShown = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<ConsentAnswer?>> _transferPrompts = new(StringComparer.Ordinal);
     private static readonly string TransferGroup = Hash("transfers");
     private (string Directory, string? UriPrefix)? _iconLocation;
@@ -327,9 +328,17 @@ public sealed class NotificationToastService : INotificationToastService
                 string key = change.PeerId + "|" + call.CallId;
                 if (call.IsIncomingRinging)
                 {
-                    bool fresh;
-                    lock (_ringingGate) fresh = _ringingShown.Add(key);
-                    if (fresh) ShowIncomingCall(call);
+                    // Android 12+ reports the ring first and the number (and so the contact name)
+                    // a moment later in a second callState. The toast is shown again under the same
+                    // tag when the caller line changes, which replaces "Unknown caller".
+                    string caller = (call.Name ?? "") + "|" + (call.Number ?? "");
+                    bool show;
+                    lock (_ringingGate)
+                    {
+                        show = !_ringingShown.TryGetValue(key, out string? shownCaller) || shownCaller != caller;
+                        _ringingShown[key] = caller;
+                    }
+                    if (show) ShowIncomingCall(call);
                 }
                 else
                 {
@@ -339,7 +348,11 @@ public sealed class NotificationToastService : INotificationToastService
                 }
                 break;
             case CallChangeKind.Cleared:
-                lock (_ringingGate) _ringingShown.RemoveWhere(k => k.StartsWith(change.PeerId + "|", StringComparison.Ordinal));
+                lock (_ringingGate)
+                {
+                    foreach (string k in _ringingShown.Keys.Where(k => k.StartsWith(change.PeerId + "|", StringComparison.Ordinal)).ToList())
+                        _ringingShown.Remove(k);
+                }
                 _ = RemoveGroupAsync(CallGroupFor(change.PeerId));
                 break;
         }

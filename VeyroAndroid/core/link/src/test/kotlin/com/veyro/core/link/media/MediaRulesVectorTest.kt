@@ -44,7 +44,7 @@ class MediaRulesVectorTest {
             "captureResult" to com.veyro.core.link.CaptureResult::class,
         )
         val vectors = MediaVectors.load("link-stream.json").getValue("vectors").jsonArray.map { it.jsonObject }
-        assertEquals(21, vectors.size)
+        assertEquals(22, vectors.size)
         for (vector in vectors) {
             val type = vector.getValue("type").jsonPrimitive.content
             val text = vector.getValue("json").jsonPrimitive.content

@@ -105,7 +105,7 @@ public class ScreenShareCoordinator(
     override suspend fun caps(allowed: Boolean, cameraAllowed: Boolean): StreamCaps = withContext(dispatchers.io) {
         val encoders = catalog.summary().take(16).map { StreamEncoder(it.codec, it.hw, it.maxW, it.maxH, it.fps) }
         val cameraList = if (cameraAllowed) {
-            cameraCatalog.all.take(8).map { c -> StreamCamera(c.id, c.facing, c.sizes.map { StreamSize(it.w, it.h, it.fps) }) }
+            cameraCatalog.all.take(8).map { c -> StreamCamera(c.id, c.facing, c.sizes.map { StreamSize(it.w, it.h, it.fps) }, flash = c.flash.takeIf { it }) }
         } else {
             null
         }

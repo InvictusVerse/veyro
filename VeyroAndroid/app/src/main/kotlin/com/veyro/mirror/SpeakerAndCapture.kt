@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import com.veyro.MainActivity
 import com.veyro.VeyroApplication
 import com.veyro.core.common.AppDispatchers
@@ -67,8 +68,22 @@ public class SpeakerAndCapture(
         private val stopped = AtomicBoolean(false)
         override val ended: Deferred<String> get() = link.closed
 
+        // Wi-Fi power save holds incoming packets for a beacon interval (about 100 ms), which is
+        // heard as stutter. Held only while the PC's sound plays.
+        // Low latency applies only while Veyro is in front with the screen on; high-perf covers the rest.
+        @Suppress("DEPRECATION")
+        private val wifiLocks: List<WifiManager.WifiLock> =
+            listOf(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, WifiManager.WIFI_MODE_FULL_HIGH_PERF).mapNotNull { mode ->
+                runCatching {
+                    (app.getSystemService(Context.WIFI_SERVICE) as WifiManager)
+                        .createWifiLock(mode, "Veyro:speaker")
+                        .apply { setReferenceCounted(false); acquire() }
+                }.getOrNull()
+            }
+
         override fun stop(reason: String) {
             if (!stopped.compareAndSet(false, true)) return
+            wifiLocks.forEach { runCatching { it.release() } }
             player.stop()
             scope.launch(dispatchers.io) { link.close(reason.takeUnless { it == "network" }) }
             notifications.cancel(VeyroNotifications.ID_SPEAKER)

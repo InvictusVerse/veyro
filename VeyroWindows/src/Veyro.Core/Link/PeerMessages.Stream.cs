@@ -38,7 +38,9 @@ public abstract partial record PeerMessage
     public sealed record StreamCamera(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("facing")] string Facing,
-        [property: JsonPropertyName("sizes")] IReadOnlyList<StreamSize>? Sizes = null);
+        [property: JsonPropertyName("sizes")] IReadOnlyList<StreamSize>? Sizes = null,
+        /// <summary>This lens has a flash the PC may switch on as a light (StreamConfig.Torch).</summary>
+        [property: JsonPropertyName("flash")] bool? Flash = null);
 
     /// <summary>A camera size in landscape (W at least H) and its highest frame rate.</summary>
     public sealed record StreamSize(
@@ -119,7 +121,9 @@ public abstract partial record PeerMessage
         /// <summary>Camera sessions: switch lens and/or size (from the caps) without a new consent.</summary>
         [property: JsonPropertyName("camera")] string? Camera = null,
         [property: JsonPropertyName("w")] int? W = null,
-        [property: JsonPropertyName("h")] int? H = null) : PeerMessage;
+        [property: JsonPropertyName("h")] int? H = null,
+        /// <summary>Camera sessions: the lens's flash on as a steady light, or off.</summary>
+        [property: JsonPropertyName("torch")] bool? Torch = null) : PeerMessage;
 
     /// <summary>PC to phone: send a keyframe. Sent at most once per 500 ms.</summary>
     public sealed record StreamKeyframe([property: JsonPropertyName("sid")] string Sid) : PeerMessage;

@@ -11,7 +11,13 @@ import com.veyro.core.common.VeyroLog
 public data class CameraSize(val w: Int, val h: Int, val fps: Int)
 
 /** One phone camera (ADR-067). [facing]: `back`, `front` or `external`. */
-public data class CameraInfo(val id: String, val facing: String, val sensorOrientation: Int, val sizes: List<CameraSize>)
+public data class CameraInfo(
+    val id: String,
+    val facing: String,
+    val sensorOrientation: Int,
+    val sizes: List<CameraSize>,
+    val flash: Boolean = false,
+)
 
 /**
  * The phone's cameras and the sizes a PC may ask for (ADR-067): sizes the camera can deliver to
@@ -68,6 +74,7 @@ public class CameraCatalog(private val context: Context, private val encoders: E
             .sortedByDescending { it.w.toLong() * it.h }
             .take(MAX_SIZES)
         val orientation = c.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-        return CameraInfo(id, facing, orientation, sizes)
+        val flash = c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        return CameraInfo(id, facing, orientation, sizes, flash)
     }
 }

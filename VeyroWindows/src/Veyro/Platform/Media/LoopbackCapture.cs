@@ -16,6 +16,7 @@ public sealed class LoopbackCapture : IDisposable
     private const int StreamFlagsLoopback = 0x00020000;
     private const int BufferFlagsSilent = 0x2;
     private const long BufferDuration = 2_000_000; // 200 ms in 100 ns units
+    private const int SilenceGapMs = 60;
     private const ushort FormatPcm = 1, FormatFloat = 3, FormatExtensible = 0xFFFE;
     private static readonly Guid SubtypeFloat = new("00000003-0000-0010-8000-00AA00389B71");
     private static readonly Guid AudioClientIid = new("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
@@ -122,7 +123,13 @@ public sealed class LoopbackCapture : IDisposable
 
             int packetFrames = rate / 100;
             var pending = new List<short>(packetFrames * 4);
-            long silentSince = Environment.TickCount64;
+            // Silence fill: Windows delivers nothing while nothing plays. Only a gap longer than
+            // SilenceGapMs counts as silence (a poll that merely came early must not add zeros in
+            // the middle of real sound, which was heard as stutter); then zeros keep the stream at
+            // wall-clock pace from the last real data on.
+            long lastData = Environment.TickCount64;
+            long framesSinceAnchor = 0, anchor = lastData;
+            bool silent = false;
             while (!_stop.IsCancellationRequested)
             {
                 Thread.Sleep(5);
@@ -154,13 +161,26 @@ public sealed class LoopbackCapture : IDisposable
                     }
                     capture.ReleaseBuffer(frames);
                 }
-                if (got > 0) silentSince = Environment.TickCount64;
-                else if (Environment.TickCount64 - silentSince >= 10)
+                long now = Environment.TickCount64;
+                if (got > 0)
                 {
-                    // Windows sends nothing while nothing plays: send silence so the phone keeps time.
-                    long missing = (Environment.TickCount64 - silentSince) * rate / 1000;
-                    for (long i = 0; i < missing * 2; i++) pending.Add(0);
-                    silentSince = Environment.TickCount64;
+                    lastData = now;
+                    silent = false;
+                }
+                else if (now - lastData >= SilenceGapMs)
+                {
+                    if (!silent)
+                    {
+                        silent = true;
+                        anchor = lastData;
+                        framesSinceAnchor = 0;
+                    }
+                    long due = (now - anchor) * rate / 1000 - framesSinceAnchor;
+                    if (due > 0)
+                    {
+                        for (long i = 0; i < due * 2; i++) pending.Add(0);
+                        framesSinceAnchor += due;
+                    }
                 }
                 while (pending.Count >= packetFrames * 2)
                 {

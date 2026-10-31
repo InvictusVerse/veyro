@@ -36,6 +36,8 @@ public data class CameraSettings(
     val bitrate: Int,
     val codec: String,
     val hw: Boolean,
+    /** The lens's flash as a steady light; applied only when the lens has one. */
+    val torch: Boolean = false,
 )
 
 /**
@@ -150,9 +152,12 @@ public class CameraCapture(
                 next.fps != current.fps || next.codec != current.codec || next.hw != current.hw
             when {
                 rebuild -> rebuild(cameraChanged)
-                next.bitrate != current.bitrate -> encoder?.let {
-                    it.updateBitrate(next.bitrate)
-                    report(it)
+                else -> {
+                    if (next.bitrate != current.bitrate) encoder?.let {
+                        it.updateBitrate(next.bitrate)
+                        report(it)
+                    }
+                    if (next.torch != current.torch && !paused) startRepeating()
                 }
             }
         }
@@ -307,6 +312,10 @@ public class CameraCapture(
                 set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 // Stabilisation adds delay; a webcam stands still.
                 set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                // Torch needs plain auto-exposure (not an auto-flash mode), which is the default here.
+                val torch = settings?.torch == true && cameras.find(camera.id)?.flash == true
+                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.FLASH_MODE, if (torch) CameraMetadata.FLASH_MODE_TORCH else CameraMetadata.FLASH_MODE_OFF)
             }.build()
             active.setRepeatingRequest(request, null, handler)
         } catch (e: Exception) {

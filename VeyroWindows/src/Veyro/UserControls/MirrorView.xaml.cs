@@ -157,7 +157,13 @@ public sealed partial class MirrorView : UserControl
         finally { _updating = false; }
         if (SizeCombo.SelectedItem is ComboBoxItem { Tag: PeerMessage.StreamSize size })
             await _settings.UpdateAsync(s => s with { WebcamWidth = size.W, WebcamHeight = size.H });
-        if (_controller is { } controller) await controller.OnQualityChangedAsync();
+        if (_controller is { } controller)
+        {
+            await controller.OnQualityChangedAsync();
+            // A lens without flash: the light goes off with the switch; a lens with one keeps the choice.
+            if (!controller.CameraHasFlash && controller.Torch) await controller.SetTorchAsync(false);
+            RefreshTorch();
+        }
     }
 
     private async void SizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -361,9 +367,24 @@ public sealed partial class MirrorView : UserControl
         if (_controller is { } controller) OnStatusChanged(controller.Status);
     }
 
+    private void RefreshTorch()
+    {
+        if (!_camera || _controller is not { } controller) return;
+        bool shown = controller.CameraHasFlash;
+        TorchToggle.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+        TorchToggle.IsEnabled = controller.Status.IsLive;
+        TorchToggle.IsChecked = shown && controller.Torch;
+    }
+
+    private async void TorchToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_controller is { } controller) await controller.SetTorchAsync(TorchToggle.IsChecked == true);
+    }
+
     private void OnStatusChanged(MirrorStatus status)
     {
         RefreshCameraChoices();
+        RefreshTorch();
         if (status.Phase != MirrorPhase.Streaming && status.Phase != MirrorPhase.Paused) _hasPicture = false;
         bool waitingForPicture = status.Phase == MirrorPhase.Streaming && !_hasPicture;
         bool showPanel = status.Phase != MirrorPhase.Streaming || waitingForPicture;

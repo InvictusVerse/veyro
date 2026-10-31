@@ -109,6 +109,7 @@ public sealed class MirrorController : IDisposable
         if (_disposed || _session.Status.IsLive) return;
         if (_session.Status.Phase != MirrorPhase.Idle && !_session.MayAskAgain()) return;
         await TearDownAsync();
+        Torch = false;
 
         string phone = _session.PhoneName;
         string? host = _sessions.GetAdvertisableHost(PeerId);
@@ -232,6 +233,19 @@ public sealed class MirrorController : IDisposable
     public async Task OnAudioChangedAsync()
     {
         if (_session.SetAudioRequested(_settings.Current.MirrorAudio) is { } config) await SendAsync(config);
+    }
+
+    /// <summary>Camera sessions: the phone's flash as a steady light. Off at every new session.</summary>
+    public bool Torch { get; private set; }
+
+    /// <summary>The lens this PC's settings pick has a flash.</summary>
+    public bool CameraHasFlash =>
+        IsCamera && _caps() is { } caps && CameraPlanner.Choose(caps, _settings.Current.WebcamCamera)?.Flash == true;
+
+    public async Task SetTorchAsync(bool on)
+    {
+        Torch = on;
+        if (IsCamera && _session.Status.IsLive && _session.Sid is { } sid) await SendAsync(new PeerMessage.StreamConfig(sid, Torch: on));
     }
 
     /// <summary>The window was minimised or restored: the phone stops encoding while nobody can see it.</summary>

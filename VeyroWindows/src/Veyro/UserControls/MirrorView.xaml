@@ -126,6 +126,17 @@
                 <FontIcon x:Name="SoundIcon" FontSize="14" Glyph="&#xE767;" />
             </ToggleButton>
 
+            <!--  Camera only: the phone's flash as a light, shown when the lens has one  -->
+            <ToggleButton
+                x:Name="TorchToggle"
+                Grid.Column="1"
+                AutomationProperties.Name="Flash"
+                Click="TorchToggle_Click"
+                ToolTipService.ToolTip="Flash: light up with the phone's flash"
+                Visibility="Collapsed">
+                <FontIcon FontSize="14" Glyph="&#xE754;" />
+            </ToggleButton>
+
             <Button
                 Grid.Column="2"
                 AutomationProperties.Name="Use in OBS Studio"

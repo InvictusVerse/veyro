@@ -88,6 +88,7 @@ internal class PhoneCameraSession(
             bitrate = config.bitrate ?: settings.bitrate,
             codec = config.codec ?: settings.codec,
             hw = config.hw ?: settings.hw,
+            torch = config.torch ?: settings.torch,
         )
         capture.reconfigure(settings)
         config.paused?.let { capture.setPaused(it) }

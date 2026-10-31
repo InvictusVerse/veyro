@@ -12,16 +12,19 @@ import kotlin.concurrent.withLock
 
 /**
  * Plays the PC's sound on the phone (ADR-073) through a normal media AudioTrack, so the phone's
- * own volume, headphones and sound effects apply. A small jitter buffer: playback starts (and
- * restarts after a gap) once [PREBUFFER_MS] is queued; more than [MAX_QUEUE_MS] queued drops the
- * oldest, so the delay stays short. Sound is user data and is never logged.
+ * own volume, headphones and sound effects apply. A jitter buffer sized for Wi-Fi: playback starts
+ * (and restarts after a gap) once [PREBUFFER_MS] is queued; when more than [MAX_QUEUE_MS] piles
+ * up (clock drift, a burst after a stall) the oldest is dropped down to [TRIM_TO_MS] in one step,
+ * so a glitch is rare and the delay stays bounded. Sound is user data and is never logged.
  */
 public class PcAudioPlayer {
 
     public companion object {
         private const val TAG = "PcAudioPlayer"
-        public const val PREBUFFER_MS: Int = 40
-        public const val MAX_QUEUE_MS: Int = 200
+        public const val PREBUFFER_MS: Int = 120
+        public const val MAX_QUEUE_MS: Int = 400
+        public const val TRIM_TO_MS: Int = 160
+        private const val TRACK_BUFFER_MS = 80
     }
 
     private val lock = ReentrantLock()
@@ -51,8 +54,11 @@ public class PcAudioPlayer {
             if (!running) return
             queue.addLast(samples)
             queuedBytes += samples.size
-            val max = c.rate * c.frameBytes * MAX_QUEUE_MS / 1000
-            while (queuedBytes > max && queue.size > 1) queuedBytes -= queue.removeFirst().size
+            val bytesPerMs = c.rate * c.frameBytes / 1000
+            if (queuedBytes > bytesPerMs * MAX_QUEUE_MS) {
+                val keep = bytesPerMs * TRIM_TO_MS
+                while (queuedBytes > keep && queue.size > 1) queuedBytes -= queue.removeFirst().size
+            }
             ready.signal()
         }
     }
@@ -72,9 +78,9 @@ public class PcAudioPlayer {
                 .setAudioFormat(
                     AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(c.rate).setChannelMask(channelMask).build(),
                 )
-                .setBufferSizeInBytes(maxOf(minimum, c.rate * c.frameBytes * PREBUFFER_MS / 1000))
+                // Not the low-latency mode: its tiny fast-track buffer underruns on the first late packet.
+                .setBufferSizeInBytes(maxOf(minimum * 2, c.rate * c.frameBytes * TRACK_BUFFER_MS / 1000))
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                 .build()
         } catch (e: Exception) {
             VeyroLog.w(TAG) { "PC sound not played: ${e.javaClass.simpleName}" }
