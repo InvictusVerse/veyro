@@ -45,6 +45,8 @@ internal sealed class IslandBridgeServer : IDisposable
         container.DeviceManager.PairedDevices.CollectionChanged += OnDevicesChanged;
         foreach (var device in container.DeviceManager.PairedDevices) device.PropertyChanged += OnDeviceChanged;
         container.FileTransferService.ActiveTransferChanged += _ => QueueRecompute();
+        // ADR-076 addendum: the phone's devStatus (battery, ringer, DND, flashlight) for the island.
+        container.DeviceStatus.Changed += _ => QueueRecompute();
         Recompute();
         _ = Task.Run(AcceptLoopAsync);
     }
@@ -89,7 +91,17 @@ internal sealed class IslandBridgeServer : IDisposable
                 ? new IslandTransfer(active.IsIncoming, active.Stage.ToString(), (int)Math.Round(active.ProgressFraction * 1000),
                     active.PeerDisplayName)
                 : null;
-            byte[] status = IslandBridgeCodec.EncodeStatus(new IslandStatus(devices, transfer));
+            var phones = container.DeviceManager.PairedDevices
+                .Where(device => device.IsConnected)
+                .Select(device =>
+                {
+                    var reported = container.DeviceStatus.GetPhoneStatus(device.DeviceId);
+                    return new IslandPhone(device.DeviceId, reported?.Battery, reported?.Charging, reported?.Ringer,
+                        reported?.Dnd, reported?.Torch, container.DeviceStatus.CanControl(device.DeviceId),
+                        container.DeviceStatus.CanUsePhoneControls(device.DeviceId) && reported?.Torch is not null);
+                })
+                .ToList();
+            byte[] status = IslandBridgeCodec.EncodeStatus(new IslandStatus(devices, transfer) { Phones = phones });
             TaskCompletionSource changed;
             lock (_gate)
             {
@@ -165,6 +177,9 @@ internal sealed class IslandBridgeServer : IDisposable
                     case IslandOp.Files:
                         await ReplyAsync(pipe, await SendFilesAsync(request).ConfigureAwait(false)).ConfigureAwait(false);
                         break;
+                    case IslandOp.Control:
+                        await ReplyAsync(pipe, await ControlAsync(request).ConfigureAwait(false)).ConfigureAwait(false);
+                        break;
                 }
             }
             catch (FormatException)
@@ -222,6 +237,49 @@ internal sealed class IslandBridgeServer : IDisposable
             HandoffOutcome.Cancelled => new IslandResult(false, "Cancelled."),
             _ => new IslandResult(false, reply.Message ?? "Sending failed. Open Veyro to see why.")
         };
+    }
+
+    /// <summary>
+    /// ADR-076 addendum: one quick control from the island, through the same devControl path as
+    /// Veyro's own phone card. The phone answers with devStatus, which reaches the island as status.
+    /// </summary>
+    private static async Task<IslandResult> ControlAsync(IslandRequest request)
+    {
+        var control = IslandControl.Parse(request.Text);
+        var status = VeyroContainer.Instance.DeviceStatus;
+        string peer = request.DeviceId!;
+        bool on = control.Value == "1";
+        try
+        {
+            switch (control.Key)
+            {
+                case "torch":
+                    if (!status.CanUsePhoneControls(peer)) return new IslandResult(false, "This phone's flashlight cannot be controlled.");
+                    await status.SendPhoneControlAsync(peer, torch: on).ConfigureAwait(false);
+                    return new IslandResult(true, on ? "Flashlight on." : "Flashlight off.");
+                case "dnd":
+                    if (!status.CanControl(peer)) return new IslandResult(false, "Open Veyro on the phone to control it.");
+                    await status.SendControlAsync(peer, dnd: on).ConfigureAwait(false);
+                    return new IslandResult(true, on ? "Do Not Disturb on." : "Do Not Disturb off.");
+                case "ring":
+                    if (!status.CanControl(peer)) return new IslandResult(false, "Open Veyro on the phone to control it.");
+                    await status.SendControlAsync(peer, ring: on).ConfigureAwait(false);
+                    return new IslandResult(true, on ? "Ringing your phone." : "Stopped ringing.");
+                default:
+                    if (!status.CanControl(peer)) return new IslandResult(false, "Open Veyro on the phone to control it.");
+                    await status.SendControlAsync(peer, ringer: control.Value).ConfigureAwait(false);
+                    return new IslandResult(true, control.Value switch
+                    {
+                        "silent" => "Phone silenced.",
+                        "vibrate" => "Phone on vibrate.",
+                        _ => "Phone ringer on."
+                    });
+            }
+        }
+        catch (InvalidOperationException error)
+        {
+            return new IslandResult(false, error.Message);
+        }
     }
 
     private async Task ReplyAsync(NamedPipeServerStream pipe, IslandResult result)

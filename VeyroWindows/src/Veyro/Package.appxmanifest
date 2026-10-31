@@ -15,7 +15,7 @@
   <Identity
     Name="Veyro.Windows"
     Publisher="CN=Veyro"
-    Version="1.0.1.0" />
+    Version="1.0.2.0" />
 
   <mp:PhoneIdentity PhoneProductId="9a6a5180-5120-4f7c-8e89-7252f712c9b0" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

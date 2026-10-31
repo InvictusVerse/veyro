@@ -69,6 +69,53 @@ public sealed class IslandBridgeTests
     }
 
     [Fact]
+    public void Status_carries_phone_quick_state()
+    {
+        var status = new IslandStatus([new IslandDevice("AAAA-1111", "Redmi", true)], null)
+        {
+            Phones =
+            [
+                new IslandPhone("AAAA-1111", 82, true, "vibrate", false, null, true, false),
+                new IslandPhone("BBBB-2222", null, null, null, null, null, false, false)
+            ]
+        };
+        string wire = Encoding.UTF8.GetString(IslandBridgeCodec.EncodeStatus(status));
+        Assert.Equal("VIB1 status\ndevice\tAAAA-1111\t1\tRedmi\nphone\tAAAA-1111\t82\t1\tvibrate\t0\t-\tc\nphone\tBBBB-2222\t-\t-\t-\t-\t-\t-\n", wire);
+        IslandStatus back = IslandBridgeCodec.DecodeStatus(Bytes(wire));
+        Assert.Equal(2, back.Phones.Count);
+        Assert.Equal(82, back.Phones[0].Battery);
+        Assert.Equal("vibrate", back.Phones[0].Ringer);
+        Assert.True(back.Phones[0].CanControl);
+        Assert.Null(back.Phones[1].Dnd);
+        Assert.Throws<FormatException>(() => IslandBridgeCodec.DecodeStatus(Bytes("VIB1 status\nphone\tA\t101\t-\t-\t-\t-\t-\n")));
+        Assert.Throws<FormatException>(() => IslandBridgeCodec.DecodeStatus(Bytes("VIB1 status\nphone\tA\t5\t2\t-\t-\t-\t-\n")));
+    }
+
+    [Theory]
+    [InlineData("VIB1 control AAAA-1111\ndnd\t1", "dnd", "1")]
+    [InlineData("VIB1 control AAAA-1111\nringer\tsilent", "ringer", "silent")]
+    [InlineData("VIB1 control AAAA-1111\ntorch\t0", "torch", "0")]
+    public void Controls_round_trip(string payload, string key, string value)
+    {
+        IslandRequest request = IslandBridgeCodec.DecodeRequest(Bytes(payload));
+        Assert.Equal(IslandOp.Control, request.Op);
+        var control = IslandControl.Parse(request.Text);
+        Assert.Equal((key, value), (control.Key, control.Value));
+        Assert.Equal(payload, Encoding.UTF8.GetString(IslandBridgeCodec.EncodeRequest(request)));
+    }
+
+    [Theory]
+    [InlineData("VIB1 control *\ndnd\t1")]
+    [InlineData("VIB1 control AAAA-1111")]
+    [InlineData("VIB1 control AAAA-1111\ndnd\tyes")]
+    [InlineData("VIB1 control AAAA-1111\nringer\tloud")]
+    [InlineData("VIB1 control AAAA-1111\nwipe\t1")]
+    public void Malformed_controls_are_refused(string payload)
+    {
+        Assert.Throws<FormatException>(() => IslandBridgeCodec.DecodeRequest(Bytes(payload)));
+    }
+
+    [Fact]
     public void Results_are_one_bounded_line()
     {
         var result = IslandBridgeCodec.DecodeResult(IslandBridgeCodec.EncodeResult(new IslandResult(false, "No phone\nconnected" + new string('x', 400))));
