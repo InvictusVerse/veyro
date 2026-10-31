@@ -1,35 +1,39 @@
 <!--
-    Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/MediaSessionsControl.xaml, GPL-3.0.
-    Modified for Veyro: one phone session from PhoneMediaViewModel (ADR-026) instead of a FlipView.
-    The card is only shown while the phone reports a session; nothing here is a placeholder.
+    Now-playing card for the phone's media session (ADR-026), used in the sidebar and on the
+    Home page. It is only visible while the phone reports a session. Rows: track and transport,
+    seek bar (when the session can seek), phone volume (when the volume button is on).
 -->
 <UserControl
     x:Class="Veyro.UserControls.MediaSessionsControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:converters="using:Veyro.Converters">
+
     <UserControl.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+        <!--  Flat transport buttons  -->
+        <Style x:Key="TransportButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
     </UserControl.Resources>
 
-    <Grid RowSpacing="4" Visibility="{x:Bind ViewModel.HasSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <StackPanel Spacing="6" Visibility="{x:Bind ViewModel.HasSession, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
 
-        <Grid Grid.Row="0" ColumnSpacing="12">
+        <!--  Track: cover on the left, text and transport on the right  -->
+        <Grid ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
+
             <Border
-                Grid.Column="0"
                 Width="94"
                 Height="94"
+                VerticalAlignment="Center"
                 Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                CornerRadius="4">
+                CornerRadius="6">
                 <Grid>
                     <FontIcon
                         FontSize="28"
@@ -43,17 +47,11 @@
                         Visibility="{x:Bind ViewModel.HasArt, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 </Grid>
             </Border>
-            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="6">
-                <TextBlock
-                    FontSize="12"
-                    FontWeight="SemiBold"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="{x:Bind ViewModel.AppName, Mode=OneWay}"
-                    TextTrimming="CharacterEllipsis"
-                    Visibility="{x:Bind ViewModel.HasAppName, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                 <TextBlock
                     FontSize="14"
-                    FontWeight="Medium"
+                    FontWeight="SemiBold"
                     Text="{x:Bind ViewModel.Title, Mode=OneWay}"
                     TextTrimming="CharacterEllipsis"
                     TextWrapping="NoWrap"
@@ -65,39 +63,45 @@
                     TextTrimming="CharacterEllipsis"
                     TextWrapping="NoWrap"
                     Visibility="{x:Bind ViewModel.HasArtist, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    Text="{x:Bind ViewModel.AppName, Mode=OneWay}"
+                    TextTrimming="CharacterEllipsis"
+                    Visibility="{x:Bind ViewModel.HasAppName, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                <StackPanel
+                    Margin="-8,4,0,0"
+                    Orientation="Horizontal"
+                    Spacing="2">
                     <Button
                         AutomationProperties.Name="Previous track"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
                         Click="Previous_Click"
                         IsEnabled="{x:Bind ViewModel.CanPrev, Mode=OneWay}"
+                        Style="{StaticResource TransportButtonStyle}"
                         ToolTipService.ToolTip="Previous">
                         <FontIcon FontSize="14" Glyph="&#xE892;" />
                     </Button>
                     <Button
                         AutomationProperties.Name="{x:Bind ViewModel.PlayPauseLabel, Mode=OneWay}"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
                         Click="PlayPause_Click"
                         IsEnabled="{x:Bind ViewModel.CanControl, Mode=OneWay}"
+                        Style="{StaticResource TransportButtonStyle}"
                         ToolTipService.ToolTip="{x:Bind ViewModel.PlayPauseLabel, Mode=OneWay}">
-                        <FontIcon FontSize="14" Glyph="{x:Bind ViewModel.PlayPauseGlyph, Mode=OneWay}" />
+                        <FontIcon FontSize="16" Glyph="{x:Bind ViewModel.PlayPauseGlyph, Mode=OneWay}" />
                     </Button>
                     <Button
                         AutomationProperties.Name="Next track"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
                         Click="Next_Click"
                         IsEnabled="{x:Bind ViewModel.CanNext, Mode=OneWay}"
+                        Style="{StaticResource TransportButtonStyle}"
                         ToolTipService.ToolTip="Next">
                         <FontIcon FontSize="14" Glyph="&#xE893;" />
                     </Button>
                     <Button
                         AutomationProperties.Name="Phone media volume"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
-                        Click="Volume_Click"
+                        Click="VolumeToggle_Click"
+                        Style="{StaticResource TransportButtonStyle}"
                         ToolTipService.ToolTip="Volume"
                         Visibility="{x:Bind ViewModel.HasVolume, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <FontIcon FontSize="14" Glyph="{x:Bind ViewModel.VolumeGlyph, Mode=OneWay}" />
@@ -106,57 +110,20 @@
             </StackPanel>
         </Grid>
 
-        <Grid
-            Grid.Row="1"
-            ColumnSpacing="8"
-            Visibility="{x:Bind ViewModel.ShowVolume, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="24" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="28" />
-            </Grid.ColumnDefinitions>
-            <FontIcon
-                Grid.Column="0"
-                VerticalAlignment="Center"
-                FontSize="14"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Glyph="{x:Bind ViewModel.VolumeGlyph, Mode=OneWay}" />
-            <Slider
-                x:Name="VolumeSlider"
-                Grid.Column="1"
-                AutomationProperties.Name="Phone volume"
-                IsEnabled="{x:Bind ViewModel.CanControl, Mode=OneWay}"
-                IsThumbToolTipEnabled="False"
-                Maximum="100"
-                Minimum="0"
-                StepFrequency="1"
-                Value="{x:Bind ViewModel.Volume, Mode=OneWay}"
-                ValueChanged="VolumeSlider_ValueChanged" />
-            <TextBlock
-                Grid.Column="2"
-                VerticalAlignment="Center"
-                FontSize="12"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="{x:Bind ViewModel.VolumeText, Mode=OneWay}" />
-        </Grid>
-
-        <Grid
-            Grid.Row="2"
-            ColumnSpacing="8"
-            Visibility="{x:Bind ViewModel.CanSeek, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <!--  Playback position: elapsed, slider, total  -->
+        <Grid ColumnSpacing="8" Visibility="{x:Bind ViewModel.CanSeek, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock
-                Grid.Column="0"
                 VerticalAlignment="Center"
                 FontSize="12"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 Text="{x:Bind ViewModel.PositionText, Mode=OneWay}" />
             <Slider
-                x:Name="SeekSlider"
+                x:Name="PositionSlider"
                 Grid.Column="1"
                 AutomationProperties.Name="Playback position"
                 IsEnabled="{x:Bind ViewModel.CanSeekNow, Mode=OneWay}"
@@ -165,7 +132,7 @@
                 Minimum="0"
                 StepFrequency="1"
                 Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
-                ValueChanged="SeekSlider_ValueChanged" />
+                ValueChanged="PositionSlider_ValueChanged" />
             <TextBlock
                 Grid.Column="2"
                 VerticalAlignment="Center"
@@ -173,5 +140,36 @@
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 Text="{x:Bind ViewModel.DurationText, Mode=OneWay}" />
         </Grid>
-    </Grid>
+
+        <!--  Phone media volume, shown after the volume button is pressed  -->
+        <Grid ColumnSpacing="8" Visibility="{x:Bind ViewModel.ShowVolume, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="24" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="28" />
+            </Grid.ColumnDefinitions>
+            <FontIcon
+                VerticalAlignment="Center"
+                FontSize="14"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Glyph="{x:Bind ViewModel.VolumeGlyph, Mode=OneWay}" />
+            <Slider
+                x:Name="LevelSlider"
+                Grid.Column="1"
+                AutomationProperties.Name="Phone volume"
+                IsEnabled="{x:Bind ViewModel.CanControl, Mode=OneWay}"
+                IsThumbToolTipEnabled="False"
+                Maximum="100"
+                Minimum="0"
+                StepFrequency="1"
+                Value="{x:Bind ViewModel.Volume, Mode=OneWay}"
+                ValueChanged="LevelSlider_ValueChanged" />
+            <TextBlock
+                Grid.Column="2"
+                VerticalAlignment="Center"
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind ViewModel.VolumeText, Mode=OneWay}" />
+        </Grid>
+    </StackPanel>
 </UserControl>

@@ -1,14 +1,15 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/MediaSessionsControl.xaml.cs, GPL-3.0.
-// Modified for Veyro.
-
 using Microsoft.UI.Xaml.Controls.Primitives;
 
 namespace Veyro.UserControls;
 
-/// <summary>The phone's media session in the sidebar card (ADR-026).</summary>
+/// <summary>
+/// The phone's now-playing card (ADR-026). It tells the view model when it is on screen, so the
+/// playback-position ticker only runs while the card is visible, and forwards transport clicks
+/// and slider input.
+/// </summary>
 public sealed partial class MediaSessionsControl : UserControl
 {
-    private Window? _window;
+    private Window? _hostWindow;
 
     public PhoneMediaViewModel ViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
 
@@ -19,42 +20,48 @@ public sealed partial class MediaSessionsControl : UserControl
         Unloaded += OnUnloaded;
     }
 
+    // ---- Visibility: the card is "active" while loaded in a visible window -----------------
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _window = App.MainWindow;
-        if (_window is not null) _window.VisibilityChanged += OnWindowVisibilityChanged;
-        ViewModel.SetViewActive(_window?.Visible ?? true);
+        _hostWindow = App.MainWindow;
+        if (_hostWindow is not null) _hostWindow.VisibilityChanged += OnHostVisibilityChanged;
+        ViewModel.SetViewActive(_hostWindow?.Visible ?? true);
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (_window is not null) _window.VisibilityChanged -= OnWindowVisibilityChanged;
-        _window = null;
+        if (_hostWindow is not null) _hostWindow.VisibilityChanged -= OnHostVisibilityChanged;
+        _hostWindow = null;
         ViewModel.SetViewActive(false);
     }
 
-    private void OnWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args)
+    private void OnHostVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args)
         => ViewModel.SetViewActive(args.Visible);
 
-    private async void PlayPause_Click(object sender, RoutedEventArgs e) => await ViewModel.TogglePlayPauseAsync();
+    // ---- Transport -----------------------------------------------------------------------
 
     private async void Previous_Click(object sender, RoutedEventArgs e) => await ViewModel.PreviousAsync();
 
+    private async void PlayPause_Click(object sender, RoutedEventArgs e) => await ViewModel.TogglePlayPauseAsync();
+
     private async void Next_Click(object sender, RoutedEventArgs e) => await ViewModel.NextAsync();
 
-    private void Volume_Click(object sender, RoutedEventArgs e) => ViewModel.IsVolumeOpen = !ViewModel.IsVolumeOpen;
+    private void VolumeToggle_Click(object sender, RoutedEventArgs e) => ViewModel.IsVolumeOpen = !ViewModel.IsVolumeOpen;
 
-    // Model-driven updates (ticks, phone snapshots, layout coercion) are not user input: only a
-    // focused slider outside a model update counts as the user seeking or changing volume.
-    private void SeekSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    // ---- Sliders -------------------------------------------------------------------------
+    // The view model also moves these sliders itself (position ticks, phone snapshots, range
+    // changes). Only a change on a slider that has focus, outside such an update, is the user.
+
+    private bool IsUserInput(Slider slider) => !ViewModel.IsApplying && slider.FocusState != FocusState.Unfocused;
+
+    private void PositionSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (ViewModel.IsApplying || SeekSlider.FocusState == FocusState.Unfocused) return;
-        ViewModel.RequestSeek(e.NewValue);
+        if (IsUserInput(PositionSlider)) ViewModel.RequestSeek(e.NewValue);
     }
 
-    private void VolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    private void LevelSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (ViewModel.IsApplying || VolumeSlider.FocusState == FocusState.Unfocused) return;
-        ViewModel.RequestVolume(e.NewValue);
+        if (IsUserInput(LevelSlider)) ViewModel.RequestVolume(e.NewValue);
     }
 }
