@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/onboarding/WelcomeStep.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
@@ -27,13 +25,13 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.veyro.core.designsystem.components.padding
 import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
- * Shared page frame, Sefirah's step header: a 48dp primary icon next to the title, then the body.
- * Veyro changes: reused by every page (the Pair page included), scrollable for landscape and large
- * fonts, an optional subtitle, and the title is marked as a heading for screen readers.
+ * Frame shared by every onboarding page, including the pages in `OnboardingPages.kt`: a large
+ * accent icon beside the title, an optional explanatory line, then the page body. The frame
+ * scrolls so that landscape and large font sizes still reach the bottom of the content, and the
+ * title is a heading for screen readers.
  */
 @Composable
 internal fun OnboardingPage(
@@ -46,48 +44,67 @@ internal fun OnboardingPage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = MaterialTheme.padding.large),
+            .padding(horizontal = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                modifier = Modifier
-                    .padding(bottom = MaterialTheme.padding.small)
-                    .size(48.dp),
                 tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .size(48.dp),
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.semantics { heading() },
             )
         }
-        subtitle?.let {
+        if (subtitle != null) {
             Text(
-                text = it,
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(Modifier.height(4.dp))
         content()
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
     }
 }
 
+/** One short promise shown on the welcome card. */
+private class Promise(val icon: ImageVector, val headline: String, val detail: String)
+
 /**
- * Page (a): what Veyro is. Veyro changes: the store and download buttons are replaced by three
- * short promises, since Veyro for Windows is not published to a store yet.
+ * First page: what Veyro is and three promises about how it works. Veyro for Windows is not in a
+ * store yet, so the page ends with a note instead of a download button.
  */
 @Composable
 internal fun WelcomePage() {
-    OnboardingPage(
-        icon = VeyroIcons.RocketLaunch,
-        title = "Welcome to Veyro",
-    ) {
+    val promises = listOf(
+        Promise(
+            icon = VeyroIcons.Wifi,
+            headline = "Stays on your network",
+            detail = "Devices talk to each other directly over your Wi-Fi. Nothing goes " +
+                "through the internet or a server.",
+        ),
+        Promise(
+            icon = VeyroIcons.Lock,
+            headline = "Encrypted end to end",
+            detail = "Every connection is encrypted, and only devices you paired can connect.",
+        ),
+        Promise(
+            icon = VeyroIcons.QrCodeScanner,
+            headline = "No account",
+            detail = "No sign-up and no cloud. Pairing is done once, by scanning a code.",
+        ),
+    )
+
+    OnboardingPage(icon = VeyroIcons.RocketLaunch, title = "Welcome to Veyro") {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -99,22 +116,7 @@ internal fun WelcomePage() {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Promise(
-                    icon = VeyroIcons.Wifi,
-                    title = "Stays on your network",
-                    text = "Devices talk to each other directly over your Wi-Fi. Nothing goes " +
-                        "through the internet or a server.",
-                )
-                Promise(
-                    icon = VeyroIcons.Lock,
-                    title = "Encrypted end to end",
-                    text = "Every connection is encrypted, and only devices you paired can connect.",
-                )
-                Promise(
-                    icon = VeyroIcons.QrCodeScanner,
-                    title = "No account",
-                    text = "No sign-up and no cloud. Pairing is done once, by scanning a code.",
-                )
+                promises.forEach { PromiseRow(it) }
             }
         }
         Text(
@@ -126,13 +128,25 @@ internal fun WelcomePage() {
 }
 
 @Composable
-private fun Promise(icon: ImageVector, title: String, text: String) {
-    Row(verticalAlignment = Alignment.Top) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-        Spacer(modifier = Modifier.width(12.dp))
+private fun PromiseRow(promise: Promise) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Icon(
+            imageVector = promise.icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp),
+        )
         Column {
-            Text(text = title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(text = text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = promise.headline,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = promise.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

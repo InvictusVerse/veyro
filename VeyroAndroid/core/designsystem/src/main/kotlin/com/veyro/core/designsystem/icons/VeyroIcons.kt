@@ -6,8 +6,8 @@ import androidx.compose.ui.res.vectorResource
 import com.veyro.core.designsystem.R
 
 /**
- * The icons the Sefirah-style screens use, as vector drawables in this module's `res/drawable`
- * (`ic_sym_*`, Material Symbols copied from Sefirah-Android; see THIRD_PARTY_NOTICES.md).
+ * The icons the screens use, as vector drawables in this module's `res/drawable` (`ic_sym_*`,
+ * Veyro's own paths on a 24 x 24 viewport).
  *
  * Single drawables rather than `material-icons-extended`, which costs tens of MB of dex (ADR-016).
  * Each accessor is `@Composable` because `vectorResource` reads the current resources.
