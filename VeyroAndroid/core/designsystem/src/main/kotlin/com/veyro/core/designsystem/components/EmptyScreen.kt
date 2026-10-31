@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/presentation/src/main/java/sefirah/presentation/screens/EmptyScreen.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components
 
 import androidx.compose.foundation.layout.Arrangement
@@ -22,8 +20,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /**
- * Centred empty state. Veyro changes: an icon instead of Sefirah's random kaomoji (the project
- * keeps source ASCII-clean), and an optional [action] slot for a "Pair a device" style button.
+ * Full-size placeholder for a list or screen that has nothing to show: an optional [icon], the
+ * [message], and an optional [action] (for example a "Pair a device" button) underneath. The
+ * content scrolls so it stays reachable with a large font size.
  */
 @Composable
 public fun EmptyScreen(
@@ -37,34 +36,34 @@ public fun EmptyScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (icon != null) {
+        icon?.let { glyph ->
             Icon(
-                imageVector = icon,
+                imageVector = glyph,
                 contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .size(56.dp)
                     .secondaryItemAlpha(),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
         Text(
             text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
             modifier = Modifier
                 .paddingFromBaseline(top = 24.dp)
                 .secondaryItemAlpha(),
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
         )
 
-        if (action != null) {
+        action?.let { slot ->
             Column(
                 modifier = Modifier.padding(top = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                content = action,
+                content = slot,
             )
         }
     }

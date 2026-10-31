@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/presentation/src/main/java/sefirah/presentation/components/PullRefresh.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components
 
 import androidx.compose.foundation.layout.Box
@@ -16,11 +14,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * @param refreshing Whether the layout is currently refreshing
- * @param onRefresh Lambda which is invoked when a swipe to refresh gesture is completed.
- * @param enabled Whether the the layout should react to swipe gestures or not.
- * @param indicatorPadding Content padding for the indicator, to inset the indicator in if required.
- * @param content The content containing a vertically scrollable composable.
+ * Adds pull-to-refresh to [content], which must contain a vertically scrollable child.
+ *
+ * @param refreshing true while a refresh is running; drives the spinner.
+ * @param enabled false turns the gesture off, for example while a dialog is open.
+ * @param onRefresh called once when the user completes the pull gesture.
+ * @param indicatorPadding moves the spinner away from the top edge, for example below a top bar.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,26 +31,26 @@ public fun PullRefresh(
     indicatorPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable () -> Unit,
 ) {
-    val state = rememberPullToRefreshState()
+    val pullState = rememberPullToRefreshState()
+    val colors = MaterialTheme.colorScheme
+
     Box(
-        modifier = modifier
-            .pullToRefresh(
-                isRefreshing = refreshing,
-                state = state,
-                enabled = enabled,
-                onRefresh = onRefresh,
-            ),
+        modifier = modifier.pullToRefresh(
+            state = pullState,
+            isRefreshing = refreshing,
+            enabled = enabled,
+            onRefresh = onRefresh,
+        ),
     ) {
         content()
-
         PullToRefreshDefaults.Indicator(
+            state = pullState,
+            isRefreshing = refreshing,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(indicatorPadding),
-            isRefreshing = refreshing,
-            state = state,
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            containerColor = colors.surfaceVariant,
+            color = colors.onSurfaceVariant,
         )
     }
 }
