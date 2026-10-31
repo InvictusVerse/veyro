@@ -1,91 +1,143 @@
-﻿// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Converters/Converters.cs (BatteryStatusToIconConverter, RingerModeToIconConverter), GPL-3.0.
-// Modified for Veyro.
-
-using Microsoft.UI.Xaml.Media;
+﻿using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Veyro.Core.Diagnostics;
 
 namespace Veyro.ViewModels;
 
 /// <summary>
-/// The active phone's battery, ringer and DND for the Control Center (ADR-026), plus the
-/// ring / ringer / DND requests. Shown state is only ever what the phone reported; a request
-/// changes nothing locally until the phone's next <c>devStatus</c> confirms it.
+/// What the phone panel shows about the active phone (ADR-026, ADR-038, ADR-060): battery,
+/// radios, ringer, do-not-disturb, flashlight, media volume and brightness, plus the requests
+/// that change them. Every shown value is what the phone last reported. A request changes
+/// nothing locally; the phone's next <c>devStatus</c> confirms it (sliders keep the user's
+/// pick visible until then).
 /// </summary>
 public sealed class DeviceStatusViewModel : BaseViewModel
 {
-    /// <summary>The phone stops ringing on its own after 30 s (04-PROTOCOL.md 6.2).</summary>
-    private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
-    /// <summary>Same order as Sefirah's ringer selector: Silent, Vibrate, Ring.</summary>
-    private static readonly string[] RingerModes =
-        [DeviceStatusService.RingerSilent, DeviceStatusService.RingerVibrate, DeviceStatusService.RingerNormal];
+    // ---- Static tables -------------------------------------------------------------------
 
-    private readonly IDeviceStatusService _status;
-    private readonly IWallpaperService _wallpapers;
-    private readonly DispatcherQueue? _dispatcher;
-    private readonly DispatcherQueueTimer? _ringTimer;
-    private string? _peerId;
-    private PeerMessage.DeviceStatus? _reported;
-    private bool _isRinging;
-    private string _statusText = string.Empty;
-    private byte[]? _wallpaperBytes;
-    private ImageSource? _wallpaper;
-    // ADR-060: sliders show the user's value until the phone confirms it; sends are coalesced.
-    private readonly HeldLevel _volumeHold = new();
-    private readonly HeldLevel _brightnessHold = new();
+    /// <summary>The phone stops a find-my-phone ring by itself after 30 s (04-PROTOCOL.md 6.2).</summary>
+    private static readonly TimeSpan RingLimit = TimeSpan.FromSeconds(30);
+
+    /// <summary>Ringer modes in selector order; the position is the index the UI passes in.</summary>
+    private static readonly string[] RingerOrder =
+    [
+        DeviceStatusService.RingerSilent,
+        DeviceStatusService.RingerVibrate,
+        DeviceStatusService.RingerNormal
+    ];
+
+    /// <summary>Battery glyphs by tens of percent (0-10), discharging.</summary>
+    private static readonly string[] BatteryGlyphs =
+        ["\uE850", "\uE851", "\uE852", "\uE853", "\uE854", "\uE855", "\uE856", "\uE857", "\uE858", "\uE859", "\uE83F"];
+
+    /// <summary>Battery glyphs by tens of percent (0-10), charging.</summary>
+    private static readonly string[] ChargingBatteryGlyphs =
+        ["\uE85A", "\uE85B", "\uE85C", "\uE85D", "\uE85E", "\uE85F", "\uE860", "\uE861", "\uE862", "\uE83E", "\uEA93"];
+
+    /// <summary>Cellular signal glyphs for 0-4 bars.</summary>
+    private static readonly string[] CellBars = ["\uE86C", "\uE86D", "\uE86E", "\uE86F", "\uE870"];
+
+    private const string CellNoService = "\uE871";
+
+    /// <summary>
+    /// Property names re-raised whenever a new phone snapshot arrives, grouped by topic so a
+    /// property added to a topic only needs listing once.
+    /// </summary>
+    private static readonly string[] SnapshotProperties =
+    [
+        // availability and battery
+        nameof(CanControl), nameof(HasBattery), nameof(BatteryText), nameof(IsCharging), nameof(BatteryGlyph),
+        nameof(BatteryLabel),
+        // ringer, sound tile and do-not-disturb
+        nameof(RingerIndex), nameof(HasRinger), nameof(RingerGlyph), nameof(RingerLabel), nameof(IsRingerSilent),
+        nameof(IsRingerVibrate), nameof(IsRingerNormal), nameof(SoundGlyph), nameof(SoundLabel),
+        nameof(IsDndOn), nameof(DndLabel), nameof(DndButtonLabel),
+        // radios
+        nameof(HasBluetooth), nameof(BluetoothOpacity), nameof(BluetoothLabel),
+        nameof(HasWifi), nameof(WifiGlyph), nameof(WifiOpacity), nameof(WifiLabel),
+        nameof(HasCell), nameof(CellGlyph), nameof(CellOpacity), nameof(CellLabel), nameof(HasRadios),
+        // summary row
+        nameof(HasStatusRow), nameof(IsWaitingForStatus),
+        // phone controls (ADR-060)
+        nameof(CanTorch), nameof(IsTorchOn), nameof(TorchTip),
+        nameof(CanVolume), nameof(ShownMediaVolume), nameof(VolumeTip),
+        nameof(CanBrightness), nameof(ShownBrightness), nameof(IsAutoBrightness), nameof(BrightnessTip)
+    ];
+
+    // ---- State ---------------------------------------------------------------------------
+
+    private readonly IDeviceStatusService _statusService;
+    private readonly IWallpaperService _wallpaperService;
+    private readonly DispatcherQueue? _ui;
+    private readonly DispatcherQueueTimer? _ringExpiry;
+
+    // ADR-060: a slider shows the user's pick until the phone confirms it; sends are coalesced.
+    private readonly HeldLevel _volumeHeld = new();
+    private readonly HeldLevel _brightnessHeld = new();
     private readonly LatestValueSender<int> _volumeSender;
     private readonly LatestValueSender<int> _brightnessSender;
 
+    private string? _activePeer;
+    private PeerMessage.DeviceStatus? _snapshot;
+    private bool _ringing;
+    private string _errorText = string.Empty;
+    private byte[]? _wallpaperSource;
+    private ImageSource? _wallpaperImage;
+
     public DeviceStatusViewModel(IDeviceStatusService status, IWallpaperService wallpapers, IDeviceManager deviceManager)
     {
-        _status = status;
-        _wallpapers = wallpapers;
+        _statusService = status;
+        _wallpaperService = wallpapers;
+        _ui = DispatcherQueue.GetForCurrentThread();
+        _activePeer = deviceManager.ActiveDevice?.DeviceId;
+
         _volumeSender = new LatestValueSender<int>(value =>
-            SendAsync(() => _status.SendPhoneControlAsync(_peerId!, mediaVolume: value), "volume", () => CanVolume));
+            Dispatch(() => _statusService.SendPhoneControlAsync(_activePeer!, mediaVolume: value), "volume", () => CanVolume));
         _brightnessSender = new LatestValueSender<int>(value =>
-            SendAsync(() => _status.SendPhoneControlAsync(_peerId!, brightness: value), "brightness", () => CanBrightness));
-        _dispatcher = DispatcherQueue.GetForCurrentThread();
-        _peerId = deviceManager.ActiveDevice?.DeviceId;
-        if (_dispatcher is not null)
+            Dispatch(() => _statusService.SendPhoneControlAsync(_activePeer!, brightness: value), "brightness", () => CanBrightness));
+
+        if (_ui is not null)
         {
-            _ringTimer = _dispatcher.CreateTimer();
-            _ringTimer.Interval = RingTimeout;
-            _ringTimer.IsRepeating = false;
-            _ringTimer.Tick += (_, _) => SetRinging(false);
+            _ringExpiry = _ui.CreateTimer();
+            _ringExpiry.Interval = RingLimit;
+            _ringExpiry.IsRepeating = false;
+            _ringExpiry.Tick += (_, _) => SetRinging(false);
         }
 
-        _status.Changed += peerId => Post(() =>
+        _statusService.Changed += peerId => OnUi(() =>
         {
-            if (string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) Sync();
+            if (IsActive(peerId)) RefreshSnapshot();
         });
-        _wallpapers.Changed += peerId => Post(() =>
+        _wallpaperService.Changed += peerId => OnUi(() =>
         {
-            if (string.Equals(peerId, _peerId, StringComparison.OrdinalIgnoreCase)) _ = SyncWallpaperAsync();
+            if (IsActive(peerId)) _ = RefreshWallpaperAsync();
         });
-        deviceManager.ActiveDeviceChanged += device => Post(() =>
+        deviceManager.ActiveDeviceChanged += device => OnUi(() =>
         {
-            _peerId = device?.DeviceId;
+            _activePeer = device?.DeviceId;
             SetRinging(false);
-            Sync();
-            _ = SyncWallpaperAsync();
+            RefreshSnapshot();
+            _ = RefreshWallpaperAsync();
         });
-        Sync();
-        _ = SyncWallpaperAsync();
+
+        RefreshSnapshot();
+        _ = RefreshWallpaperAsync();
     }
 
-    // ── Wallpaper (ADR-038): the phone's own, or the fallback gradient ───────────────────
+    // ---- Wallpaper (ADR-038) -------------------------------------------------------------
 
     /// <summary>The phone's wallpaper from its latest <c>wallpaper</c> message, or null.</summary>
-    public ImageSource? Wallpaper => _wallpaper;
-    public bool HasWallpaper => _wallpaper is not null;
-    public bool HasNoWallpaper => _wallpaper is null;
+    public ImageSource? Wallpaper => _wallpaperImage;
+    public bool HasWallpaper => _wallpaperImage is not null;
+    public bool HasNoWallpaper => _wallpaperImage is null;
 
-    private async Task SyncWallpaperAsync()
+    private async Task RefreshWallpaperAsync()
     {
-        byte[]? bytes = _peerId is null ? null : _wallpapers.GetPhoneWallpaper(_peerId);
-        if (ReferenceEquals(bytes, _wallpaperBytes)) return;
-        _wallpaperBytes = bytes;
-        ImageSource? image = null;
+        byte[]? bytes = _activePeer is null ? null : _wallpaperService.GetPhoneWallpaper(_activePeer);
+        if (ReferenceEquals(bytes, _wallpaperSource)) return;
+        _wallpaperSource = bytes;
+
+        ImageSource? decoded = null;
         if (bytes is not null)
         {
             try
@@ -93,29 +145,63 @@ public sealed class DeviceStatusViewModel : BaseViewModel
                 var bitmap = new BitmapImage { DecodePixelHeight = 360 };
                 using var stream = new MemoryStream(bytes);
                 await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
-                image = bitmap;
+                decoded = bitmap;
             }
             catch (Exception)
             {
-                // Untrusted bytes: a JPEG that does not decode shows the fallback.
-                image = null;
+                // The bytes come from the phone and are untrusted: one that does not decode
+                // simply leaves the fallback gradient in place.
+                decoded = null;
             }
         }
-        if (!ReferenceEquals(bytes, _wallpaperBytes)) return;
-        _wallpaper = image;
+
+        // A newer wallpaper arrived while this one was decoding: drop this result.
+        if (!ReferenceEquals(bytes, _wallpaperSource)) return;
+        _wallpaperImage = decoded;
         OnPropertyChanged(nameof(Wallpaper));
         OnPropertyChanged(nameof(HasWallpaper));
         OnPropertyChanged(nameof(HasNoWallpaper));
     }
 
-    // ── Radios (ADR-038). Each glyph exists only once the phone reported it. ─────────────
+    // ---- Connection and summary row ------------------------------------------------------
 
-    public bool HasBluetooth => _reported?.Bluetooth is not null;
-    public double BluetoothOpacity => _reported?.Bluetooth == true ? 1.0 : 0.45;
-    public string BluetoothLabel => _reported?.Bluetooth == true ? "Bluetooth on" : "Bluetooth off";
+    public bool CanControl => _activePeer is not null && _statusService.CanControl(_activePeer);
 
-    public bool HasWifi => _reported?.Wifi is not null;
-    public string WifiGlyph => _reported?.Wifi switch
+    /// <summary>True when something in the summary row (battery, radios, ringer, DND) can be drawn.</summary>
+    public bool HasStatusRow => HasBattery || HasRinger || IsDndOn || HasRadios;
+
+    /// <summary>Connected and able to report, but no snapshot has arrived yet.</summary>
+    public bool IsWaitingForStatus => CanControl && !HasStatusRow;
+
+    // ---- Battery -------------------------------------------------------------------------
+
+    public bool HasBattery => _snapshot?.Battery is not null;
+    public string BatteryText => _snapshot?.Battery is { } percent ? $"{percent}%" : string.Empty;
+    public bool IsCharging => _snapshot?.Charging == true;
+
+    public string BatteryGlyph
+    {
+        get
+        {
+            if (_snapshot?.Battery is not { } percent) return string.Empty;
+            int tens = Math.Clamp(percent / 10, 0, 10);
+            return (IsCharging ? ChargingBatteryGlyphs : BatteryGlyphs)[tens];
+        }
+    }
+
+    public string BatteryLabel => _snapshot?.Battery is { } percent
+        ? $"Phone battery {percent} percent{(IsCharging ? ", charging" : string.Empty)}"
+        : "Phone battery not reported";
+
+    // ---- Radios: a glyph exists only once the phone reported that radio ------------------
+
+    public bool HasBluetooth => _snapshot?.Bluetooth is not null;
+    public double BluetoothOpacity => _snapshot?.Bluetooth == true ? 1.0 : 0.45;
+    public string BluetoothLabel => _snapshot?.Bluetooth == true ? "Bluetooth on" : "Bluetooth off";
+
+    public bool HasWifi => _snapshot?.Wifi is not null;
+
+    public string WifiGlyph => _snapshot?.Wifi switch
     {
         null => string.Empty,
         <= 1 => "\uE872",
@@ -123,79 +209,62 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         3 => "\uE874",
         _ => "\uE701"
     };
-    public double WifiOpacity => _reported?.Wifi is >= 1 ? 1.0 : 0.45;
-    public string WifiLabel => _reported?.Wifi switch
+
+    public double WifiOpacity => _snapshot?.Wifi is >= 1 ? 1.0 : 0.45;
+
+    public string WifiLabel => _snapshot?.Wifi switch
     {
         null => string.Empty,
         < 0 => "Wi-Fi off",
-        { } level => $"Wi-Fi signal {level} of 4"
+        { } bars => $"Wi-Fi signal {bars} of 4"
     };
 
-    public bool HasCell => _reported?.Cell is not null;
-    public string CellGlyph => _reported?.Cell switch
+    public bool HasCell => _snapshot?.Cell is not null;
+
+    public string CellGlyph => _snapshot?.Cell switch
     {
         null => string.Empty,
-        < 0 => "\uE871",
-        { } level => ((char)(0xE86C + Math.Clamp(level, 0, 4))).ToString()
+        < 0 => CellNoService,
+        { } bars => CellBars[Math.Clamp(bars, 0, CellBars.Length - 1)]
     };
-    public double CellOpacity => _reported?.Cell is >= 0 ? 1.0 : 0.45;
 
-    /// <summary>Carrier, signal and mobile data, for the tooltip. Shown, never logged.</summary>
+    public double CellOpacity => _snapshot?.Cell is >= 0 ? 1.0 : 0.45;
+
+    /// <summary>Carrier, signal and mobile data, for the tooltip. Displayed only, never logged.</summary>
     public string CellLabel
     {
         get
         {
-            if (_reported?.Cell is not { } level) return string.Empty;
-            var parts = new List<string>();
-            if (!string.IsNullOrEmpty(_reported.Carrier)) parts.Add(_reported.Carrier);
-            parts.Add(level < 0 ? "No service" : $"Signal {level} of 4");
-            if (_reported.MobileData is { } data) parts.Add(data ? "Mobile data on" : "Mobile data off");
+            if (_snapshot?.Cell is not { } bars) return string.Empty;
+            var parts = new List<string>(3);
+            if (!string.IsNullOrEmpty(_snapshot.Carrier)) parts.Add(_snapshot.Carrier);
+            parts.Add(bars < 0 ? "No service" : $"Signal {bars} of 4");
+            if (_snapshot.MobileData is { } mobileData) parts.Add(mobileData ? "Mobile data on" : "Mobile data off");
             return string.Join(", ", parts);
         }
     }
 
-    /// <summary>Only phones that report radios get the radio part of the status row.</summary>
     public bool HasRadios => HasBluetooth || HasWifi || HasCell;
 
-    public bool CanControl => _peerId is not null && _status.CanControl(_peerId);
+    // ---- Ringer, sound tile, do-not-disturb ----------------------------------------------
 
-    /// <summary>True only once the connected phone has reported a battery level.</summary>
-    public bool HasBattery => _reported?.Battery is not null;
-    public string BatteryText => _reported?.Battery is { } battery ? $"{battery}%" : string.Empty;
-    public bool IsCharging => _reported?.Charging == true;
-
-    /// <summary>Battery glyph for the reported level, same table as Sefirah's BatteryStatusToIconConverter.</summary>
-    public string BatteryGlyph => _reported?.Battery is { } level ? BatteryGlyphFor(level, IsCharging) : string.Empty;
-
-    private static string BatteryGlyphFor(int level, bool charging)
-    {
-        int tens = Math.Clamp(level / 10, 0, 10);
-        if (charging)
-            return tens switch { 10 => "\uEA93", 9 => "\uE83E", _ => ((char)(0xE85A + tens)).ToString() };
-        return tens == 10 ? "\uE83F" : ((char)(0xE850 + tens)).ToString();
-    }
-    public string BatteryLabel => _reported?.Battery is { } battery
-        ? $"Phone battery {battery} percent{(IsCharging ? ", charging" : string.Empty)}"
-        : "Phone battery not reported";
-
-    /// <summary>Index into Silent / Vibrate / Ring, or -1 when the phone has not reported it.</summary>
-    public int RingerIndex => Array.IndexOf(RingerModes, _reported?.Ringer ?? string.Empty);
+    /// <summary>Position in Silent / Vibrate / Ring, or -1 until the phone reports a mode.</summary>
+    public int RingerIndex => Array.IndexOf(RingerOrder, _snapshot?.Ringer ?? string.Empty);
     public bool HasRinger => RingerIndex >= 0;
-    public bool HasStatusRow => HasBattery || HasRinger || IsDndOn || HasRadios;
 
-    /// <summary>Connected and status-capable, but no devStatus yet: say so instead of showing a value.</summary>
-    public bool IsWaitingForStatus => CanControl && !HasStatusRow;
-    public string RingerGlyph => _reported?.Ringer switch
+    public bool IsRingerSilent => _snapshot?.Ringer == DeviceStatusService.RingerSilent;
+    public bool IsRingerVibrate => _snapshot?.Ringer == DeviceStatusService.RingerVibrate;
+    public bool IsRingerNormal => _snapshot?.Ringer == DeviceStatusService.RingerNormal;
+
+    public string RingerGlyph => _snapshot?.Ringer switch
     {
         DeviceStatusService.RingerNormal => "\uEA8F",
         DeviceStatusService.RingerVibrate => "\uE877",
         DeviceStatusService.RingerSilent => "\uE7ED",
         _ => string.Empty
     };
-    public bool IsRingerSilent => _reported?.Ringer == DeviceStatusService.RingerSilent;
-    public bool IsRingerVibrate => _reported?.Ringer == DeviceStatusService.RingerVibrate;
-    public bool IsRingerNormal => _reported?.Ringer == DeviceStatusService.RingerNormal;
-    public string RingerLabel => _reported?.Ringer switch
+
+    public string RingerLabel => _snapshot?.Ringer switch
     {
         DeviceStatusService.RingerNormal => "Ringer on",
         DeviceStatusService.RingerVibrate => "Vibrate",
@@ -203,105 +272,121 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         _ => "Ringer unknown"
     };
 
-    /// <summary>Quick-action Sound tile: the reported mode, or a neutral speaker when unknown.</summary>
+    /// <summary>Sound tile: the reported mode, or a plain speaker while the mode is unknown.</summary>
     public string SoundGlyph => HasRinger ? RingerGlyph : "\uE767";
     public string SoundLabel => HasRinger ? $"Sound: {RingerLabel}" : "Sound mode not reported";
 
-    public string DndButtonLabel => _reported?.Dnd switch
-    {
-        true => "Do not disturb: on. Select to turn off.",
-        false => "Do not disturb: off. Select to turn on.",
-        null => "Do not disturb"
-    };
+    public bool IsDndOn => _snapshot?.Dnd == true;
 
-    public bool IsDndOn => _reported?.Dnd == true;
-    public string DndLabel => _reported?.Dnd switch
+    public string DndLabel => _snapshot?.Dnd switch
     {
         true => "Do not disturb is on",
         false => "Do not disturb is off",
         null => "Do not disturb unknown"
     };
 
-    public bool IsRinging => _isRinging;
-    public string RingButtonText => _isRinging ? "Stop ringing" : "Ring phone";
+    public string DndButtonLabel => _snapshot?.Dnd switch
+    {
+        true => "Do not disturb: on. Select to turn off.",
+        false => "Do not disturb: off. Select to turn on.",
+        null => "Do not disturb"
+    };
 
+    // ---- Find my phone, request errors ---------------------------------------------------
+
+    public bool IsRinging => _ringing;
+    public string RingButtonText => _ringing ? "Stop ringing" : "Ring phone";
+
+    /// <summary>The last request failure, shown under the quick controls; empty when none.</summary>
     public string StatusText
     {
-        get => _statusText;
+        get => _errorText;
         private set
         {
-            if (SetProperty(ref _statusText, value)) OnPropertyChanged(nameof(HasStatus));
+            if (SetProperty(ref _errorText, value)) OnPropertyChanged(nameof(HasStatus));
         }
     }
 
-    public bool HasStatus => !string.IsNullOrEmpty(_statusText);
+    public bool HasStatus => _errorText.Length > 0;
 
     public async Task ToggleRingAsync()
     {
-        bool ring = !_isRinging;
-        if (await SendAsync(() => _status.SendControlAsync(_peerId!, ring: ring), "ring")) SetRinging(ring);
+        bool wantRing = !_ringing;
+        if (await Dispatch(() => _statusService.SendControlAsync(_activePeer!, ring: wantRing), "ring"))
+            SetRinging(wantRing);
     }
 
     public Task RequestRingerAsync(int index)
     {
-        if (index < 0 || index >= RingerModes.Length || index == RingerIndex) return Task.CompletedTask;
-        string mode = RingerModes[index];
-        return SendAsync(() => _status.SendControlAsync(_peerId!, ringer: mode), "ringer");
+        if (index < 0 || index >= RingerOrder.Length || index == RingerIndex) return Task.CompletedTask;
+        string mode = RingerOrder[index];
+        return Dispatch(() => _statusService.SendControlAsync(_activePeer!, ringer: mode), "ringer");
     }
 
     public Task RequestDndAsync(bool enabled)
-        => SendAsync(() => _status.SendControlAsync(_peerId!, dnd: enabled), "dnd");
+        => Dispatch(() => _statusService.SendControlAsync(_activePeer!, dnd: enabled), "dnd");
 
-    // ── Flashlight, media volume, brightness (ADR-060). Shown state is what the phone reports. ──
+    // ---- Flashlight, media volume, brightness (ADR-060) ----------------------------------
 
-    private bool IsConnected => _peerId is not null && _status.CanControl(_peerId);
-    private bool HasPhoneControls => _peerId is not null && _status.CanUsePhoneControls(_peerId);
+    private bool HasPhoneControls => _activePeer is not null && _statusService.CanUsePhoneControls(_activePeer);
 
-    private string? Reason(PhoneControlKind kind) => PhoneControlsView.Unavailable(IsConnected, HasPhoneControls, _reported, kind);
+    /// <summary>Why a phone control is unavailable right now, or null when it can be used.</summary>
+    private string? WhyUnavailable(PhoneControlKind kind)
+        => PhoneControlsView.Unavailable(CanControl, HasPhoneControls, _snapshot, kind);
 
-    public bool CanTorch => Reason(PhoneControlKind.Torch) is null;
-    public bool IsTorchOn => _reported?.Torch == true;
-    public string TorchTip => Reason(PhoneControlKind.Torch) ?? (IsTorchOn
-        ? "Flashlight: on. Select to turn it off."
-        : "Flashlight: off. Select to turn it on.");
+    public bool CanTorch => WhyUnavailable(PhoneControlKind.Torch) is null;
+    public bool IsTorchOn => _snapshot?.Torch == true;
 
-    public bool CanVolume => Reason(PhoneControlKind.Volume) is null;
+    public string TorchTip => WhyUnavailable(PhoneControlKind.Torch)
+        ?? (IsTorchOn ? "Flashlight: on. Select to turn it off." : "Flashlight: off. Select to turn it on.");
 
-    /// <summary>The slider's value: the user's pick while it is on its way, else the phone's.</summary>
-    public double ShownMediaVolume => _volumeHold.Shown(_reported?.MediaVolume) ?? 0;
-    public string VolumeTip => Reason(PhoneControlKind.Volume) ??
-        (_reported?.MediaVolume is { } volume ? $"Media volume on the phone: {volume}%" : "Media volume on the phone");
+    public bool CanVolume => WhyUnavailable(PhoneControlKind.Volume) is null;
 
-    public bool CanBrightness => Reason(PhoneControlKind.Brightness) is null;
-    public double ShownBrightness => _brightnessHold.Shown(_reported?.Brightness) ?? 0;
-    public bool IsAutoBrightness => _reported?.AutoBrightness == true;
-    public string BrightnessTip => Reason(PhoneControlKind.Brightness) ??
-        (_reported?.Brightness is { } level
+    /// <summary>The slider value: the user's pick while it is in flight, else the phone's.</summary>
+    public double ShownMediaVolume => _volumeHeld.Shown(_snapshot?.MediaVolume) ?? 0;
+
+    public string VolumeTip => WhyUnavailable(PhoneControlKind.Volume)
+        ?? (_snapshot?.MediaVolume is { } volume ? $"Media volume on the phone: {volume}%" : "Media volume on the phone");
+
+    public bool CanBrightness => WhyUnavailable(PhoneControlKind.Brightness) is null;
+    public double ShownBrightness => _brightnessHeld.Shown(_snapshot?.Brightness) ?? 0;
+    public bool IsAutoBrightness => _snapshot?.AutoBrightness == true;
+
+    public string BrightnessTip => WhyUnavailable(PhoneControlKind.Brightness)
+        ?? (_snapshot?.Brightness is { } level
             ? $"Screen brightness on the phone: {level}%{(IsAutoBrightness ? ", automatic" : string.Empty)}"
             : "Screen brightness on the phone");
 
     public Task RequestTorchAsync(bool on)
-        => SendAsync(() => _status.SendPhoneControlAsync(_peerId!, torch: on), "torch", () => CanTorch);
+        => Dispatch(() => _statusService.SendPhoneControlAsync(_activePeer!, torch: on), "torch", () => CanTorch);
 
-    /// <summary>From the slider. Coalesced: one send in flight, the newest value follows.</summary>
+    /// <summary>From the slider. Coalesced: one send in flight, the newest value follows it.</summary>
     public void RequestMediaVolume(int percent)
     {
         if (!CanVolume || percent is < 0 or > 100) return;
-        _volumeHold.Request(percent);
+        _volumeHeld.Request(percent);
         _ = _volumeSender.Post(percent);
     }
 
     public void RequestBrightness(int percent)
     {
         if (!CanBrightness || percent is < 0 or > 100) return;
-        _brightnessHold.Request(percent);
+        _brightnessHeld.Request(percent);
         _ = _brightnessSender.Post(percent);
     }
 
     public Task RequestAutoBrightnessAsync(bool on)
-        => SendAsync(() => _status.SendPhoneControlAsync(_peerId!, autoBrightness: on), "auto brightness", () => CanBrightness);
+        => Dispatch(() => _statusService.SendPhoneControlAsync(_activePeer!, autoBrightness: on), "auto brightness", () => CanBrightness);
 
-    private async Task<bool> SendAsync(Func<Task> request, string name, Func<bool>? allowed = null)
+    // ---- Internals -----------------------------------------------------------------------
+
+    private bool IsActive(string? peerId) => string.Equals(peerId, _activePeer, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Runs one request against the phone. Returns false (and sets <see cref="StatusText"/>
+    /// where it is the user's concern) when it was refused or failed.
+    /// </summary>
+    private async Task<bool> Dispatch(Func<Task> request, string what, Func<bool>? precondition = null)
     {
         StatusText = string.Empty;
         if (!CanControl)
@@ -309,7 +394,8 @@ public sealed class DeviceStatusViewModel : BaseViewModel
             StatusText = "The phone is not connected.";
             return false;
         }
-        if (allowed is not null && !allowed()) return false;
+        if (precondition is not null && !precondition()) return false;
+
         try
         {
             await request();
@@ -317,7 +403,7 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         }
         catch (Exception error)
         {
-            VeyroTrace.Error($"Device control '{name}' failed", error);
+            VeyroTrace.Error($"Device control '{what}' failed", error);
             StatusText = "Could not reach the phone.";
             return false;
         }
@@ -325,47 +411,31 @@ public sealed class DeviceStatusViewModel : BaseViewModel
 
     private void SetRinging(bool ringing)
     {
-        if (_isRinging == ringing) return;
-        _isRinging = ringing;
-        if (_ringTimer is not null)
+        if (_ringing == ringing) return;
+        _ringing = ringing;
+        if (_ringExpiry is not null)
         {
-            _ringTimer.Stop();
-            if (ringing) _ringTimer.Start();
+            _ringExpiry.Stop();
+            if (ringing) _ringExpiry.Start();
         }
         OnPropertyChanged(nameof(IsRinging));
         OnPropertyChanged(nameof(RingButtonText));
     }
 
-    private void Sync()
+    private void RefreshSnapshot()
     {
-        _reported = _peerId is null ? null : _status.GetPhoneStatus(_peerId);
+        _snapshot = _activePeer is null ? null : _statusService.GetPhoneStatus(_activePeer);
         if (!CanControl)
         {
             SetRinging(false);
             StatusText = string.Empty;
         }
-        foreach (string name in new[]
-                 {
-                     nameof(CanControl), nameof(HasBattery), nameof(BatteryText), nameof(IsCharging), nameof(BatteryGlyph),
-                     nameof(BatteryLabel), nameof(RingerIndex), nameof(HasRinger), nameof(HasStatusRow), nameof(IsWaitingForStatus), nameof(RingerGlyph),
-                     nameof(RingerLabel), nameof(IsRingerSilent), nameof(IsRingerVibrate), nameof(IsRingerNormal),
-                     nameof(IsDndOn), nameof(DndLabel), nameof(DndButtonLabel),
-                     nameof(HasBluetooth), nameof(BluetoothOpacity), nameof(BluetoothLabel),
-                     nameof(HasWifi), nameof(WifiGlyph), nameof(WifiOpacity), nameof(WifiLabel),
-                     nameof(HasCell), nameof(CellGlyph), nameof(CellOpacity), nameof(CellLabel), nameof(HasRadios),
-                     nameof(SoundGlyph), nameof(SoundLabel),
-                     nameof(CanTorch), nameof(IsTorchOn), nameof(TorchTip),
-                     nameof(CanVolume), nameof(ShownMediaVolume), nameof(VolumeTip),
-                     nameof(CanBrightness), nameof(ShownBrightness), nameof(IsAutoBrightness), nameof(BrightnessTip)
-                 })
-        {
-            OnPropertyChanged(name);
-        }
+        foreach (string property in SnapshotProperties) OnPropertyChanged(property);
     }
 
-    private void Post(Action action)
+    private void OnUi(Action action)
     {
-        if (_dispatcher is null || _dispatcher.HasThreadAccess) action();
-        else _dispatcher.TryEnqueue(() => action());
+        if (_ui is null || _ui.HasThreadAccess) action();
+        else _ui.TryEnqueue(() => action());
     }
 }
