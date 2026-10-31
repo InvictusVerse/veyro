@@ -154,6 +154,35 @@ public sealed class DeviceStatusViewModel : BaseViewModel
         }
     }
 
+    // ADR-074: short texts for Home's status chips. Each is shown only once the phone reported it.
+    public string WifiChip => _reported?.Wifi switch
+    {
+        null => string.Empty,
+        < 0 => "Wi-Fi off",
+        { } level => $"Wi-Fi {level}/4",
+    };
+
+    public string CellChip
+    {
+        get
+        {
+            if (_reported?.Cell is not { } level) return string.Empty;
+            string name = string.IsNullOrEmpty(_reported.Carrier) ? "Mobile" : _reported.Carrier;
+            string signal = level < 0 ? "no service" : $"{level}/4";
+            string data = _reported.MobileData switch { true => " · data on", false => " · data off", _ => string.Empty };
+            return $"{name} {signal}{data}";
+        }
+    }
+
+    public string BluetoothChip => _reported?.Bluetooth == true ? "Bluetooth on" : "Bluetooth off";
+    public string RingerChip => HasRinger ? RingerLabel : string.Empty;
+    public string DndChip => IsDndOn ? "Do not disturb on" : "Do not disturb off";
+    public bool HasDnd => _reported?.Dnd is not null;
+    public bool HasVolumeChip => _reported?.MediaVolume is not null;
+    public string VolumeChip => _reported?.MediaVolume is { } v ? $"Volume {v}%" : string.Empty;
+    public bool HasBrightnessChip => _reported?.Brightness is not null;
+    public string BrightnessChip => _reported?.Brightness is { } b ? $"Brightness {b}%{(IsAutoBrightness ? " · auto" : string.Empty)}" : string.Empty;
+
     /// <summary>Only phones that report radios get the radio part of the status row.</summary>
     public bool HasRadios => HasBluetooth || HasWifi || HasCell;
 
@@ -356,7 +385,9 @@ public sealed class DeviceStatusViewModel : BaseViewModel
                      nameof(SoundGlyph), nameof(SoundLabel),
                      nameof(CanTorch), nameof(IsTorchOn), nameof(TorchTip),
                      nameof(CanVolume), nameof(ShownMediaVolume), nameof(VolumeTip),
-                     nameof(CanBrightness), nameof(ShownBrightness), nameof(IsAutoBrightness), nameof(BrightnessTip)
+                     nameof(CanBrightness), nameof(ShownBrightness), nameof(IsAutoBrightness), nameof(BrightnessTip),
+                     nameof(WifiChip), nameof(CellChip), nameof(BluetoothChip), nameof(RingerChip), nameof(DndChip),
+                     nameof(HasVolumeChip), nameof(VolumeChip), nameof(HasBrightnessChip), nameof(BrightnessChip), nameof(HasDnd)
                  })
         {
             OnPropertyChanged(name);

@@ -235,6 +235,37 @@ public sealed class MirrorController : IDisposable
         if (_session.SetAudioRequested(_settings.Current.MirrorAudio) is { } config) await SendAsync(config);
     }
 
+    /// <summary>
+    /// ADR-074: the live chip of the mirror and camera windows, e.g. "1920x832 · 60 fps · HW" or
+    /// "Back · 1920x1080 · 30 fps". From the plan the PC asked for; empty before a session.
+    /// </summary>
+    public string LiveSummary
+    {
+        get
+        {
+            if (_plan is not { } plan || !_session.Status.IsLive) return string.Empty;
+            string size = plan.Width > 0 && plan.Height > 0 ? $"{plan.Width}x{plan.Height}" : $"{plan.MaxLong} px";
+            string codec = plan.Codec == "h265" ? "H.265" : "H.264";
+            if (!IsCamera) return $"{size} · {plan.Fps} fps · {codec}{(plan.HwEncode ? " · HW" : string.Empty)}";
+            string lens = _caps() is { } caps && CameraPlanner.Choose(caps, _settings.Current.WebcamCamera) is { } camera
+                ? camera.Facing switch { "front" => "Front", "back" => "Back", _ => "External" }
+                : "Camera";
+            return $"{lens} · {size} · {plan.Fps} fps";
+        }
+    }
+
+    /// <summary>ADR-074: the next camera of the phone (front / back), for the window's Switch lens button.</summary>
+    public string? NextCameraId
+    {
+        get
+        {
+            if (!IsCamera || _caps()?.Cameras is not { Count: > 1 } cameras) return null;
+            string? current = CameraPlanner.Choose(_caps()!, _settings.Current.WebcamCamera)?.Id;
+            int index = cameras.ToList().FindIndex(c => c.Id == current);
+            return cameras[(index + 1) % cameras.Count].Id;
+        }
+    }
+
     /// <summary>Camera sessions: the phone's flash as a steady light. Off at every new session.</summary>
     public bool Torch { get; private set; }
 

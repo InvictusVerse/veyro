@@ -188,6 +188,23 @@
                 Grid.Column="3"
                 Orientation="Horizontal"
                 Spacing="4">
+                <!--  Camera only (ADR-074): front/back and a mirrored picture, straight from the bar  -->
+                <Button
+                    x:Name="LensButton"
+                    AutomationProperties.Name="Switch camera"
+                    Click="Lens_Click"
+                    ToolTipService.ToolTip="Switch camera (front / back)"
+                    Visibility="Collapsed">
+                    <FontIcon FontSize="14" Glyph="&#xE89E;" />
+                </Button>
+                <ToggleButton
+                    x:Name="MirrorImageToggle"
+                    AutomationProperties.Name="Mirror image"
+                    Click="MirrorImageToggle_Click"
+                    ToolTipService.ToolTip="Mirror image"
+                    Visibility="Collapsed">
+                    <FontIcon FontSize="14" Glyph="&#xE8EB;" />
+                </ToggleButton>
                 <ToggleButton
                     x:Name="QuietToggle"
                     AutomationProperties.Name="Do not disturb"
@@ -201,6 +218,14 @@
                     ToolTipService.ToolTip="Full screen (F11). Esc or double-click to leave.">
                     <FontIcon FontSize="14" Glyph="&#xE740;" />
                 </Button>
+                <Button
+                    x:Name="CleanViewButton"
+                    AutomationProperties.Name="Clean view"
+                    Click="CleanViewOn_Click"
+                    ToolTipService.ToolTip="Clean view: picture only, for OBS (Esc to leave)"
+                    Visibility="Collapsed">
+                    <FontIcon FontSize="14" Glyph="&#xE7B3;" />
+                </Button>
             </StackPanel>
 
             <Button
@@ -209,7 +234,10 @@
                 AutomationProperties.Name="Stop mirroring"
                 Click="Stop_Click"
                 ToolTipService.ToolTip="Stop mirroring">
-                <FontIcon FontSize="14" Glyph="&#xE71A;" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon FontSize="14" Glyph="&#xE71A;" />
+                    <TextBlock x:Name="StopText" Text="Stop" Visibility="Collapsed" />
+                </StackPanel>
             </Button>
         </Grid>
 
@@ -239,6 +267,37 @@
             </MediaPlayerElement.RenderTransform>
         </MediaPlayerElement>
 
+        <!--  Modern (ADR-074): live chips over the picture, fading with the bar  -->
+        <Border
+            x:Name="LiveChip"
+            Grid.Row="2"
+            Margin="14"
+            Padding="12,5"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Background="#D91D2129"
+            CornerRadius="13"
+            IsHitTestVisible="False"
+            Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Ellipse Width="8" Height="8" VerticalAlignment="Center" Fill="#FF3CCF7A" />
+                <TextBlock x:Name="LiveChipText" FontSize="12" Foreground="#FFCFD3DC" />
+            </StackPanel>
+        </Border>
+        <Border
+            x:Name="VcamChip"
+            Grid.Row="2"
+            Margin="14"
+            Padding="12,5"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Background="#D91D2129"
+            CornerRadius="13"
+            IsHitTestVisible="False"
+            Visibility="Collapsed">
+            <TextBlock FontSize="12" Foreground="#FFCFD3DC" Text="Virtual camera: in use" />
+        </Border>
+
         <!--  Status: asking, connecting, declined, stopped  -->
         <Grid
             x:Name="StatusPanel"
@@ -246,6 +305,7 @@
             Padding="24"
             Background="#E6000000">
             <StackPanel
+                x:Name="StatusCard"
                 MaxWidth="340"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"

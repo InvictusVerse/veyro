@@ -45,7 +45,9 @@ public sealed partial class MirrorView : UserControl
             Unloaded += (_, _) => VeyroContainer.Instance.VirtualCamera.InUseChanged -= OnVcamInUse;
         }
         LoadSettings();
-        Toolbar.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(220) };
+        Toolbar.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(200) };
+        LiveChip.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(200) };
+        VcamChip.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(200) };
         Toolbar.PointerEntered += (_, _) =>
         {
             _pointerOnBar = true;
@@ -79,15 +81,82 @@ public sealed partial class MirrorView : UserControl
         Toolbar.BorderThickness = _modern ? new Thickness(1) : new Thickness(0, 0, 0, 1);
         Toolbar.ColumnSpacing = _modern ? 6 : 4;
         Toolbar.ColumnDefinitions[4].Width = _modern ? new GridLength(10) : new GridLength(1, GridUnitType.Star);
-        Toolbar.Background = (Brush)Application.Current.Resources[_modern ? "AcrylicInAppFillColorDefaultBrush" : "LayerFillColorDefaultBrush"];
+        Toolbar.Background = _modern
+            ? new SolidColorBrush(global::Windows.UI.Color.FromArgb(0xE6, 0x1D, 0x21, 0x29))
+            : (Brush)Application.Current.Resources["LayerFillColorDefaultBrush"];
+        Toolbar.BorderBrush = _modern
+            ? new SolidColorBrush(global::Windows.UI.Color.FromArgb(0xFF, 0x3A, 0x40, 0x50))
+            : (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"];
+        Toolbar.CornerRadius = _modern ? new CornerRadius(24) : new CornerRadius(0);
+        Toolbar.RequestedTheme = _modern ? ElementTheme.Dark : ElementTheme.Default;
         Toolbar.Shadow = _modern ? new ThemeShadow() : null;
         Toolbar.Translation = _modern ? new System.Numerics.Vector3(0, 0, 24) : System.Numerics.Vector3.Zero;
+
+        // The mockup's bar: icons only, a red Stop pill, Clean view on the bar.
+        QualityShortText.Visibility = _modern ? Visibility.Collapsed : Visibility.Visible;
+        StopText.Visibility = _modern ? Visibility.Visible : Visibility.Collapsed;
+        StopButton.CornerRadius = _modern ? new CornerRadius(16) : new CornerRadius(4);
+        StopButton.Padding = _modern ? new Thickness(14, 6, 16, 6) : new Thickness(11, 5, 11, 6);
+        if (_modern)
+        {
+            StopButton.Background = new SolidColorBrush(global::Windows.UI.Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1C));
+            StopButton.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
+        }
+        else
+        {
+            StopButton.ClearValue(Control.BackgroundProperty);
+            StopButton.ClearValue(Control.ForegroundProperty);
+        }
+        CleanViewButton.Visibility = _modern ? Visibility.Visible : Visibility.Collapsed;
+        MirrorImageToggle.Visibility = _camera && _modern ? Visibility.Visible : Visibility.Collapsed;
+
+        // Waiting, declined and stopped: a centred card over the dimmed picture.
+        StatusPanel.Background = new SolidColorBrush(_modern
+            ? global::Windows.UI.Color.FromArgb(0x99, 0, 0, 0)
+            : global::Windows.UI.Color.FromArgb(0xE6, 0, 0, 0));
+        StatusCard.Background = _modern ? new SolidColorBrush(global::Windows.UI.Color.FromArgb(0xF2, 0x1D, 0x21, 0x29)) : null;
+        StatusCard.Padding = _modern ? new Thickness(28, 24, 28, 24) : new Thickness(0);
+        StatusCard.CornerRadius = _modern ? new CornerRadius(16) : new CornerRadius(0);
+        RefreshChips();
         ShowBar();
     }
 
+    /// <summary>Live chip ("1920x1080 · 60 fps · HW") and, for the camera, "Virtual camera: in use".</summary>
+    private void RefreshChips()
+    {
+        string summary = _controller?.LiveSummary ?? string.Empty;
+        LiveChipText.Text = summary;
+        LiveChip.Visibility = _modern && _hasPicture && summary.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        VcamChip.Visibility = _modern && _camera && _hasPicture && Vcam.InUse ? Visibility.Visible : Visibility.Collapsed;
+        LensButton.Visibility = _camera && _controller?.NextCameraId is not null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SetOverlayOpacity(double opacity)
+    {
+        Toolbar.Opacity = opacity;
+        LiveChip.Opacity = opacity;
+        VcamChip.Opacity = opacity;
+    }
+
+    /// <summary>Next lens: picking it in the lens list applies size, frame rate and flash as a manual pick does.</summary>
+    private void Lens_Click(object sender, RoutedEventArgs e)
+    {
+        if (_controller?.NextCameraId is not { } next) return;
+        for (int i = 0; i < LensCombo.Items.Count; i++)
+        {
+            if (LensCombo.Items[i] is ComboBoxItem { Tag: string id } && id == next)
+            {
+                LensCombo.SelectedIndex = i;
+                return;
+            }
+        }
+    }
+
+    private void MirrorImageToggle_Click(object sender, RoutedEventArgs e) => MirrorSwitch.IsOn = MirrorImageToggle.IsChecked == true;
+
     private void ShowBar()
     {
-        Toolbar.Opacity = 1;
+        SetOverlayOpacity(1);
         Toolbar.IsHitTestVisible = true;
         if (!_modern)
         {
@@ -112,7 +181,7 @@ public sealed partial class MirrorView : UserControl
                 timer.Start();
                 return;
             }
-            Toolbar.Opacity = 0;
+            SetOverlayOpacity(0);
             Toolbar.IsHitTestVisible = false;
         };
         return timer;
@@ -122,7 +191,11 @@ public sealed partial class MirrorView : UserControl
 
     private static VirtualCameraService Vcam => VeyroContainer.Instance.VirtualCamera;
 
-    private void OnVcamInUse(bool inUse) => RefreshVcam();
+    private void OnVcamInUse(bool inUse)
+    {
+        RefreshVcam();
+        RefreshChips();
+    }
 
     private void RefreshVcam()
     {
@@ -261,6 +334,7 @@ public sealed partial class MirrorView : UserControl
         if (_updating) return;
         bool on = MirrorSwitch.IsOn;
         PlayerFlip.ScaleX = on ? -1 : 1;
+        MirrorImageToggle.IsChecked = on;
         await _settings.UpdateAsync(s => s with { WebcamMirror = on });
     }
 
@@ -421,6 +495,7 @@ public sealed partial class MirrorView : UserControl
             SoundIcon.Glyph = current.MirrorAudio ? "\uE767" : "\uE74F";
             QuietToggle.IsChecked = current.NotificationPopupsPaused;
             MirrorSwitch.IsOn = current.WebcamMirror;
+            MirrorImageToggle.IsChecked = current.WebcamMirror;
             PlayerFlip.ScaleX = _camera && current.WebcamMirror ? -1 : 1;
         }
         finally
@@ -461,6 +536,7 @@ public sealed partial class MirrorView : UserControl
     {
         RefreshCameraChoices();
         RefreshTorch();
+        RefreshChips();
         if (status.Phase != MirrorPhase.Streaming && status.Phase != MirrorPhase.Paused) _hasPicture = false;
         bool waitingForPicture = status.Phase == MirrorPhase.Streaming && !_hasPicture;
         bool showPanel = status.Phase != MirrorPhase.Streaming || waitingForPicture;

@@ -29,8 +29,11 @@
             <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="15" />
-            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Width" Value="148" />
+            <Setter Property="Height" Value="30" />
             <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
         </Style>
 
         <!--  Action tile: icon badge top-left, label bottom-left  -->
@@ -111,7 +114,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="1.15*" />
+                            <ColumnDefinition Width="0.8*" />
                         </Grid.ColumnDefinitions>
 
                         <Grid
@@ -191,60 +194,98 @@
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
 
-                            <!--  Connection chip: click for details and the fingerprint  -->
-                            <Button
-                                Padding="12,5"
-                                AutomationProperties.Name="Connection details"
-                                Background="{ThemeResource ControlFillColorDefaultBrush}"
-                                CornerRadius="15">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Grid Width="8" Height="8" VerticalAlignment="Center">
-                                        <Ellipse Fill="{ThemeResource SystemFillColorSuccessBrush}" Visibility="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                        <Ellipse Fill="{ThemeResource SystemFillColorCautionBrush}" Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                        <Ellipse Fill="{ThemeResource SystemFillColorNeutralBrush}" Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                    </Grid>
-                                    <TextBlock FontSize="13" Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
-                                    <FontIcon
-                                        FontSize="13"
-                                        Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}"
-                                        ToolTipService.ToolTip="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}"
-                                        Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                </StackPanel>
-                                <Button.Flyout>
-                                    <Flyout>
-                                        <StackPanel MaxWidth="340" Spacing="8">
-                                            <TextBlock Text="{x:Bind ViewModel.ConnectionHelpText, Mode=OneWay}" TextWrapping="Wrap" />
-                                            <TextBlock
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                                Text="{x:Bind ViewModel.NetworkText, Mode=OneWay}"
-                                                TextWrapping="Wrap" />
-                                            <TextBlock
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                                Text="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}"
-                                                TextWrapping="Wrap" />
-                                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Fingerprint" />
-                                            <TextBlock
-                                                FontFamily="Consolas"
-                                                IsTextSelectionEnabled="True"
-                                                Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}"
-                                                TextWrapping="Wrap" />
-                                            <Button Click="Reconnect_Click" Content="Reconnect" />
-                                        </StackPanel>
-                                    </Flyout>
-                                </Button.Flyout>
-                            </Button>
+                            <!--  Everything the phone reports, one chip each; a chip appears once its value is known  -->
+                            <VariableSizedWrapGrid
+                                ItemHeight="36"
+                                ItemWidth="156"
+                                Orientation="Horizontal">
+                                <!--  Connection: click for details, the fingerprint and Reconnect  -->
+                                <Button
+                                    Width="148"
+                                    Height="30"
+                                    Padding="10,0"
+                                    HorizontalContentAlignment="Left"
+                                    AutomationProperties.Name="Connection details"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    CornerRadius="15">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Grid Width="8" Height="8" VerticalAlignment="Center">
+                                            <Ellipse Fill="{ThemeResource SystemFillColorSuccessBrush}" Visibility="{x:Bind ViewModel.IsDeviceConnected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                            <Ellipse Fill="{ThemeResource SystemFillColorCautionBrush}" Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                            <Ellipse Fill="{ThemeResource SystemFillColorNeutralBrush}" Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        </Grid>
+                                        <TextBlock FontSize="12" Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <Button.Flyout>
+                                        <Flyout>
+                                            <StackPanel MaxWidth="340" Spacing="8">
+                                                <TextBlock Text="{x:Bind ViewModel.ConnectionHelpText, Mode=OneWay}" TextWrapping="Wrap" />
+                                                <TextBlock
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                                    Text="{x:Bind ViewModel.NetworkText, Mode=OneWay}"
+                                                    TextWrapping="Wrap" />
+                                                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Fingerprint" />
+                                                <TextBlock
+                                                    FontFamily="Consolas"
+                                                    IsTextSelectionEnabled="True"
+                                                    Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}"
+                                                    TextWrapping="Wrap" />
+                                                <Button Click="Reconnect_Click" Content="Reconnect" />
+                                            </StackPanel>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
 
-                            <Border
-                                Style="{StaticResource ChipStyle}"
-                                ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
-                                Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="13" Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
-                                    <TextBlock FontSize="13" Text="{x:Bind BatteryChip(StatusViewModel.BatteryText, StatusViewModel.IsCharging), Mode=OneWay}" />
-                                </StackPanel>
-                            </Border>
+                                <Border Style="{StaticResource ChipStyle}" ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}" Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
+                                        <TextBlock FontSize="12" Text="{x:Bind BatteryChip(StatusViewModel.BatteryText, StatusViewModel.IsCharging), Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" ToolTipService.ToolTip="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}" Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}" />
+                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.WifiChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" ToolTipService.ToolTip="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}" Visibility="{x:Bind StatusViewModel.HasCell, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.CellGlyph, Mode=OneWay}" />
+                                        <TextBlock MaxWidth="104" FontSize="12" Text="{x:Bind StatusViewModel.CellChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasBluetooth, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="&#xE702;" Opacity="{x:Bind StatusViewModel.BluetoothOpacity, Mode=OneWay}" />
+                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.BluetoothChip, Mode=OneWay}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasRinger, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.RingerGlyph, Mode=OneWay}" />
+                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.RingerChip, Mode=OneWay}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasDnd, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="&#xE708;" />
+                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.DndChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasVolumeChip, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="&#xE995;" />
+                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.VolumeChip, Mode=OneWay}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasBrightnessChip, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="12" Glyph="&#xE706;" />
+                                        <TextBlock MaxWidth="104" FontSize="12" Text="{x:Bind StatusViewModel.BrightnessChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                            </VariableSizedWrapGrid>
                         </StackPanel>
 
                         <Rectangle
@@ -583,12 +624,12 @@
                             AutomationProperties.Name="Take photo with phone"
                             Click="TakePhoto_Click"
                             Style="{StaticResource ActionTileStyle}"
-                            ToolTipService.ToolTip="Take a photo on the phone; it lands on this PC's clipboard (Ctrl+Alt+C)">
+                            ToolTipService.ToolTip="Take a photo on the phone; it lands on this PC's clipboard (Ctrl+Alt+C). The corner button scans a document (Ctrl+Alt+D).">
                             <Grid>
                                 <Border Style="{StaticResource BadgeStyle}">
                                     <FontIcon FontSize="14" Glyph="&#xE722;" />
                                 </Border>
-                                <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Continuity camera" TextTrimming="CharacterEllipsis" />
+                                <TextBlock VerticalAlignment="Bottom" FontWeight="SemiBold" Text="Snap to PC" TextTrimming="CharacterEllipsis" />
                             </Grid>
                         </Button>
                         <Button
