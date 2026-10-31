@@ -131,7 +131,6 @@
                         HorizontalAlignment="Center"
                         Orientation="Horizontal"
                         Spacing="8">
-                        <HyperlinkButton Content="Source code" NavigateUri="https://github.com/InvictusVerse/veyro" />
                         <Button
                             Click="Next_Click"
                             Content="Get started"
