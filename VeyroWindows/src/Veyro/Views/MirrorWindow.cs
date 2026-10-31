@@ -38,7 +38,11 @@ public sealed class MirrorWindow : Window
     }
 
     private void OnSettingsChanged(AppSettings settings) =>
-        DispatcherQueue.TryEnqueue(_view.RefreshQuiet);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _view.RefreshQuiet();
+            _view.ApplyUiStyle();
+        });
 
     /// <param name="camera">ADR-067: the phone's camera ("&lt;phone&gt; - Veyro camera") instead of its screen.</param>
     public MirrorWindow(string peerId, string phoneName, string pcId, IPeerSessionRegistry sessions, ISettingsStore settings,

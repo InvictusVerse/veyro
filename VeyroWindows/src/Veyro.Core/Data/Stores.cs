@@ -62,8 +62,20 @@ public sealed record AppSettings(
     int WebcamWidth = 1280,
     int WebcamHeight = 720,
     int WebcamFps = 30,
-    bool WebcamMirror = false
+    bool WebcamMirror = false,
+    // ADR-074: "modern" (every phone action visible on Home, floating controls in the mirror and
+    // camera windows) or "classic" (the earlier layout with the More menu and a toolbar).
+    string UiStyle = AppUiStyle.Modern
 );
+
+/// <summary>ADR-074: the two PC layouts, switched in Settings &gt; General.</summary>
+public static class AppUiStyle
+{
+    public const string Modern = "modern";
+    public const string Classic = "classic";
+
+    public static bool IsClassic(AppSettings settings) => settings.UiStyle == Classic;
+}
 
 /// <summary>Whether a phone notification or message may pop up a toast now (Do not disturb).</summary>
 public static class NotificationQuiet

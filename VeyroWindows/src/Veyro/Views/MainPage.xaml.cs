@@ -59,6 +59,18 @@ public sealed partial class MainPage : Page
         ViewModel.OpenDeviceSettingsRequested += OnOpenDeviceSettings;
         ViewModel.PairRequested += OpenPairing;
         ViewModel.PropertyChanged += OnViewModelChanged;
+        VeyroContainer.Instance.SettingsStore.SettingsChanged += OnSettingsChanged;
+        ApplyUiStyle();
+    }
+
+    private void OnSettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(ApplyUiStyle);
+
+    /// <summary>ADR-074: Modern or Classic Home, at once.</summary>
+    private void ApplyUiStyle()
+    {
+        bool classic = AppUiStyle.IsClassic(VeyroContainer.Instance.SettingsStore.Current);
+        ClassicHomeHost.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
+        ModernHomeHost.Visibility = classic ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void Unsubscribe()
@@ -69,6 +81,7 @@ public sealed partial class MainPage : Page
         ViewModel.OpenDeviceSettingsRequested -= OnOpenDeviceSettings;
         ViewModel.PairRequested -= OpenPairing;
         ViewModel.PropertyChanged -= OnViewModelChanged;
+        VeyroContainer.Instance.SettingsStore.SettingsChanged -= OnSettingsChanged;
     }
 
     // A toast asked for a conversation: switch to the Messages tab (the view model selects the thread).
@@ -274,6 +287,9 @@ public sealed partial class MainPage : Page
     {
         double height = SideBar.ActualHeight;
         if (height > 0 && PaneCustomRoot.Height != height) PaneCustomRoot.Height = height;
+        // ADR-074: the Modern panel scrolls rather than leave no room for the notification feed.
+        double cap = Math.Max(300, height * 0.62);
+        if (height > 0 && ModernHomeHost.MaxHeight != cap) ModernHomeHost.MaxHeight = cap;
     }
 
     private void UpdatePaneVisuals(bool? isPaneOpen = null)

@@ -119,6 +119,34 @@
                         </Grid>
                     </Border>
 
+                    <!--  ADR-074: the new layout, or the earlier one; applies at once, no restart.  -->
+                    <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Appearance" />
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon VerticalAlignment="Center" Glyph="&#xE790;" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Layout" />
+                                <TextBlock Style="{StaticResource SettingsCardDescriptionStyle}" Text="Modern: every phone action on Home, floating controls in the mirror and camera windows. Classic: the earlier layout with the More menu and a toolbar." />
+                            </StackPanel>
+                            <ComboBox
+                                x:Name="UiStyleCombo"
+                                Grid.Column="2"
+                                Width="160"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Layout"
+                                Loaded="UiStyleCombo_Loaded"
+                                SelectionChanged="UiStyleCombo_SelectionChanged">
+                                <ComboBoxItem Content="Modern" Tag="modern" />
+                                <ComboBoxItem Content="Classic" Tag="classic" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
                     <TextBlock Style="{StaticResource SettingsSectionHeaderStyle}" Text="Received files" />
                     <Border Style="{StaticResource SettingsCardStyle}">
                         <Grid ColumnSpacing="16">

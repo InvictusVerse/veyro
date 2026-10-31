@@ -119,6 +119,22 @@ public sealed partial class SettingsPage : Page
         if (await dialog.ShowAsync() == ContentDialogResult.Primary) ViewModel.ResetIdentity();
     }
 
+    // ADR-074: Modern or Classic layout; Home and open mirror/camera windows follow at once.
+    private bool _loadingUiStyle;
+
+    private void UiStyleCombo_Loaded(object sender, RoutedEventArgs e)
+    {
+        _loadingUiStyle = true;
+        UiStyleCombo.SelectedIndex = AppUiStyle.IsClassic(VeyroContainer.Instance.SettingsStore.Current) ? 1 : 0;
+        _loadingUiStyle = false;
+    }
+
+    private async void UiStyleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingUiStyle || UiStyleCombo.SelectedItem is not ComboBoxItem { Tag: string style }) return;
+        await VeyroContainer.Instance.SettingsStore.UpdateAsync(s => s with { UiStyle = style });
+    }
+
     private void OpenDownloads_Click(object sender, RoutedEventArgs e)
     {
         string dir = ViewModel.DownloadDirectory;

@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Media;
 using Veyro.Core.Mirroring;
 using Veyro.Services;
 
@@ -44,6 +45,77 @@ public sealed partial class MirrorView : UserControl
             Unloaded += (_, _) => VeyroContainer.Instance.VirtualCamera.InUseChanged -= OnVcamInUse;
         }
         LoadSettings();
+        Toolbar.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(220) };
+        Toolbar.PointerEntered += (_, _) =>
+        {
+            _pointerOnBar = true;
+            ShowBar();
+        };
+        Toolbar.PointerExited += (_, _) => _pointerOnBar = false;
+        ApplyUiStyle();
+    }
+
+    // ── Layout (ADR-074) ─────────────────────────────────────────────────────────────
+
+    private bool _modern;
+    private bool _pointerOnBar;
+    private DispatcherQueueTimer? _barTimer;
+
+    /// <summary>
+    /// Modern: the controls float over the picture at the bottom and fade out 2.5 s after the
+    /// mouse stops (they stay while the pointer is on them or no picture shows). Classic: the
+    /// toolbar above the picture. Called again when the setting changes.
+    /// </summary>
+    public void ApplyUiStyle()
+    {
+        _modern = !AppUiStyle.IsClassic(_settings.Current);
+        Grid.SetRow(Toolbar, _modern ? 2 : 0);
+        Canvas.SetZIndex(Toolbar, _modern ? 10 : 0);
+        Toolbar.VerticalAlignment = _modern ? VerticalAlignment.Bottom : VerticalAlignment.Stretch;
+        Toolbar.HorizontalAlignment = _modern ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+        Toolbar.Margin = _modern ? new Thickness(0, 0, 0, 20) : new Thickness(0);
+        Toolbar.Padding = _modern ? new Thickness(10, 8, 10, 8) : new Thickness(8, 6, 8, 6);
+        Toolbar.CornerRadius = _modern ? new CornerRadius(12) : new CornerRadius(0);
+        Toolbar.BorderThickness = _modern ? new Thickness(1) : new Thickness(0, 0, 0, 1);
+        Toolbar.ColumnSpacing = _modern ? 6 : 4;
+        Toolbar.ColumnDefinitions[4].Width = _modern ? new GridLength(10) : new GridLength(1, GridUnitType.Star);
+        Toolbar.Background = (Brush)Application.Current.Resources[_modern ? "AcrylicInAppFillColorDefaultBrush" : "LayerFillColorDefaultBrush"];
+        Toolbar.Shadow = _modern ? new ThemeShadow() : null;
+        Toolbar.Translation = _modern ? new System.Numerics.Vector3(0, 0, 24) : System.Numerics.Vector3.Zero;
+        ShowBar();
+    }
+
+    private void ShowBar()
+    {
+        Toolbar.Opacity = 1;
+        Toolbar.IsHitTestVisible = true;
+        if (!_modern)
+        {
+            _barTimer?.Stop();
+            return;
+        }
+        _barTimer ??= CreateBarTimer();
+        _barTimer.Stop();
+        _barTimer.Start();
+    }
+
+    private DispatcherQueueTimer CreateBarTimer()
+    {
+        DispatcherQueueTimer timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(2.5);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) =>
+        {
+            if (!_modern) return;
+            if (_pointerOnBar || !_hasPicture || StatusPanel.Visibility == Visibility.Visible)
+            {
+                timer.Start();
+                return;
+            }
+            Toolbar.Opacity = 0;
+            Toolbar.IsHitTestVisible = false;
+        };
+        return timer;
     }
 
     // ── Virtual camera add-on (ADR-067) ──────────────────────────────────────────────
@@ -266,7 +338,11 @@ public sealed partial class MirrorView : UserControl
         if (_cleanView) CleanView = false;
     }
 
-    private void Root_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => ShowOverlayBriefly();
+    private void Root_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        ShowOverlayBriefly();
+        ShowBar();
+    }
 
     private void Root_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
