@@ -194,17 +194,12 @@
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
 
-                            <!--  Everything the phone reports, one chip each; a chip appears once its value is known  -->
-                            <VariableSizedWrapGrid
-                                ItemHeight="36"
-                                ItemWidth="156"
-                                Orientation="Horizontal">
-                                <!--  Connection: click for details, the fingerprint and Reconnect  -->
+                            <!--  As in Classic: connection, then one icon per reported value; details in each tooltip  -->
+                            <StackPanel Orientation="Horizontal" Spacing="14">
                                 <Button
-                                    Width="148"
                                     Height="30"
                                     Padding="10,0"
-                                    HorizontalContentAlignment="Left"
+                                    VerticalAlignment="Center"
                                     AutomationProperties.Name="Connection details"
                                     Background="{ThemeResource ControlFillColorDefaultBrush}"
                                     CornerRadius="15">
@@ -214,7 +209,7 @@
                                             <Ellipse Fill="{ThemeResource SystemFillColorCautionBrush}" Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                             <Ellipse Fill="{ThemeResource SystemFillColorNeutralBrush}" Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         </Grid>
-                                        <TextBlock FontSize="12" Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
+                                        <TextBlock VerticalAlignment="Center" FontSize="12" Text="{x:Bind ViewModel.ConnectionPillText, Mode=OneWay}" />
                                     </StackPanel>
                                     <Button.Flyout>
                                         <Flyout>
@@ -236,56 +231,51 @@
                                         </Flyout>
                                     </Button.Flyout>
                                 </Button>
-
-                                <Border Style="{StaticResource ChipStyle}" ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}" Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
-                                        <TextBlock FontSize="12" Text="{x:Bind BatteryChip(StatusViewModel.BatteryText, StatusViewModel.IsCharging), Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" ToolTipService.ToolTip="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}" Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}" />
-                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.WifiChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" ToolTipService.ToolTip="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}" Visibility="{x:Bind StatusViewModel.HasCell, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.CellGlyph, Mode=OneWay}" />
-                                        <TextBlock MaxWidth="104" FontSize="12" Text="{x:Bind StatusViewModel.CellChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasBluetooth, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="&#xE702;" Opacity="{x:Bind StatusViewModel.BluetoothOpacity, Mode=OneWay}" />
-                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.BluetoothChip, Mode=OneWay}" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasRinger, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="{x:Bind StatusViewModel.RingerGlyph, Mode=OneWay}" />
-                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.RingerChip, Mode=OneWay}" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasDnd, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="&#xE708;" />
-                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.DndChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasVolumeChip, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="&#xE995;" />
-                                        <TextBlock FontSize="12" Text="{x:Bind StatusViewModel.VolumeChip, Mode=OneWay}" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource ChipStyle}" Visibility="{x:Bind StatusViewModel.HasBrightnessChip, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontSize="12" Glyph="&#xE706;" />
-                                        <TextBlock MaxWidth="104" FontSize="12" Text="{x:Bind StatusViewModel.BrightnessChip, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </Border>
-                            </VariableSizedWrapGrid>
+                                <FontIcon
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="{x:Bind StatusViewModel.BluetoothLabel, Mode=OneWay}"
+                                    FontSize="16"
+                                    Glyph="&#xE702;"
+                                    Opacity="{x:Bind StatusViewModel.BluetoothOpacity, Mode=OneWay}"
+                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.BluetoothLabel, Mode=OneWay}"
+                                    Visibility="{x:Bind StatusViewModel.HasBluetooth, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <FontIcon
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}"
+                                    FontSize="16"
+                                    Glyph="{x:Bind StatusViewModel.WifiGlyph, Mode=OneWay}"
+                                    Opacity="{x:Bind StatusViewModel.WifiOpacity, Mode=OneWay}"
+                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.WifiLabel, Mode=OneWay}"
+                                    Visibility="{x:Bind StatusViewModel.HasWifi, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <FontIcon
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}"
+                                    FontSize="16"
+                                    Glyph="{x:Bind StatusViewModel.CellGlyph, Mode=OneWay}"
+                                    Opacity="{x:Bind StatusViewModel.CellOpacity, Mode=OneWay}"
+                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.CellLabel, Mode=OneWay}"
+                                    Visibility="{x:Bind StatusViewModel.HasCell, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <FontIcon
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
+                                    FontSize="16"
+                                    Glyph="&#xE708;"
+                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.DndLabel, Mode=OneWay}"
+                                    Visibility="{x:Bind StatusViewModel.IsDndOn, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <StackPanel
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    ToolTipService.ToolTip="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
+                                    Visibility="{x:Bind StatusViewModel.HasBattery, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{x:Bind StatusViewModel.BatteryText, Mode=OneWay}" />
+                                    <FontIcon
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="{x:Bind StatusViewModel.BatteryLabel, Mode=OneWay}"
+                                        FontSize="16"
+                                        Glyph="{x:Bind StatusViewModel.BatteryGlyph, Mode=OneWay}" />
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
 
                         <Rectangle
@@ -485,24 +475,6 @@
                                                     </StackPanel>
                                                 </ToggleButton>
                                             </Grid>
-                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Media volume" />
-                                            <Slider
-                                                AutomationProperties.Name="Phone media volume"
-                                                IsEnabled="{x:Bind StatusViewModel.CanVolume, Mode=OneWay}"
-                                                Maximum="100"
-                                                Minimum="0"
-                                                StepFrequency="1"
-                                                Value="{x:Bind StatusViewModel.ShownMediaVolume, Mode=OneWay}"
-                                                ValueChanged="Volume_ValueChanged" />
-                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Screen brightness" />
-                                            <Slider
-                                                AutomationProperties.Name="Phone screen brightness"
-                                                IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
-                                                Maximum="100"
-                                                Minimum="0"
-                                                StepFrequency="1"
-                                                Value="{x:Bind StatusViewModel.ShownBrightness, Mode=OneWay}"
-                                                ValueChanged="Brightness_ValueChanged" />
                                             <ToggleSwitch
                                                 Header="Automatic brightness"
                                                 IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
@@ -579,6 +551,24 @@
                             </ToggleButton>
                         </Grid>
 
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Media volume" />
+                                            <Slider
+                                                AutomationProperties.Name="Phone media volume"
+                                                IsEnabled="{x:Bind StatusViewModel.CanVolume, Mode=OneWay}"
+                                                Maximum="100"
+                                                Minimum="0"
+                                                StepFrequency="1"
+                                                Value="{x:Bind StatusViewModel.ShownMediaVolume, Mode=OneWay}"
+                                                ValueChanged="Volume_ValueChanged" />
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Screen brightness" />
+                                            <Slider
+                                                AutomationProperties.Name="Phone screen brightness"
+                                                IsEnabled="{x:Bind StatusViewModel.CanBrightness, Mode=OneWay}"
+                                                Maximum="100"
+                                                Minimum="0"
+                                                StepFrequency="1"
+                                                Value="{x:Bind StatusViewModel.ShownBrightness, Mode=OneWay}"
+                                                ValueChanged="Brightness_ValueChanged" />
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
