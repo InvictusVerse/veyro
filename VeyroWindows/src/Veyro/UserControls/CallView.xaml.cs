@@ -1,44 +1,26 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/CallView.xaml.cs, GPL-3.0.
-// Modified for Veyro.
 namespace Veyro.UserControls;
 
+/// <summary>The call card inside <see cref="Views.CallWindow"/>. All behaviour lives in <see cref="InCallViewModel"/>.</summary>
 public sealed partial class CallView : UserControl
 {
-    public CallWindowViewModel ViewModel { get; }
-
     public CallView(CallWindowViewModel viewModel)
     {
         ViewModel = viewModel;
         InitializeComponent();
     }
 
-    private async void Answer_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel.Call is { } call) await call.AnswerAsync();
-    }
+    public CallWindowViewModel ViewModel { get; }
 
-    private async void Decline_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel.Call is { } call) await call.DeclineAsync();
-    }
+    private void Answer_Click(object sender, RoutedEventArgs e) => Act(call => call.AnswerAsync());
+    private void Decline_Click(object sender, RoutedEventArgs e) => Act(call => call.DeclineAsync());
+    private void End_Click(object sender, RoutedEventArgs e) => Act(call => call.EndAsync());
+    private void Mute_Click(object sender, RoutedEventArgs e) => Act(call => call.ToggleMuteAsync());
+    private void Hold_Click(object sender, RoutedEventArgs e) => Act(call => call.ToggleHoldAsync());
+    private void Audio_Click(object sender, RoutedEventArgs e) => Act(call => call.SwitchAudioAsync());
 
-    private async void End_Click(object sender, RoutedEventArgs e)
+    /// <summary>Runs an action on the call being shown. The view model reports failures itself.</summary>
+    private async void Act(Func<InCallViewModel, Task> action)
     {
-        if (ViewModel.Call is { } call) await call.EndAsync();
-    }
-
-    private async void Mute_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel.Call is { } call) await call.ToggleMuteAsync();
-    }
-
-    private async void Hold_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel.Call is { } call) await call.ToggleHoldAsync();
-    }
-
-    private async void Audio_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel.Call is { } call) await call.SwitchAudioAsync();
+        if (ViewModel.Call is { } call) await action(call);
     }
 }

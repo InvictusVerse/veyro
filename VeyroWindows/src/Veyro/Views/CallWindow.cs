@@ -1,16 +1,19 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/WindowViews/CallWindow.xaml.cs, GPL-3.0.
-// Modified for Veyro.
+using System.Runtime.InteropServices;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml.Media;
 using Veyro.UserControls;
 
 namespace Veyro.Views;
 
-/// <summary>Small always-on-top window for a Bluetooth call with audio on this PC (ADR-029).</summary>
+/// <summary>
+/// The small window for a Bluetooth call whose audio plays on this PC (ADR-029). It stays above
+/// other windows, cannot be resized and shows <see cref="CallView"/>.
+/// </summary>
 public sealed class CallWindow : Window
 {
-    private const int WindowWidth = 380;
-    private const int WindowHeight = 210;
+    /// <summary>Size of the content area in device-independent pixels.</summary>
+    private const int ContentWidth = 400;
+    private const int ContentHeight = 190;
 
     public CallWindow(CallWindowViewModel viewModel, IAppThemeModeService theme)
     {
@@ -19,12 +22,34 @@ public sealed class CallWindow : Window
         Content = new CallView(viewModel);
 
         OverlappedPresenter presenter = AppWindow.Presenter as OverlappedPresenter ?? OverlappedPresenter.Create();
+        presenter.IsAlwaysOnTop = true;
         presenter.IsResizable = false;
         presenter.IsMaximizable = false;
         presenter.IsMinimizable = true;
-        presenter.IsAlwaysOnTop = true;
         AppWindow.SetPresenter(presenter);
-        AppWindow.Resize(new global::Windows.Graphics.SizeInt32(WindowWidth, WindowHeight));
+
+        double scale = DisplayScale();
+        AppWindow.ResizeClient(new global::Windows.Graphics.SizeInt32(
+            (int)Math.Round(ContentWidth * scale), (int)Math.Round(ContentHeight * scale)));
+
         theme.ApplyTheme(this, theme.CurrentTheme);
     }
+
+    /// <summary>The window's display scale (1.0 at 100%). AppWindow sizes are in physical pixels.</summary>
+    private double DisplayScale()
+    {
+        try
+        {
+            uint dpi = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+            if (dpi > 0) return dpi / 96.0;
+        }
+        catch (Exception)
+        {
+            // Fall back to 100%: a slightly small window is better than none.
+        }
+        return 1.0;
+    }
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

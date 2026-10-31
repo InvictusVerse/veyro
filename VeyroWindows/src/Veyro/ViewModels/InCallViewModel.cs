@@ -1,53 +1,68 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/ViewModels/CallSessionViewModel.cs
-// and src/Sefirah/ViewModels/CallWindowViewModel.cs, GPL-3.0.
-// Modified for Veyro.
 using Veyro.Core.Diagnostics;
 
 namespace Veyro.ViewModels;
 
 /// <summary>
-/// One Bluetooth call in the in-call window (ADR-029): caller, duration, mute, hold, audio route,
-/// answer/decline/end. Name and number prefer the phone's Wi-Fi callState. Never logged.
+/// What the in-call window shows for one Bluetooth call (ADR-029): who is calling, the call
+/// timer, and the answer, decline, end, hold, mute and audio route actions. The caller's name and
+/// number come from the phone's Wi-Fi call state when it has them, otherwise from the hands-free
+/// line. They are shown, never logged. Windows holds the real call state, so every property reads
+/// it again instead of keeping a copy.
 /// </summary>
 public sealed class InCallViewModel : BaseViewModel, IDisposable
 {
+    private static readonly string[] CallStateProperties =
+    [
+        nameof(Status), nameof(IsIncoming), nameof(IsNotIncoming), nameof(IsHeld), nameof(IsMuted),
+        nameof(HoldText), nameof(MuteText), nameof(AudioRouteText), nameof(AudioSwitchText)
+    ];
+
+    private static readonly string[] CallerProperties = [nameof(Title), nameof(Subtitle), nameof(HasSubtitle)];
+    private static readonly string[] ActionProperties = [nameof(CanHold), nameof(CanMute), nameof(CanSwitchAudio)];
+
     private readonly IBluetoothCall _call;
-    private readonly ICallService _calls;
+    private readonly ICallService _phoneCalls;
     private readonly string? _peerId;
-    private readonly DispatcherQueue? _dispatcher;
-    private readonly DispatcherQueueTimer? _timer;
-    private DateTimeOffset? _talkingSince;
+    private readonly DispatcherQueue? _uiThread;
+    private readonly DispatcherQueueTimer? _clock;
+    private DateTimeOffset? _connectedAt;
     private string _statusText = string.Empty;
     private string _errorText = string.Empty;
-    private bool _busy;
+    private bool _working;
     private bool _disposed;
 
-    public InCallViewModel(IBluetoothCall call, ICallService calls, string? peerId, DispatcherQueue? dispatcher)
+    /// <param name="call">The hands-free call this view model presents.</param>
+    /// <param name="phoneCalls">Source of the phone's Wi-Fi call state, used for the contact name.</param>
+    /// <param name="peerId">The Veyro device the hands-free phone is linked to, or null.</param>
+    /// <param name="uiThread">Queue of the UI thread. Null in tests, where everything runs inline.</param>
+    public InCallViewModel(IBluetoothCall call, ICallService phoneCalls, string? peerId, DispatcherQueue? uiThread)
     {
         _call = call;
-        _calls = calls;
+        _phoneCalls = phoneCalls;
         _peerId = peerId;
-        _dispatcher = dispatcher;
-        if (dispatcher is not null)
+        _uiThread = uiThread;
+
+        if (uiThread is not null)
         {
-            _timer = dispatcher.CreateTimer();
-            _timer.Interval = TimeSpan.FromSeconds(1);
-            _timer.IsRepeating = true;
-            _timer.Tick += (_, _) => RefreshStatus();
+            _clock = uiThread.CreateTimer();
+            _clock.Interval = TimeSpan.FromSeconds(1);
+            _clock.IsRepeating = true;
+            _clock.Tick += (_, _) => UpdateStatusText();
         }
-        _call.Changed += OnCallChanged;
-        _calls.Changed += OnWifiChanged;
-        Refresh();
+
+        _call.Changed += OnHandsFreeCallChanged;
+        _phoneCalls.Changed += OnPhoneCallChanged;
+        RefreshAll();
     }
 
-    /// <summary>Status changed on the UI thread; the window service re-evaluates visibility.</summary>
+    /// <summary>Raised on the UI thread after the call changed, so the window service can re-decide what to show.</summary>
     public event Action? StateChanged;
 
     public string CallId => _call.CallId;
     public BluetoothCallStatus Status => _call.Status;
 
-    public string Title => CallPresentation.Title(WifiCall, _call.Name, _call.Number);
-    public string Subtitle => CallPresentation.Subtitle(WifiCall, _call.Name, _call.Number) ?? string.Empty;
+    public string Title => CallPresentation.Title(PhoneSideCall, _call.Name, _call.Number);
+    public string Subtitle => CallPresentation.Subtitle(PhoneSideCall, _call.Name, _call.Number) ?? string.Empty;
     public bool HasSubtitle => Subtitle.Length > 0;
 
     public string StatusText
@@ -67,127 +82,125 @@ public sealed class InCallViewModel : BaseViewModel, IDisposable
 
     public bool HasError => _errorText.Length > 0;
 
-    public bool IsIncoming => _call.Status == BluetoothCallStatus.Incoming;
+    public bool IsIncoming => Status == BluetoothCallStatus.Incoming;
     public bool IsNotIncoming => !IsIncoming;
-    public bool IsHeld => _call.Status == BluetoothCallStatus.Held;
+    public bool IsHeld => Status == BluetoothCallStatus.Held;
     public bool IsMuted => _call.IsMuted;
-    public bool CanHold => !_busy && _call.Status is BluetoothCallStatus.Talking or BluetoothCallStatus.Held;
+
+    public bool CanHold => !_working && Status is BluetoothCallStatus.Talking or BluetoothCallStatus.Held;
     public bool CanMute => CanHold;
     public string HoldText => IsHeld ? "Resume" : "Hold";
     public string MuteText => IsMuted ? "Unmute" : "Mute";
 
-    public bool CanSwitchAudio => !_busy && !IsIncoming && _call.AudioRoute != CallAudioRoute.Unknown;
-    public string AudioRouteText => _call.AudioRoute == CallAudioRoute.Phone ? "Audio: phone" : "Audio: this PC";
-    public string AudioSwitchText => _call.AudioRoute == CallAudioRoute.Phone ? "Use this PC" : "Use phone";
+    public bool CanSwitchAudio => !_working && !IsIncoming && _call.AudioRoute != CallAudioRoute.Unknown;
+    public string AudioRouteText => OnPhone ? "Audio: phone" : "Audio: this PC";
+    public string AudioSwitchText => OnPhone ? "Use this PC" : "Use phone";
 
-    public Task AnswerAsync() => RunAsync(_call.AcceptAsync, "Could not answer the call.");
-    public Task DeclineAsync() => RunAsync(_call.RejectAsync, "Could not decline the call.");
-    public Task EndAsync() => RunAsync(_call.EndAsync, "Could not end the call.");
-    public Task ToggleHoldAsync() => RunAsync(IsHeld ? _call.ResumeAsync : _call.HoldAsync, "The phone did not change hold.");
-    public Task ToggleMuteAsync() => RunAsync(IsMuted ? _call.UnmuteAsync : _call.MuteAsync, "Could not change mute.");
+    public Task AnswerAsync() => PerformAsync(_call.AcceptAsync, "Could not answer the call.");
+    public Task DeclineAsync() => PerformAsync(_call.RejectAsync, "Could not decline the call.");
+    public Task EndAsync() => PerformAsync(_call.EndAsync, "Could not end the call.");
+    public Task ToggleHoldAsync() => PerformAsync(IsHeld ? _call.ResumeAsync : _call.HoldAsync, "The phone did not change hold.");
+    public Task ToggleMuteAsync() => PerformAsync(IsMuted ? _call.UnmuteAsync : _call.MuteAsync, "Could not change mute.");
 
     public Task SwitchAudioAsync()
     {
-        CallAudioRoute next = _call.AudioRoute == CallAudioRoute.Phone ? CallAudioRoute.ThisPc : CallAudioRoute.Phone;
-        return RunAsync(() => _call.SetAudioRouteAsync(next), "Could not move the call audio.");
+        CallAudioRoute target = OnPhone ? CallAudioRoute.ThisPc : CallAudioRoute.Phone;
+        return PerformAsync(() => _call.SetAudioRouteAsync(target), "Could not move the call audio.");
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _call.Changed -= OnCallChanged;
-        _calls.Changed -= OnWifiChanged;
-        _timer?.Stop();
+        _call.Changed -= OnHandsFreeCallChanged;
+        _phoneCalls.Changed -= OnPhoneCallChanged;
+        _clock?.Stop();
     }
 
-    private PhoneCall? WifiCall => _peerId is null ? null : _calls.GetCurrentCall(_peerId);
+    private bool OnPhone => _call.AudioRoute == CallAudioRoute.Phone;
 
-    private async Task RunAsync(Func<Task<bool>> operation, string failure)
+    private PhoneCall? PhoneSideCall => _peerId is null ? null : _phoneCalls.GetCurrentCall(_peerId);
+
+    private async Task PerformAsync(Func<Task<bool>> operation, string failureMessage)
     {
-        if (_busy) return;
-        SetBusy(true);
+        if (_working) return;
+        SetWorking(true);
         ErrorText = string.Empty;
         try
         {
-            if (!await operation()) ErrorText = failure;
+            if (!await operation()) ErrorText = failureMessage;
         }
         catch (Exception error)
         {
             VeyroTrace.Error("Bluetooth call operation failed", error);
-            ErrorText = failure;
+            ErrorText = failureMessage;
         }
         finally
         {
-            SetBusy(false);
+            SetWorking(false);
         }
     }
 
-    private void SetBusy(bool value)
+    private void SetWorking(bool working)
     {
-        _busy = value;
-        foreach (string name in new[] { nameof(CanHold), nameof(CanMute), nameof(CanSwitchAudio) }) OnPropertyChanged(name);
+        _working = working;
+        RaiseAll(ActionProperties);
     }
 
-    private void OnCallChanged() => Post(() =>
+    private void OnHandsFreeCallChanged() => RunOnUiThread(() =>
     {
-        Refresh();
+        RefreshAll();
         StateChanged?.Invoke();
     });
 
-    private void OnWifiChanged(CallChange change)
+    private void OnPhoneCallChanged(CallChange change)
     {
-        if (string.Equals(change.PeerId, _peerId, StringComparison.OrdinalIgnoreCase)) Post(RefreshCaller);
+        if (string.Equals(change.PeerId, _peerId, StringComparison.OrdinalIgnoreCase))
+            RunOnUiThread(() =>
+            {
+                if (!_disposed) RaiseAll(CallerProperties);
+            });
     }
 
-    private void Refresh()
+    private void RefreshAll()
     {
         if (_disposed) return;
-        RefreshCaller();
-        RefreshStatus();
-        foreach (string name in new[]
-                 {
-                     nameof(Status), nameof(IsIncoming), nameof(IsNotIncoming), nameof(IsHeld), nameof(IsMuted), nameof(CanHold),
-                     nameof(CanMute), nameof(HoldText), nameof(MuteText), nameof(CanSwitchAudio), nameof(AudioRouteText), nameof(AudioSwitchText)
-                 })
+        RaiseAll(CallerProperties);
+        RaiseAll(CallStateProperties);
+        RaiseAll(ActionProperties);
+        UpdateStatusText();
+    }
+
+    /// <summary>Shows the call state, and the running time while the call is connected.</summary>
+    private void UpdateStatusText()
+    {
+        if (_disposed) return;
+        if (Status == BluetoothCallStatus.Talking)
         {
-            OnPropertyChanged(name);
-        }
-    }
-
-    private void RefreshCaller()
-    {
-        if (_disposed) return;
-        OnPropertyChanged(nameof(Title));
-        OnPropertyChanged(nameof(Subtitle));
-        OnPropertyChanged(nameof(HasSubtitle));
-    }
-
-    private void RefreshStatus()
-    {
-        if (_disposed) return;
-        BluetoothCallStatus status = _call.Status;
-        if (status == BluetoothCallStatus.Talking)
-        {
-            _talkingSince ??= DateTimeOffset.UtcNow;
-            if (_timer is { IsRunning: false }) _timer.Start();
+            _connectedAt ??= DateTimeOffset.UtcNow;
+            if (_clock is { IsRunning: false }) _clock.Start();
         }
         else
         {
-            _timer?.Stop();
+            _clock?.Stop();
         }
-        TimeSpan? talking = _talkingSince is { } since ? DateTimeOffset.UtcNow - since : null;
-        StatusText = CallPresentation.StatusText(status, talking);
+        TimeSpan? elapsed = _connectedAt is { } start ? DateTimeOffset.UtcNow - start : null;
+        StatusText = CallPresentation.StatusText(Status, elapsed);
     }
 
-    private void Post(Action action)
+    private void RaiseAll(string[] propertyNames)
     {
-        if (_dispatcher is null || _dispatcher.HasThreadAccess) action();
-        else _dispatcher.TryEnqueue(() => action());
+        foreach (string name in propertyNames) OnPropertyChanged(name);
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        if (_uiThread is null || _uiThread.HasThreadAccess) action();
+        else _uiThread.TryEnqueue(() => action());
     }
 }
 
-/// <summary>What the in-call window shows: the current Bluetooth call, or nothing.</summary>
+/// <summary>Binding source of the in-call window: the call it currently shows, or none.</summary>
 public sealed class CallWindowViewModel : BaseViewModel
 {
     private InCallViewModel? _call;
