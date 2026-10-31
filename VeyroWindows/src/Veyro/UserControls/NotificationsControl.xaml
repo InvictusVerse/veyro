@@ -1,9 +1,10 @@
 <!--
-    Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/UserControls/NotificationsControl.xaml, GPL-3.0.
-    Modified for Veyro: items come from NotificationMirrorService (ADR-025); dismiss, reply and
-    actions go back to the phone. Pin, filter and open-app are not in Veyro's protocol, so they
-    are not offered. ADR-063: Copy code, a per-app pop-ups quick action, and an Earlier group
-    with what left the phone in the last 24 hours.
+    The phone's notifications in the sidebar (ADR-025, ADR-063).
+
+    Cards come from NotificationMirrorService. Dismiss, reply and the phone's own action buttons
+    go back to the phone. A card's small tools (pop-up rules, dismiss) show while the pointer is
+    on it or when one of them has keyboard focus. "Earlier" lists what left the phone in the last
+    24 hours; those cards are read-only and the list lives in memory only.
 -->
 <UserControl
     x:Class="Veyro.UserControls.NotificationsControl"
@@ -11,13 +12,26 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:converters="using:Veyro.Converters"
     xmlns:viewModels="using:Veyro.ViewModels">
+
     <UserControl.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <!--  One card for live and Earlier notifications; Earlier cards have no reply, actions or dismiss.  -->
-        <DataTemplate x:Key="NotificationCardTemplate" x:DataType="viewModels:NotificationItemViewModel">
+        <Style x:Key="CardToolButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Width" Value="22" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+
+        <Style x:Key="InlineTextButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+
+        <!--  One card for live and for Earlier notifications. Earlier ones have no tools, reply or actions.  -->
+        <DataTemplate x:Key="NotificationCard" x:DataType="viewModels:NotificationItemViewModel">
             <Border
-                Margin="0,0,0,8"
                 Padding="12"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -25,19 +39,14 @@
                 CornerRadius="8"
                 PointerEntered="Card_PointerEntered"
                 PointerExited="Card_PointerExited">
-                <Grid ColumnSpacing="12" RowSpacing="12">
+                <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
 
+                    <!--  App icon, or a round placeholder when the phone sent none  -->
                     <Grid
-                        Grid.Row="0"
-                        Grid.Column="0"
                         Width="40"
                         Height="40"
                         VerticalAlignment="Top">
@@ -49,63 +58,59 @@
                             Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                             CornerRadius="20"
                             Visibility="{x:Bind HasNoIcon, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <FontIcon FontSize="18" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE91C;" />
+                            <FontIcon
+                                FontSize="18"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Glyph="&#xE91C;" />
                         </Border>
                     </Grid>
 
-                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4">
+                    <StackPanel Grid.Column="1" Spacing="6">
+
+                        <!--  App name on the left; tools and time on the right  -->
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock
-                                Grid.Column="0"
                                 FontWeight="Medium"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Text="{x:Bind AppName, Mode=OneWay}"
                                 TextTrimming="CharacterEllipsis" />
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                                <!--  Hidden until hover, as in Sefirah; still reachable by keyboard.  -->
-                                <StackPanel
-                                    Opacity="0"
-                                    Orientation="Horizontal"
-                                    Spacing="4"
-                                    Tag="HoverActions">
-                                    <!--  ADR-063: Turn off / on pop-ups for this app.  -->
-                                    <Button
-                                        Width="20"
-                                        Height="20"
-                                        Padding="0"
-                                        AutomationProperties.Name="More options"
-                                        Background="Transparent"
-                                        BorderBrush="Transparent"
-                                        Click="More_Click"
-                                        GotFocus="HoverAction_GotFocus"
-                                        ToolTipService.ToolTip="More options"
-                                        Visibility="{x:Bind CanSetRules, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <FontIcon FontSize="10" Glyph="&#xE712;" />
-                                    </Button>
-                                    <Button
-                                        Width="20"
-                                        Height="20"
-                                        Padding="0"
-                                        AutomationProperties.Name="Dismiss on phone"
-                                        Background="Transparent"
-                                        BorderBrush="Transparent"
-                                        Click="Dismiss_Click"
-                                        GotFocus="HoverAction_GotFocus"
-                                        ToolTipService.ToolTip="Dismiss on phone"
-                                        Visibility="{x:Bind IsLive, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <FontIcon FontSize="10" Glyph="&#xE711;" />
-                                    </Button>
-                                </StackPanel>
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    HorizontalTextAlignment="End"
-                                    Text="{x:Bind TimeText, Mode=OneWay}" />
+                            <StackPanel
+                                x:Name="CardTools"
+                                Grid.Column="1"
+                                Opacity="0"
+                                Orientation="Horizontal"
+                                Spacing="2">
+                                <!--  ADR-063: turn pop-ups for this app off or on  -->
+                                <Button
+                                    AutomationProperties.Name="More options"
+                                    Click="CardMenu_Click"
+                                    GotFocus="CardTool_GotFocus"
+                                    Style="{StaticResource CardToolButtonStyle}"
+                                    ToolTipService.ToolTip="More options"
+                                    Visibility="{x:Bind CanSetRules, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <FontIcon FontSize="10" Glyph="&#xE712;" />
+                                </Button>
+                                <Button
+                                    AutomationProperties.Name="Dismiss on phone"
+                                    Click="CardDismiss_Click"
+                                    GotFocus="CardTool_GotFocus"
+                                    Style="{StaticResource CardToolButtonStyle}"
+                                    ToolTipService.ToolTip="Dismiss on phone"
+                                    Visibility="{x:Bind IsLive, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <FontIcon FontSize="10" Glyph="&#xE711;" />
+                                </Button>
                             </StackPanel>
+                            <TextBlock
+                                Grid.Column="2"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Text="{x:Bind TimeText, Mode=OneWay}" />
                         </Grid>
+
                         <TextBlock
                             FontWeight="SemiBold"
                             IsTextSelectionEnabled="True"
@@ -120,15 +125,10 @@
                             TextTrimming="CharacterEllipsis"
                             TextWrapping="Wrap"
                             Visibility="{x:Bind HasText, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                    </StackPanel>
 
-                    <StackPanel
-                        Grid.Row="1"
-                        Grid.Column="0"
-                        Grid.ColumnSpan="2"
-                        Spacing="8">
-                        <!--  ADR-063: only the code goes onto this PC's clipboard.  -->
+                        <!--  ADR-063: only the code itself goes onto this PC's clipboard  -->
                         <Button
+                            HorizontalAlignment="Left"
                             AutomationProperties.Name="Copy code"
                             Click="CopyCode_Click"
                             ToolTipService.ToolTip="Copy the code to this PC's clipboard"
@@ -138,13 +138,14 @@
                                 <TextBlock AutomationProperties.LiveSetting="Polite" Text="{x:Bind CopyCodeLabel, Mode=OneWay}" />
                             </StackPanel>
                         </Button>
+
+                        <!--  Inline reply (Enter sends)  -->
                         <Grid ColumnSpacing="4" Visibility="{x:Bind CanReply, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox
-                                Grid.Column="0"
                                 AutomationProperties.Name="Reply text"
                                 KeyDown="ReplyBox_KeyDown"
                                 MaxLength="4096"
@@ -153,13 +154,14 @@
                             <Button
                                 Grid.Column="1"
                                 AutomationProperties.Name="Send reply"
-                                Background="Transparent"
-                                BorderBrush="Transparent"
-                                Click="SendReply_Click"
+                                Click="ReplySend_Click"
+                                Style="{StaticResource InlineTextButtonStyle}"
                                 ToolTipService.ToolTip="Send">
                                 <FontIcon Glyph="&#xE724;" />
                             </Button>
                         </Grid>
+
+                        <!--  The phone's own action buttons  -->
                         <ItemsRepeater ItemsSource="{x:Bind Actions, Mode=OneWay}" Visibility="{x:Bind HasActions, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <ItemsRepeater.Layout>
                                 <StackLayout Orientation="Horizontal" Spacing="4" />
@@ -168,14 +170,14 @@
                                 <DataTemplate x:DataType="viewModels:NotificationActionItem">
                                     <Button
                                         MaxWidth="140"
-                                        Background="Transparent"
-                                        BorderBrush="Transparent"
-                                        Click="Action_Click">
+                                        Click="CardAction_Click"
+                                        Style="{StaticResource InlineTextButtonStyle}">
                                         <TextBlock Text="{x:Bind Label}" TextTrimming="CharacterEllipsis" />
                                     </Button>
                                 </DataTemplate>
                             </ItemsRepeater.ItemTemplate>
                         </ItemsRepeater>
+
                         <TextBlock
                             FontSize="12"
                             Foreground="{ThemeResource SystemFillColorCriticalBrush}"
@@ -192,15 +194,17 @@
                 </Grid>
             </Border>
         </DataTemplate>
+
     </UserControl.Resources>
 
-    <Grid>
+    <Grid RowSpacing="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="0,8,0,0" ColumnSpacing="8">
+        <!--  Header: title, Clear all, Do not disturb  -->
+        <Grid Margin="0,8,0,0" ColumnSpacing="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -212,7 +216,18 @@
                 FontWeight="SemiBold"
                 Text="Notifications"
                 TextTrimming="CharacterEllipsis" />
-            <!--  Do not disturb: notifications still arrive here, but pop up nothing.  -->
+
+            <!--  Clears the list here and dismisses the notifications on the phone too  -->
+            <HyperlinkButton
+                Grid.Column="1"
+                Padding="8,4"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="Clear all notifications on the phone"
+                Click="ClearAll_Click"
+                Content="Clear all"
+                Visibility="{x:Bind ViewModel.HasNotifications, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+            <!--  Do not disturb: notifications still arrive here, without pop-ups  -->
             <Button
                 x:Name="QuietButton"
                 Grid.Column="2"
@@ -244,39 +259,32 @@
                     </Flyout>
                 </Button.Flyout>
             </Button>
-            <!--  Phone Link's Clear all: dismisses them on the phone too.  -->
-            <HyperlinkButton
-                Grid.Column="1"
-                Padding="8,4"
-                VerticalAlignment="Center"
-                AutomationProperties.Name="Clear all notifications on the phone"
-                Click="ClearAll_Click"
-                Content="Clear all"
-                Visibility="{x:Bind ViewModel.HasNotifications, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
         </Grid>
 
+        <!--  The list: live cards, then the Earlier group  -->
         <ScrollViewer
             Grid.Row="1"
-            Margin="0,8,-14,0"
+            Margin="0,0,-14,0"
             Padding="0,0,14,0">
-            <StackPanel>
+            <StackPanel Spacing="8">
                 <ItemsRepeater
-                    ItemTemplate="{StaticResource NotificationCardTemplate}"
+                    ItemTemplate="{StaticResource NotificationCard}"
                     ItemsSource="{x:Bind ViewModel.Notifications, Mode=OneWay}"
                     VerticalCacheLength="6">
                     <ItemsRepeater.Layout>
-                        <StackLayout Orientation="Vertical" />
+                        <StackLayout Orientation="Vertical" Spacing="8" />
                     </ItemsRepeater.Layout>
                 </ItemsRepeater>
+
+                <!--  Only history, nothing current  -->
                 <TextBlock
-                    Margin="0,0,0,8"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Text="{x:Bind ViewModel.NoCurrentText, Mode=OneWay}"
                     TextWrapping="Wrap"
                     Visibility="{x:Bind ViewModel.HasOnlyHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                <!--  ADR-063: what left the phone in the last 24 hours, in memory only.  -->
-                <StackPanel Visibility="{x:Bind ViewModel.HasHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <!--  ADR-063: what left the phone in the last 24 hours, kept in memory only  -->
+                <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.HasHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <Grid Margin="0,8,0,0" ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -295,23 +303,24 @@
                             Content="Clear history" />
                     </Grid>
                     <TextBlock
-                        Margin="0,0,0,8"
+                        Margin="0,0,0,4"
                         FontSize="12"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                         Text="{x:Bind ViewModel.HistoryHelp}"
                         TextWrapping="Wrap" />
                     <ItemsRepeater
-                        ItemTemplate="{StaticResource NotificationCardTemplate}"
+                        ItemTemplate="{StaticResource NotificationCard}"
                         ItemsSource="{x:Bind ViewModel.History, Mode=OneWay}"
                         VerticalCacheLength="6">
                         <ItemsRepeater.Layout>
-                            <StackLayout Orientation="Vertical" />
+                            <StackLayout Orientation="Vertical" Spacing="8" />
                         </ItemsRepeater.Layout>
                     </ItemsRepeater>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>
 
+        <!--  Nothing at all to show  -->
         <StackPanel
             Grid.Row="1"
             Margin="16,24"
