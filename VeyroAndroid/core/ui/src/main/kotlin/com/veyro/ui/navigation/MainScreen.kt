@@ -1,6 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/main/MainScreen.kt, GPL-3.0.
-// Modified for Veyro.
-// The tab graph inside follows app/src/main/java/com/castle/sefirah/navigation/graphs/MainNavGraph.kt.
 package com.veyro.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -45,31 +43,41 @@ import com.veyro.ui.settings.SettingsScreen
 import com.veyro.ui.settings.SettingsViewModel
 import kotlin.reflect.KClass
 
-private data class NavigationItem(
-    val route: VeyroDestination,
-    val routeClass: KClass<*>,
-    val text: String,
-    val selectedIcon: @Composable () -> ImageVector,
-    val icon: @Composable () -> ImageVector,
+/** One entry of the bottom bar. The selected entry gets the filled icon, the others the outlined one. */
+private class Tab(
+    val destination: VeyroDestination,
+    val routeType: KClass<out VeyroDestination>,
+    val label: String,
+    val outlinedIcon: @Composable () -> ImageVector,
+    val filledIcon: @Composable () -> ImageVector,
 )
 
-// Sefirah animates its tab icons with animated vectors; Veyro swaps a filled and an outlined
-// glyph instead, which needs no extra Compose artifact (animation-graphics is not in the cache).
-private val navigationItems = listOf(
-    NavigationItem(VeyroDestination.Home, VeyroDestination.Home::class, "Home", { VeyroIcons.HomeFill }, { Icons.Outlined.Home }),
-    NavigationItem(VeyroDestination.Devices, VeyroDestination.Devices::class, "Devices", { VeyroIcons.Desktop }, { VeyroIcons.Desktop }),
-    NavigationItem(VeyroDestination.History, VeyroDestination.History::class, "History", { VeyroIcons.History }, { VeyroIcons.History }),
-    NavigationItem(VeyroDestination.Settings, VeyroDestination.Settings::class, "Settings", { VeyroIcons.SettingsFill }, { Icons.Outlined.Settings }),
+// Order matters: it is the left-to-right order of the bar and decides which way tab changes slide.
+// Devices and History have a single glyph, so both states use it.
+private val tabs = listOf(
+    Tab(VeyroDestination.Home, VeyroDestination.Home::class, "Home",
+        outlinedIcon = { Icons.Outlined.Home }, filledIcon = { VeyroIcons.HomeFill }),
+    Tab(VeyroDestination.Devices, VeyroDestination.Devices::class, "Devices",
+        outlinedIcon = { VeyroIcons.Desktop }, filledIcon = { VeyroIcons.Desktop }),
+    Tab(VeyroDestination.History, VeyroDestination.History::class, "History",
+        outlinedIcon = { VeyroIcons.History }, filledIcon = { VeyroIcons.History }),
+    Tab(VeyroDestination.Settings, VeyroDestination.Settings::class, "Settings",
+        outlinedIcon = { Icons.Outlined.Settings }, filledIcon = { VeyroIcons.SettingsFill }),
 )
+
+private fun NavDestination?.isInside(tab: Tab): Boolean =
+    this?.hierarchy?.any { it.hasRoute(tab.routeType) } == true
+
+private fun positionOf(destination: NavDestination): Int =
+    tabs.indexOfFirst { destination.isInside(it) }.coerceAtLeast(0)
 
 /**
- * The tabbed main screen: Home, Devices, History and Settings with Sefirah's top bar (search on
- * Devices), bottom bar and the "Add device" floating action button on Devices.
+ * The tabbed main screen: Home, Devices, History and Settings behind a bottom bar, with a top bar
+ * on every tab but Home (Devices adds search) and an "Add device" button on Devices.
  *
- * Veyro changes: a plain [NavigationBar] instead of the adaptive navigation suite (that artifact is
- * not in the Gradle cache), History kept as a fourth tab, no update check and no pull-to-refresh
- * here (Home owns its own). Pushed screens go through [rootNavController]; tab switches through
- * [homeNavController].
+ * Tab changes go through [homeNavController]; screens that are pushed over the tabs go through
+ * [rootNavController]. The transfer banner is not drawn here, [VeyroNavHost] floats it above
+ * everything.
  */
 @Composable
 internal fun MainScreen(
@@ -86,52 +94,32 @@ internal fun MainScreen(
     /** Send folder: the system folder picker, then straight to the chosen devices (ADR-064). */
     onSendFolder: ((deviceIds: List<String>) -> Unit)? = null,
 ) {
-    val backStackState by homeNavController.currentBackStackEntryAsState()
-    val currentDestination = backStackState?.destination
-    val selectedItem = navigationItems
-        .indexOfFirst { item -> currentDestination.isOn(item.routeClass) }
-        .takeIf { it >= 0 } ?: 0
-    val onDevices = navigationItems[selectedItem].route == VeyroDestination.Devices
-    // Home draws its own header (the round settings button), like Phone Link's app.
-    val onHome = navigationItems[selectedItem].route == VeyroDestination.Home
+    val currentEntry by homeNavController.currentBackStackEntryAsState()
+    val currentTab = tabs.firstOrNull { currentEntry?.destination.isInside(it) } ?: tabs.first()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    val openPage: (VeyroDestination) -> Unit = { rootNavController.navigate(it) }
+    val openTab: (VeyroDestination) -> Unit = { navigateToTab(homeNavController, it) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            if (!onHome) {
+            // Home draws its own header with the round settings button.
+            if (currentTab.destination != VeyroDestination.Home) {
                 AppTopBar(
-                    title = navigationItems[selectedItem].text,
-                    searchEnabled = onDevices,
+                    title = currentTab.label,
+                    searchEnabled = currentTab.destination == VeyroDestination.Devices,
                     searchPlaceholder = "Search devices",
                     searchQuery = searchQuery,
                     onSearchQueryChange = { searchQuery = it },
                 )
             }
         },
-        bottomBar = {
-            NavigationBar {
-                navigationItems.forEachIndexed { index, item ->
-                    val selected = index == selectedItem
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { navigateToTab(homeNavController, item.route) },
-                        icon = { Icon(if (selected) item.selectedIcon() else item.icon(), contentDescription = null) },
-                        label = { Text(text = item.text) },
-                    )
-                }
-            }
-        },
+        bottomBar = { TabBar(selectedTab = currentTab, onSelect = { openTab(it.destination) }) },
         floatingActionButton = {
-            if (onDevices) {
-                FloatingActionButton(
-                    onClick = { rootNavController.navigate(VeyroDestination.Pairing) },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ) {
-                    Icon(VeyroIcons.Add, contentDescription = "Add device")
-                }
+            if (currentTab.destination == VeyroDestination.Devices) {
+                AddDeviceButton(onClick = { openPage(VeyroDestination.Pairing) })
             }
         },
     ) { contentPadding ->
@@ -140,29 +128,25 @@ internal fun MainScreen(
             startDestination = VeyroDestination.Home,
             modifier = Modifier.padding(contentPadding),
             enterTransition = {
-                val from = tabIndex(initialState.destination)
-                val to = tabIndex(targetState.destination)
-                NavigationTransitions.enterTransition(isEnteringFromRight = to > from)
+                tabEnter(fromRight = positionOf(targetState.destination) > positionOf(initialState.destination))
             },
             exitTransition = {
-                val from = tabIndex(initialState.destination)
-                val to = tabIndex(targetState.destination)
-                NavigationTransitions.exitTransition(isExitingToRight = to < from)
+                tabExit(toRight = positionOf(targetState.destination) < positionOf(initialState.destination))
             },
-            popEnterTransition = { NavigationTransitions.rootPopEnterTransition(this) },
-            popExitTransition = { NavigationTransitions.rootPopExitTransition(this) },
+            popEnterTransition = { backEnter() },
+            popExitTransition = { backExit() },
         ) {
             composable<VeyroDestination.Home> {
                 HomeScreen(
                     viewModel = homeViewModel,
-                    onOpenSettings = { navigateToTab(homeNavController, VeyroDestination.Settings) },
-                    onPcSettings = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
-                    onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
+                    onOpenSettings = { openTab(VeyroDestination.Settings) },
+                    onPcSettings = { openPage(VeyroDestination.DeviceSettings(it.value)) },
+                    onAddDevice = { openPage(VeyroDestination.Pairing) },
                     onSendFiles = { ids -> onSendFiles(ids.map { it.value }) },
-                    onOpenHistory = { navigateToTab(homeNavController, VeyroDestination.History) },
-                    onOpenClipboard = { rootNavController.navigate(VeyroDestination.Clipboard) },
+                    onOpenHistory = { openTab(VeyroDestination.History) },
+                    onOpenClipboard = { openPage(VeyroDestination.Clipboard) },
                     onFixLocalNetwork = onFixLocalNetwork,
-                    onOpenKeepConnected = { rootNavController.navigate(VeyroDestination.KeepConnected) },
+                    onOpenKeepConnected = { openPage(VeyroDestination.KeepConnected) },
                     onSendFolder = onSendFolder?.let { send -> { ids: List<DeviceId> -> send(ids.map { it.value }) } },
                 )
             }
@@ -172,46 +156,68 @@ internal fun MainScreen(
                     homeViewModel = homeViewModel,
                     devicesViewModel = devicesViewModel,
                     searchQuery = searchQuery,
-                    onDeviceClick = { rootNavController.navigate(VeyroDestination.DeviceSettings(it.value)) },
-                    onAddDevice = { rootNavController.navigate(VeyroDestination.Pairing) },
+                    onDeviceClick = { openPage(VeyroDestination.DeviceSettings(it.value)) },
+                    onAddDevice = { openPage(VeyroDestination.Pairing) },
                     onSendFiles = { onSendFiles(listOf(it.value)) },
                     onSendFolder = onSendFolder?.let { send -> { id: DeviceId -> send(listOf(id.value)) } },
                 )
             }
 
             composable<VeyroDestination.History> {
-                HistoryScreen(
-                    viewModel = viewModel<HistoryViewModel>(factory = viewModelFactory),
-                )
+                HistoryScreen(viewModel = viewModel<HistoryViewModel>(factory = viewModelFactory))
             }
 
             composable<VeyroDestination.Settings> {
                 SettingsScreen(
                     viewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
-                    onOpenDevices = { navigateToTab(homeNavController, VeyroDestination.Devices) },
+                    onOpenDevices = { openTab(VeyroDestination.Devices) },
                     onRequestMessagingPermissions = onRequestMessagingPermissions,
-                    onOpenKeepConnected = { rootNavController.navigate(VeyroDestination.KeepConnected) },
+                    onOpenKeepConnected = { openPage(VeyroDestination.KeepConnected) },
                 )
             }
         }
     }
 }
 
-private fun NavDestination?.isOn(routeClass: KClass<*>): Boolean =
-    this?.let { dest -> generateSequence(dest) { it.parent }.any { it.hasRoute(routeClass) } } == true
+@Composable
+private fun TabBar(selectedTab: Tab, onSelect: (Tab) -> Unit) {
+    NavigationBar {
+        for (tab in tabs) {
+            val selected = tab === selectedTab
+            NavigationBarItem(
+                selected = selected,
+                onClick = { onSelect(tab) },
+                icon = {
+                    Icon(
+                        imageVector = if (selected) tab.filledIcon() else tab.outlinedIcon(),
+                        contentDescription = null,
+                    )
+                },
+                label = { Text(text = tab.label) },
+            )
+        }
+    }
+}
 
-private fun tabIndex(destination: NavDestination): Int =
-    navigationItems.indexOfFirst { destination.isOn(it.routeClass) }.coerceAtLeast(0)
+@Composable
+private fun AddDeviceButton(onClick: () -> Unit) {
+    FloatingActionButton(
+        onClick = onClick,
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    ) {
+        Icon(VeyroIcons.Add, contentDescription = "Add device")
+    }
+}
 
 /**
- * Tab switches pop to the start destination with saveState/restoreState and launchSingleTop, so
- * switching away and back neither rebuilds a tab nor stacks duplicates.
+ * Switches to a tab without growing the back stack: it pops back to the start destination,
+ * saving the tab being left and restoring the one being opened, and never duplicates the top
+ * entry. A tab keeps its scroll position and state when you come back to it.
  */
 internal fun navigateToTab(navController: NavController, route: VeyroDestination) {
     navController.navigate(route) {
-        popUpTo(navController.graph.findStartDestination().id) {
-            saveState = true
-        }
+        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
     }

@@ -1,57 +1,40 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/navigation/transitions/NavigationTransitions.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.navigation
 
 import androidx.compose.animation.AnimatedContentTransitionScope
-import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 
-/** Slide-and-fade transitions for tab switches and pushed screens. Veyro change: internal. */
-internal object NavigationTransitions {
-    private const val ANIMATION_DURATION = 400
+// Every screen change in the app is a horizontal slide combined with a fade of the same length.
+private const val SLIDE_FADE_MS = 400
 
-    fun enterTransition(
-        isEnteringFromRight: Boolean,
-        durationMillis: Int = ANIMATION_DURATION
-    ) = slideInHorizontally(
-        animationSpec = tween(durationMillis),
-        initialOffsetX = { fullWidth -> if (isEnteringFromRight) fullWidth else -fullWidth }
-    ) + fadeIn(tween(durationMillis))
+// Stack navigation (pushed screens): the new screen enters from the right edge and the old one
+// leaves to the left. Going back plays the same motion mirrored.
 
-    fun exitTransition(
-        isExitingToRight: Boolean,
-        durationMillis: Int = ANIMATION_DURATION
-    ) = slideOutHorizontally(
-        animationSpec = tween(durationMillis),
-        targetOffsetX = { fullWidth -> if (isExitingToRight) fullWidth else -fullWidth }
-    ) + fadeOut(tween(durationMillis))
+internal fun AnimatedContentTransitionScope<*>.pushEnter(): EnterTransition =
+    slideIntoContainer(SlideDirection.Left, tween(SLIDE_FADE_MS)) + fadeIn(tween(SLIDE_FADE_MS))
 
-    // For root level transitions
-    fun rootEnterTransition(scope: AnimatedContentTransitionScope<*>) =
-        scope.slideIntoContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Left,
-            animationSpec = tween(ANIMATION_DURATION)
-        ) + fadeIn(animationSpec = tween(ANIMATION_DURATION))
+internal fun AnimatedContentTransitionScope<*>.pushExit(): ExitTransition =
+    slideOutOfContainer(SlideDirection.Left, tween(SLIDE_FADE_MS)) + fadeOut(tween(SLIDE_FADE_MS))
 
-    fun rootExitTransition(scope: AnimatedContentTransitionScope<*>) =
-        scope.slideOutOfContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Left,
-            animationSpec = tween(ANIMATION_DURATION)
-        ) + fadeOut(animationSpec = tween(ANIMATION_DURATION))
+internal fun AnimatedContentTransitionScope<*>.backEnter(): EnterTransition =
+    slideIntoContainer(SlideDirection.Right, tween(SLIDE_FADE_MS)) + fadeIn(tween(SLIDE_FADE_MS))
 
-    fun rootPopEnterTransition(scope: AnimatedContentTransitionScope<*>) =
-        scope.slideIntoContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Right,
-            animationSpec = tween(ANIMATION_DURATION)
-        ) + fadeIn(animationSpec = tween(ANIMATION_DURATION))
+internal fun AnimatedContentTransitionScope<*>.backExit(): ExitTransition =
+    slideOutOfContainer(SlideDirection.Right, tween(SLIDE_FADE_MS)) + fadeOut(tween(SLIDE_FADE_MS))
 
-    fun rootPopExitTransition(scope: AnimatedContentTransitionScope<*>) =
-        scope.slideOutOfContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Right,
-            animationSpec = tween(ANIMATION_DURATION)
-        ) + fadeOut(animationSpec = tween(ANIMATION_DURATION))
-}
+// Tab switching: tabs are siblings, so the direction follows their order in the bottom bar and
+// the caller says which side the movement comes from or goes to.
+
+internal fun tabEnter(fromRight: Boolean): EnterTransition =
+    slideInHorizontally(tween(SLIDE_FADE_MS)) { width -> if (fromRight) width else -width } +
+        fadeIn(tween(SLIDE_FADE_MS))
+
+internal fun tabExit(toRight: Boolean): ExitTransition =
+    slideOutHorizontally(tween(SLIDE_FADE_MS)) { width -> if (toRight) width else -width } +
+        fadeOut(tween(SLIDE_FADE_MS))

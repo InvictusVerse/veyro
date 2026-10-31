@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/presentation/src/main/java/sefirah/presentation/components/AppTopBar.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.navigation
 
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -17,11 +15,12 @@ import androidx.compose.runtime.setValue
 import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
- * The tab screens' top bar: the tab's name, and on Devices a search action that turns the title
- * into a search field.
+ * Top bar of a tab. It shows the tab's name; where [searchEnabled] is set it also offers a search
+ * action that swaps the name for a [SearchField].
  *
- * Veyro changes: the query is hoisted (the host owns it, so it survives tab switches) and is
- * cleared when the search closes; search is offered only where there is a list to filter.
+ * The text typed is owned by the caller ([searchQuery]), so it is not lost when the bar leaves
+ * composition on another tab. Closing the field with its arrow or the Back gesture clears it;
+ * the keyboard's search key closes the field but keeps the filter applied.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,47 +31,46 @@ internal fun AppTopBar(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
 ) {
-    var active by rememberSaveable { mutableStateOf(false) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    val fieldVisible = searchOpen && searchEnabled
+
+    val closeAndClear: () -> Unit = {
+        onSearchQueryChange("")
+        searchOpen = false
+    }
 
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
             titleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ),
         title = {
-            if (!active || !searchEnabled) {
-                Text(text = title)
-            } else {
-                SearchBar(
+            if (fieldVisible) {
+                SearchField(
                     query = searchQuery,
                     onQueryChange = onSearchQueryChange,
-                    onSearch = { active = false },
-                    active = active,
-                    onActiveChange = {
-                        active = it
-                        if (!it) onSearchQueryChange("")
-                    },
-                    placeholder = { Text(text = searchPlaceholder) },
+                    onSubmit = { searchOpen = false },
+                    onClose = closeAndClear,
+                    placeholder = searchPlaceholder,
                     leadingIcon = {
-                        IconButton(onClick = {
-                            onSearchQueryChange("")
-                            active = false
-                        }) {
+                        IconButton(onClick = closeAndClear) {
                             Icon(VeyroIcons.ArrowBack, contentDescription = "Close search")
                         }
                     },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
+                    trailingIcon = if (searchQuery.isEmpty()) null else {
+                        {
                             IconButton(onClick = { onSearchQueryChange("") }) {
                                 Icon(VeyroIcons.Clear, contentDescription = "Clear search")
                             }
                         }
                     },
                 )
+            } else {
+                Text(text = title)
             }
         },
         actions = {
-            if (!active && searchEnabled) {
-                IconButton(onClick = { active = true }) {
+            if (searchEnabled && !searchOpen) {
+                IconButton(onClick = { searchOpen = true }) {
                     Icon(VeyroIcons.Search, contentDescription = "Search")
                 }
             }
