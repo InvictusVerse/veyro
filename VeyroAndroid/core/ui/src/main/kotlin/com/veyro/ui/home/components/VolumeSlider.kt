@@ -1,17 +1,17 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/home/components/VolumeSlider.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.home.components
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,9 +28,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -38,81 +35,79 @@ import com.veyro.core.designsystem.icons.VeyroIcons
 import kotlin.math.round
 
 /**
- * Volume 0..100 with a mute button and a pill thumb that shows the percentage while dragged.
+ * A mute button next to a 0..100 slider whose thumb is a thin pill. While the finger is down the
+ * pill carries a small label with the current percentage.
  *
- * Veyro change: [onVolumeChange] fires when the drag ends rather than on every step, so a drag
- * sends one `mediaCmd` over the link instead of up to a hundred.
+ * [onLevelSet] is called once, when the finger lifts, not for every step along the way: a drag
+ * then costs one `mediaCmd` on the link instead of up to a hundred.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun VolumeSlider(
-    volume: Float,
-    isMuted: Boolean,
-    onVolumeChange: (Float) -> Unit,
-    toggleMute: () -> Unit,
+    level: Float,
+    muted: Boolean,
+    onLevelSet: (Float) -> Unit,
+    onToggleMute: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var sliderPosition by remember { mutableFloatStateOf(volume) }
-    val interactionSource: MutableInteractionSource = remember { MutableInteractionSource() }
+    var handleLevel by remember { mutableFloatStateOf(level) }
+    val touches = remember { MutableInteractionSource() }
+    val pressed by touches.collectIsPressedAsState()
+    val dragged by touches.collectIsDraggedAsState()
+    val touching = pressed || dragged
 
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val isDragged by interactionSource.collectIsDraggedAsState()
-    val isInteracting = isPressed || isDragged
-
-    LaunchedEffect(volume) {
-        if (!isInteracting) sliderPosition = volume
+    // Follow the level the PC reports, but never move the thumb away from the finger.
+    LaunchedEffect(level) {
+        if (!touching) handleLevel = level
     }
 
     Row(
-        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
             .padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = toggleMute) {
+        IconButton(onClick = onToggleMute) {
             Icon(
-                imageVector = if (isMuted) VeyroIcons.VolumeOff else VeyroIcons.VolumeUp,
-                contentDescription = if (isMuted) "Unmute" else "Mute",
+                imageVector = if (muted) VeyroIcons.VolumeOff else VeyroIcons.VolumeUp,
+                contentDescription = if (muted) "Unmute" else "Mute",
                 tint = MaterialTheme.colorScheme.surfaceTint,
                 modifier = Modifier.size(24.dp),
             )
         }
         Slider(
-            value = sliderPosition,
-            onValueChange = { newValue -> sliderPosition = round(newValue) },
-            onValueChangeFinished = { onVolumeChange(sliderPosition) },
-            interactionSource = interactionSource,
+            value = handleLevel,
+            onValueChange = { handleLevel = round(it) },
+            onValueChangeFinished = { onLevelSet(handleLevel) },
             valueRange = 0f..100f,
+            interactionSource = touches,
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 8.dp)
                 .semantics { contentDescription = "Volume" },
             thumb = {
-                val density = LocalDensity.current
-                val thumbWidthDp = 6.dp
-                val thumbHeightDp = 28.dp
-                val thumbWidthPx = with(density) { thumbWidthDp.toPx() }
-                val thumbHeightPx = with(density) { thumbHeightDp.toPx() }
-                val primaryColor = MaterialTheme.colorScheme.primary
-
-                Label(
-                    label = {
-                        PlainTooltip(modifier = Modifier.sizeIn(45.dp, 25.dp).wrapContentWidth()) {
-                            Text("${sliderPosition.toInt()}%")
-                        }
-                    },
-                    interactionSource = interactionSource,
-                    isPersistent = isInteracting,
-                ) {
-                    Canvas(modifier = Modifier.size(thumbWidthDp, thumbHeightDp)) {
-                        drawRoundRect(
-                            color = primaryColor,
-                            size = Size(thumbWidthPx, thumbHeightPx),
-                            cornerRadius = CornerRadius(thumbWidthPx / 2f),
-                        )
-                    }
-                }
+                PercentThumb(percent = handleLevel.toInt(), touches = touches, labelPinned = touching)
             },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PercentThumb(percent: Int, touches: MutableInteractionSource, labelPinned: Boolean) {
+    Label(
+        label = {
+            PlainTooltip(modifier = Modifier.sizeIn(45.dp, 25.dp).wrapContentWidth()) {
+                Text("$percent%")
+            }
+        },
+        interactionSource = touches,
+        isPersistent = labelPinned,
+    ) {
+        Box(
+            Modifier
+                .size(width = 6.dp, height = 28.dp)
+                .background(MaterialTheme.colorScheme.primary, CircleShape),
         )
     }
 }
