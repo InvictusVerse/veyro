@@ -1,52 +1,38 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Platforms/Windows/Calling/PhoneCall.cs, GPL-3.0.
-// Modified for Veyro.
 using Veyro.Core.Diagnostics;
 using Windows.ApplicationModel.Calls;
-using WinRTPhoneCall = Windows.ApplicationModel.Calls.PhoneCall;
+using Windows.Foundation;
+using WinRtCall = Windows.ApplicationModel.Calls.PhoneCall;
 
 namespace Veyro.Platform.Calling;
 
 /// <summary>
-/// Thin wrapper over a WinRT <see cref="WinRTPhoneCall"/> on the Bluetooth hands-free line
-/// (ADR-029). Number and name come from <c>PhoneCallInfo</c> and are never logged.
+/// One call on the Bluetooth hands-free line (ADR-029), backed by a
+/// <c>Windows.ApplicationModel.Calls.PhoneCall</c>. Status, mute and audio route are always read
+/// from the Windows object, so they stay current without a local copy. The caller's number and
+/// name are read once when the call is opened. They are user data and never logged.
 /// </summary>
 internal sealed class BluetoothCall : IBluetoothCall
 {
-    private readonly WinRTPhoneCall _call;
-    private bool _disposed;
+    private readonly WinRtCall _native;
+    private int _released;
 
-    private BluetoothCall(WinRTPhoneCall call, string? number, string? name)
+    private BluetoothCall(WinRtCall native, string? number, string? name)
     {
-        _call = call;
+        _native = native;
         Number = number;
         Name = name;
-        _call.StatusChanged += OnChanged;
-        _call.AudioDeviceChanged += OnChanged;
-        _call.IsMutedChanged += OnChanged;
+        _native.StatusChanged += OnNativeChanged;
+        _native.AudioDeviceChanged += OnNativeChanged;
+        _native.IsMutedChanged += OnNativeChanged;
     }
 
-    public static async Task<BluetoothCall> CreateAsync(WinRTPhoneCall call)
-    {
-        string? number = null, name = null;
-        try
-        {
-            PhoneCallInfo info = await call.GetPhoneCallInfoAsync();
-            number = string.IsNullOrWhiteSpace(info.PhoneNumber) ? null : info.PhoneNumber;
-            name = string.IsNullOrWhiteSpace(info.DisplayName) || info.DisplayName == info.PhoneNumber ? null : info.DisplayName;
-        }
-        catch (Exception error)
-        {
-            VeyroTrace.Error("Reading Bluetooth call info failed", error);
-        }
-        return new BluetoothCall(call, number, name);
-    }
-
-    public string CallId => _call.CallId;
+    public string CallId => _native.CallId;
     public string? Number { get; }
     public string? Name { get; }
-    public BluetoothCallStatus Status => Map(_call.Status);
-    public bool IsMuted => _call.IsMuted;
-    public CallAudioRoute AudioRoute => _call.AudioDevice switch
+    public BluetoothCallStatus Status => StatusOf(_native.Status);
+    public bool IsMuted => _native.IsMuted;
+
+    public CallAudioRoute AudioRoute => _native.AudioDevice switch
     {
         PhoneCallAudioDevice.LocalDevice => CallAudioRoute.ThisPc,
         PhoneCallAudioDevice.RemoteDevice => CallAudioRoute.Phone,
@@ -55,44 +41,55 @@ internal sealed class BluetoothCall : IBluetoothCall
 
     public event Action? Changed;
 
-    public async Task<bool> AcceptAsync() => Ok(await _call.AcceptIncomingAsync());
-    public async Task<bool> RejectAsync() => Ok(await _call.RejectIncomingAsync());
-    public async Task<bool> EndAsync() => Ok(await _call.EndAsync());
-    public async Task<bool> HoldAsync() => Ok(await _call.HoldAsync());
-    public async Task<bool> ResumeAsync() => Ok(await _call.ResumeFromHoldAsync());
-    public async Task<bool> MuteAsync() => Ok(await _call.MuteAsync());
-    public async Task<bool> UnmuteAsync() => Ok(await _call.UnmuteAsync());
-
-    public async Task<bool> SetAudioRouteAsync(CallAudioRoute route)
+    /// <summary>Reads the caller details from Windows and starts listening for changes.</summary>
+    public static async Task<BluetoothCall> OpenAsync(WinRtCall native)
     {
-        PhoneCallAudioDevice device = route switch
+        string? number = null;
+        string? name = null;
+        try
+        {
+            PhoneCallInfo info = await native.GetPhoneCallInfoAsync();
+            number = NullIfBlank(info.PhoneNumber);
+            // Windows repeats the number as the display name when it knows no contact.
+            name = info.DisplayName == info.PhoneNumber ? null : NullIfBlank(info.DisplayName);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Reading Bluetooth call info failed", error);
+        }
+        return new BluetoothCall(native, number, name);
+    }
+
+    public Task<bool> AcceptAsync() => CompleteAsync(_native.AcceptIncomingAsync());
+    public Task<bool> RejectAsync() => CompleteAsync(_native.RejectIncomingAsync());
+    public Task<bool> EndAsync() => CompleteAsync(_native.EndAsync());
+    public Task<bool> HoldAsync() => CompleteAsync(_native.HoldAsync());
+    public Task<bool> ResumeAsync() => CompleteAsync(_native.ResumeFromHoldAsync());
+    public Task<bool> MuteAsync() => CompleteAsync(_native.MuteAsync());
+    public Task<bool> UnmuteAsync() => CompleteAsync(_native.UnmuteAsync());
+
+    public Task<bool> SetAudioRouteAsync(CallAudioRoute route)
+    {
+        PhoneCallAudioDevice target = route switch
         {
             CallAudioRoute.ThisPc => PhoneCallAudioDevice.LocalDevice,
             CallAudioRoute.Phone => PhoneCallAudioDevice.RemoteDevice,
-            _ => throw new ArgumentOutOfRangeException(nameof(route))
+            _ => throw new ArgumentOutOfRangeException(nameof(route), route, "Choose this PC or the phone.")
         };
-        return Ok(await _call.ChangeAudioDeviceAsync(device));
+        return CompleteAsync(_native.ChangeAudioDeviceAsync(target));
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _call.StatusChanged -= OnChanged;
-        _call.AudioDeviceChanged -= OnChanged;
-        _call.IsMutedChanged -= OnChanged;
+        if (Interlocked.Exchange(ref _released, 1) != 0) return;
+        _native.StatusChanged -= OnNativeChanged;
+        _native.AudioDeviceChanged -= OnNativeChanged;
+        _native.IsMutedChanged -= OnNativeChanged;
         Changed = null;
     }
 
-    private void OnChanged(WinRTPhoneCall sender, object args) => Changed?.Invoke();
-
-    private static bool Ok(PhoneCallOperationStatus status)
-    {
-        if (status != PhoneCallOperationStatus.Succeeded) VeyroTrace.Warn($"Bluetooth call operation: {status}");
-        return status == PhoneCallOperationStatus.Succeeded;
-    }
-
-    internal static BluetoothCallStatus Map(PhoneCallStatus status) => status switch
+    /// <summary>Maps the Windows call status onto Veyro's platform-neutral one.</summary>
+    internal static BluetoothCallStatus StatusOf(PhoneCallStatus native) => native switch
     {
         PhoneCallStatus.Incoming => BluetoothCallStatus.Incoming,
         PhoneCallStatus.Dialing => BluetoothCallStatus.Dialing,
@@ -102,4 +99,16 @@ internal sealed class BluetoothCall : IBluetoothCall
         PhoneCallStatus.Lost => BluetoothCallStatus.Lost,
         _ => BluetoothCallStatus.Unknown
     };
+
+    private void OnNativeChanged(WinRtCall sender, object args) => Changed?.Invoke();
+
+    private static async Task<bool> CompleteAsync(IAsyncOperation<PhoneCallOperationStatus> operation)
+    {
+        PhoneCallOperationStatus outcome = await operation;
+        bool succeeded = outcome == PhoneCallOperationStatus.Succeeded;
+        if (!succeeded) VeyroTrace.Warn($"Bluetooth call operation ended with {outcome}");
+        return succeeded;
+    }
+
+    private static string? NullIfBlank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text;
 }

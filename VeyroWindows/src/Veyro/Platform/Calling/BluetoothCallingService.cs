@@ -1,115 +1,84 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Platforms/Windows/Calling/PhoneLineService.cs
-// and src/Sefirah/Platforms/Windows/Utilities/CallingFeatureUtils.cs, GPL-3.0.
-// Modified for Veyro.
+using System.Collections.Concurrent;
 using Veyro.Core.Diagnostics;
 using Windows.ApplicationModel.Calls;
 using Windows.Devices.Enumeration;
 using Windows.Foundation.Metadata;
-using WinRTPhoneCall = Windows.ApplicationModel.Calls.PhoneCall;
+using WinRtCall = Windows.ApplicationModel.Calls.PhoneCall;
 
 namespace Veyro.Platform.Calling;
 
 /// <summary>
-/// The PC as the phone's Bluetooth hands-free device (ADR-029). Enumerates paired phones that
-/// expose a phone line transport, registers Veyro for the chosen one, connects it and tracks its
-/// calls through PhoneLine / PhoneCallManager (CallsPhoneContract v6).
-/// Windows 11 only: there the PhoneLineTransportDevice Limited Access Feature check is skipped;
-/// Veyro has no LAF token of its own (ADR-028), so Windows 10 reports NotSupported.
-/// Ids, statuses and counts may be logged; numbers and names never.
+/// The PC as the phone's Bluetooth hands-free device (ADR-029). It lists paired phones that offer
+/// a phone line transport, registers Veyro as the app for the chosen one, connects it and follows
+/// the calls on its line through <c>PhoneLine</c> and <c>PhoneCallManager</c>.
+/// <para>
+/// Limited Access Feature (ADR-028): Veyro holds no unlock token for the phone line transport.
+/// The service therefore relies on Windows 11, where the transport APIs are open to every app,
+/// and reports <see cref="BluetoothLineStatus.NotSupported"/> when the calling API contract
+/// is missing. Ids, statuses and counts may be logged. Numbers and names never.
+/// </para>
 /// </summary>
 public sealed class BluetoothCallingService : IBluetoothCallingService
 {
-    private const string CallsPhoneContract = "Windows.ApplicationModel.Calls.CallsPhoneContract";
+    private const string CallsContractName = "Windows.ApplicationModel.Calls.CallsPhoneContract";
+    private const ushort CallsContractMajorVersion = 6;
+
+    /// <summary>The link state the UI reads. Replaced as a whole under <see cref="_sync"/>.</summary>
+    private sealed record LinkState(BluetoothLineStatus Status, string? TransportId, string? PeerId);
 
     private readonly ISettingsStore _settings;
-    private readonly object _gate = new();
-    private readonly SemaphoreSlim _connectLock = new(1, 1);
-    private readonly Dictionary<Guid, PhoneLine> _lines = [];
-    private readonly Dictionary<string, BluetoothCall> _calls = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _pending = new(StringComparer.Ordinal);
-    private IReadOnlyList<BluetoothPhoneInfo> _phones = [];
-    private PhoneLineWatcher? _lineWatcher;
-    private BluetoothLineStatus _status;
-    private string? _transportId;
-    private string? _peerId;
-    private bool _initialized;
+    private readonly object _sync = new();
+    private readonly SemaphoreSlim _linkChange = new(1, 1);
+    private readonly ConcurrentDictionary<Guid, PhoneLine> _knownLines = new();
+    private readonly ConcurrentDictionary<string, BluetoothCall> _liveCalls = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _claimedCalls = new(StringComparer.Ordinal);
+    private volatile LinkState _link;
+    private volatile IReadOnlyList<BluetoothPhoneInfo> _phones = [];
+    private PhoneLineWatcher? _watcher;
+    private int _started;
+    private bool _disposed;
 
     public BluetoothCallingService(ISettingsStore settings)
     {
         _settings = settings;
-        _status = IsSupported ? BluetoothLineStatus.NotPaired : BluetoothLineStatus.NotSupported;
-        _transportId = settings.Current.BluetoothCallTransportId;
-        _peerId = settings.Current.BluetoothCallPeerId;
+        IsSupported = CallingApiAvailable();
+        var saved = settings.Current;
+        _link = new LinkState(
+            IsSupported ? BluetoothLineStatus.NotPaired : BluetoothLineStatus.NotSupported,
+            saved.BluetoothCallTransportId,
+            saved.BluetoothCallPeerId);
     }
 
     public event Action? Changed;
     public event Action<IBluetoothCall>? CallAdded;
 
-    /// <summary>
-    /// True when the in-call control APIs (CallsPhoneContract v6) are present. Veyro requires
-    /// Windows 11 (MinVersion 10.0.22000.0), so this only fails on unusual or stripped builds.
-    /// </summary>
-    public bool IsSupported { get; } = ContractPresent();
+    public bool IsSupported { get; }
+    public BluetoothLineStatus Status => _link.Status;
+    public string? SelectedTransportId => _link.TransportId;
+    public IReadOnlyList<BluetoothPhoneInfo> Phones => _phones;
+    public IReadOnlyList<IBluetoothCall> Calls => [.. _liveCalls.Values];
 
-    public BluetoothLineStatus Status
-    {
-        get { lock (_gate) return _status; }
-    }
+    /// <summary>The peer is only meaningful while the line is connected.</summary>
+    public string? LinkedPeerId => _link.Status == BluetoothLineStatus.Connected ? _link.PeerId : null;
 
-    public string? LinkedPeerId
-    {
-        get { lock (_gate) return _status == BluetoothLineStatus.Connected ? _peerId : null; }
-    }
-
-    public string? SelectedTransportId
-    {
-        get { lock (_gate) return _transportId; }
-    }
-
-    public IReadOnlyList<BluetoothPhoneInfo> Phones
-    {
-        get { lock (_gate) return _phones; }
-    }
-
-    public IReadOnlyList<IBluetoothCall> Calls
-    {
-        get { lock (_gate) return [.. _calls.Values]; }
-    }
-
-    public bool HasIncomingCall
-    {
-        get { lock (_gate) return _calls.Values.Any(c => c.Status == BluetoothCallStatus.Incoming); }
-    }
+    public bool HasIncomingCall => _liveCalls.Values.Any(call => call.Status == BluetoothCallStatus.Incoming);
 
     public async Task InitializeAsync()
     {
         if (!IsSupported)
         {
-            VeyroTrace.Info("Bluetooth calling not supported on this Windows version");
+            VeyroTrace.Info("Bluetooth calling is not available on this Windows version");
             return;
         }
-        if (_initialized) return;
-        _initialized = true;
+        if (Interlocked.Exchange(ref _started, 1) != 0) return;
 
         await RefreshPhonesAsync();
-        try
-        {
-            PhoneCallStore store = await PhoneCallManager.RequestStoreAsync();
-            _lineWatcher = store.RequestLineWatcher();
-            _lineWatcher.LineAdded += OnLineAddedOrUpdated;
-            _lineWatcher.LineUpdated += OnLineAddedOrUpdated;
-            _lineWatcher.LineRemoved += OnLineRemoved;
-            _lineWatcher.Start();
-            PhoneCallManager.CallStateChanged += OnCallStateChanged;
-        }
-        catch (Exception error)
-        {
-            VeyroTrace.Error("Phone line watcher unavailable", error);
-        }
+        await StartLineWatcherAsync();
 
-        // Reconnect the phone chosen earlier; Windows keeps the registration across restarts.
-        if (SelectedTransportId is { } saved && Phones.Any(p => p.TransportId == saved))
-            await ConnectAsync(saved, _peerId);
+        // Windows keeps the app registration between runs, so only the connection is repeated.
+        string? remembered = SelectedTransportId;
+        if (remembered is not null && _phones.Any(phone => phone.TransportId == remembered))
+            await ConnectAsync(remembered, _link.PeerId);
     }
 
     public async Task RefreshPhonesAsync()
@@ -117,137 +86,151 @@ public sealed class BluetoothCallingService : IBluetoothCallingService
         if (!IsSupported) return;
         try
         {
-            DeviceInformationCollection found = await DeviceInformation.FindAllAsync(
+            DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(
                 PhoneLineTransportDevice.GetDeviceSelector(PhoneLineTransport.Bluetooth));
-            var phones = found
-                .Where(d => !string.IsNullOrEmpty(d.Id))
-                .Select(d => new BluetoothPhoneInfo(d.Id, string.IsNullOrWhiteSpace(d.Name) ? "Bluetooth phone" : d.Name))
-                .ToList();
-            lock (_gate)
+            List<BluetoothPhoneInfo> phones = [];
+            foreach (DeviceInformation device in devices)
+            {
+                if (string.IsNullOrEmpty(device.Id)) continue;
+                phones.Add(new BluetoothPhoneInfo(device.Id, string.IsNullOrWhiteSpace(device.Name) ? "Bluetooth phone" : device.Name));
+            }
+
+            lock (_sync)
             {
                 _phones = phones;
-                if (_status is BluetoothLineStatus.NotPaired or BluetoothLineStatus.NotSelected)
-                    _status = phones.Count == 0 ? BluetoothLineStatus.NotPaired
-                        : _transportId is null ? BluetoothLineStatus.NotSelected : BluetoothLineStatus.Disconnected;
+                // Only an idle link is re-evaluated. A connecting or connected one keeps its state.
+                if (_link.Status is BluetoothLineStatus.NotPaired or BluetoothLineStatus.NotSelected)
+                    _link = _link with { Status = IdleStatus(phones.Count, _link.TransportId) };
             }
-            VeyroTrace.Info($"Bluetooth phones with a phone line: {phones.Count}");
+            VeyroTrace.Info($"Bluetooth phones offering a phone line: {phones.Count}");
         }
         catch (Exception error)
         {
-            VeyroTrace.Error("Enumerating Bluetooth phones failed", error);
+            VeyroTrace.Error("Listing Bluetooth phones failed", error);
         }
-        Raise();
+        NotifyChanged();
     }
 
     public async Task ConnectAsync(string transportId, string? peerId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(transportId);
         if (!IsSupported) return;
-        await _connectLock.WaitAsync();
+
+        await _linkChange.WaitAsync();
         try
         {
-            SetStatus(BluetoothLineStatus.Connecting, transportId, peerId);
-            BluetoothLineStatus result = await ConnectTransportAsync(transportId);
-            SetStatus(result, transportId, peerId);
+            SetLink(BluetoothLineStatus.Connecting, transportId, peerId);
+            BluetoothLineStatus outcome = await OpenTransportAsync(transportId);
+            SetLink(outcome, transportId, peerId);
             await _settings.UpdateAsync(s => s with { BluetoothCallTransportId = transportId, BluetoothCallPeerId = peerId });
-            if (result == BluetoothLineStatus.Connected) await CheckActiveCallsAsync();
+            if (outcome == BluetoothLineStatus.Connected) await ReadAllLinesAsync();
         }
         finally
         {
-            _connectLock.Release();
+            _linkChange.Release();
         }
     }
 
     public async Task DisconnectAsync()
     {
-        await _connectLock.WaitAsync();
+        await _linkChange.WaitAsync();
         try
         {
-            string? transportId = SelectedTransportId;
-            if (transportId is not null)
-            {
-                try
-                {
-                    PhoneLineTransportDevice? device = PhoneLineTransportDevice.FromId(transportId);
-                    if (device?.IsRegistered() == true) device.UnregisterApp();
-                }
-                catch (Exception error)
-                {
-                    VeyroTrace.Error("Releasing Bluetooth phone line failed", error);
-                }
-            }
-            ClearCalls();
-            lock (_gate)
-            {
-                _transportId = null;
-                _peerId = null;
-                _status = _phones.Count == 0 ? BluetoothLineStatus.NotPaired : BluetoothLineStatus.NotSelected;
-            }
+            ReleaseTransport(SelectedTransportId);
+            DropAllCalls();
+            lock (_sync) _link = new LinkState(IdleStatus(_phones.Count, null), null, null);
             await _settings.UpdateAsync(s => s with { BluetoothCallTransportId = null, BluetoothCallPeerId = null });
             VeyroTrace.Info("Bluetooth calling disconnected");
-            Raise();
+            NotifyChanged();
         }
         finally
         {
-            _connectLock.Release();
+            _linkChange.Release();
         }
     }
 
     public async Task<bool> AnswerIncomingAsync()
     {
-        BluetoothCall? call;
-        lock (_gate) call = _calls.Values.FirstOrDefault(c => c.Status == BluetoothCallStatus.Incoming);
-        if (call is null) return false;
-        if (!await call.AcceptAsync()) return false;
-        // Answering over hands-free normally routes audio here; make sure it does.
-        if (call.AudioRoute != CallAudioRoute.ThisPc) await call.SetAudioRouteAsync(CallAudioRoute.ThisPc);
+        BluetoothCall? ringing = FindRinging();
+        if (ringing is null || !await ringing.AcceptAsync()) return false;
+
+        // The call is answered for hands-free use, so its audio has to end up on this PC.
+        if (ringing.AudioRoute != CallAudioRoute.ThisPc) await ringing.SetAudioRouteAsync(CallAudioRoute.ThisPc);
         return true;
     }
 
     public async Task<bool> RejectIncomingAsync()
     {
-        BluetoothCall? call;
-        lock (_gate) call = _calls.Values.FirstOrDefault(c => c.Status == BluetoothCallStatus.Incoming);
-        return call is not null && await call.RejectAsync();
+        BluetoothCall? ringing = FindRinging();
+        return ringing is not null && await ringing.RejectAsync();
     }
 
     public void Dispose()
     {
-        if (_lineWatcher is { } watcher)
+        lock (_sync)
         {
-            watcher.LineAdded -= OnLineAddedOrUpdated;
-            watcher.LineUpdated -= OnLineAddedOrUpdated;
-            watcher.LineRemoved -= OnLineRemoved;
-            try { watcher.Stop(); } catch (Exception error) { VeyroTrace.Error("Stopping phone line watcher failed", error); }
-            _lineWatcher = null;
+            if (_disposed) return;
+            _disposed = true;
         }
-        if (_initialized) PhoneCallManager.CallStateChanged -= OnCallStateChanged;
-        ClearCalls();
-        _connectLock.Dispose();
+        if (_watcher is { } watcher)
+        {
+            watcher.LineAdded -= OnLineSeen;
+            watcher.LineUpdated -= OnLineSeen;
+            watcher.LineRemoved -= OnLineGone;
+            try { watcher.Stop(); }
+            catch (Exception error) { VeyroTrace.Error("Stopping the phone line watcher failed", error); }
+            _watcher = null;
+        }
+        if (_started != 0) PhoneCallManager.CallStateChanged -= OnCallStateChanged;
+        DropAllCalls();
+        _linkChange.Dispose();
     }
 
-    private async Task<BluetoothLineStatus> ConnectTransportAsync(string transportId)
+    // ---- connection ----------------------------------------------------------------------
+
+    private async Task StartLineWatcherAsync()
     {
         try
         {
-            PhoneLineTransportDevice? device = PhoneLineTransportDevice.FromId(transportId);
-            if (device is null) return BluetoothLineStatus.NotPaired;
+            PhoneCallStore store = await PhoneCallManager.RequestStoreAsync();
+            PhoneLineWatcher watcher = store.RequestLineWatcher();
+            watcher.LineAdded += OnLineSeen;
+            watcher.LineUpdated += OnLineSeen;
+            watcher.LineRemoved += OnLineGone;
+            _watcher = watcher;
+            watcher.Start();
+            PhoneCallManager.CallStateChanged += OnCallStateChanged;
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("The phone line watcher could not start", error);
+        }
+    }
 
-            DeviceAccessStatus access = await device.RequestAccessAsync();
+    private static async Task<BluetoothLineStatus> OpenTransportAsync(string transportId)
+    {
+        try
+        {
+            PhoneLineTransportDevice? transport = PhoneLineTransportDevice.FromId(transportId);
+            if (transport is null) return BluetoothLineStatus.NotPaired;
+
+            DeviceAccessStatus access = await transport.RequestAccessAsync();
             if (access != DeviceAccessStatus.Allowed)
             {
-                VeyroTrace.Warn($"Bluetooth phone line access: {access}");
+                VeyroTrace.Warn($"Windows answered the phone line access request with {access}");
                 return BluetoothLineStatus.AccessDenied;
             }
-            if (!device.IsRegistered()) device.RegisterApp();
-            if (!device.IsRegistered())
+
+            if (!transport.IsRegistered()) transport.RegisterApp();
+            if (!transport.IsRegistered())
             {
-                VeyroTrace.Warn("Bluetooth phone line registration failed; another app may own the line");
+                VeyroTrace.Warn("Registering for the phone line failed; another app may hold it");
                 return BluetoothLineStatus.AccessDenied;
             }
-            if (!await device.ConnectAsync())
+
+            if (!await transport.ConnectAsync())
             {
-                VeyroTrace.Warn("Bluetooth phone line did not connect");
+                VeyroTrace.Warn("The phone line did not connect");
                 return BluetoothLineStatus.Error;
             }
             VeyroTrace.Info("Bluetooth phone line connected");
@@ -255,140 +238,166 @@ public sealed class BluetoothCallingService : IBluetoothCallingService
         }
         catch (Exception error)
         {
-            VeyroTrace.Error("Connecting Bluetooth phone line failed", error);
+            VeyroTrace.Error("Opening the Bluetooth phone line failed", error);
             return BluetoothLineStatus.Error;
         }
     }
 
-    private async void OnLineAddedOrUpdated(PhoneLineWatcher sender, PhoneLineWatcherEventArgs args)
+    private static void ReleaseTransport(string? transportId)
+    {
+        if (transportId is null) return;
+        try
+        {
+            PhoneLineTransportDevice? transport = PhoneLineTransportDevice.FromId(transportId);
+            if (transport is not null && transport.IsRegistered()) transport.UnregisterApp();
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Giving the phone line back failed", error);
+        }
+    }
+
+    private void SetLink(BluetoothLineStatus status, string? transportId, string? peerId)
+    {
+        lock (_sync) _link = new LinkState(status, transportId, peerId);
+        NotifyChanged();
+    }
+
+    private static BluetoothLineStatus IdleStatus(int phoneCount, string? chosenTransportId)
+    {
+        if (phoneCount == 0) return BluetoothLineStatus.NotPaired;
+        return chosenTransportId is null ? BluetoothLineStatus.NotSelected : BluetoothLineStatus.Disconnected;
+    }
+
+    // ---- phone lines and calls -----------------------------------------------------------
+
+    private async void OnLineSeen(PhoneLineWatcher sender, PhoneLineWatcherEventArgs args)
     {
         try
         {
             PhoneLine? line = await PhoneLine.FromIdAsync(args.LineId);
             if (line is null) return;
-            lock (_gate) _lines[args.LineId] = line;
-            if (IsOurs(line)) await CheckLineAsync(line);
+            _knownLines[args.LineId] = line;
+            if (OnConnectedLine(line)) await ReadLineAsync(line);
         }
         catch (Exception error)
         {
-            VeyroTrace.Error("Reading phone line failed", error);
+            VeyroTrace.Error("Reading a phone line failed", error);
         }
     }
 
-    private void OnLineRemoved(PhoneLineWatcher sender, PhoneLineWatcherEventArgs args)
-    {
-        lock (_gate) _lines.Remove(args.LineId);
-    }
+    private void OnLineGone(PhoneLineWatcher sender, PhoneLineWatcherEventArgs args)
+        => _knownLines.TryRemove(args.LineId, out _);
 
     private async void OnCallStateChanged(object? sender, object args)
     {
-        try { await CheckActiveCallsAsync(); }
+        try { await ReadAllLinesAsync(); }
         catch (Exception error) { VeyroTrace.Error("Reading Bluetooth calls failed", error); }
     }
 
-    private async Task CheckActiveCallsAsync()
+    private bool OnConnectedLine(PhoneLine line)
     {
-        PhoneLine[] lines;
-        lock (_gate) lines = [.. _lines.Values];
-        foreach (PhoneLine line in lines.Where(IsOurs)) await CheckLineAsync(line);
+        LinkState link = _link;
+        return link.Status == BluetoothLineStatus.Connected
+               && link.TransportId is { } transportId
+               && string.Equals(line.TransportDeviceId, transportId, StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task CheckLineAsync(PhoneLine line)
+    private async Task ReadAllLinesAsync()
+    {
+        foreach (PhoneLine line in _knownLines.Values.Where(OnConnectedLine).ToArray())
+            await ReadLineAsync(line);
+    }
+
+    private async Task ReadLineAsync(PhoneLine line)
     {
         try
         {
             PhoneCallsResult result = await line.GetAllActivePhoneCallsAsync();
-            foreach (WinRTPhoneCall active in result.AllActivePhoneCalls) await TrackAsync(active);
+            foreach (WinRtCall native in result.AllActivePhoneCalls) await AdoptCallAsync(native);
         }
         catch (Exception error)
         {
-            VeyroTrace.Error("Reading active calls of the phone line failed", error);
+            VeyroTrace.Error("Reading the active calls of the phone line failed", error);
         }
     }
 
-    private async Task TrackAsync(WinRTPhoneCall active)
+    private async Task AdoptCallAsync(WinRtCall native)
     {
-        string callId = active.CallId;
-        if (string.IsNullOrEmpty(callId) || CallPresentation.IsOver(BluetoothCall.Map(active.Status))) return;
-        lock (_gate)
-        {
-            if (_calls.ContainsKey(callId) || !_pending.Add(callId)) return;
-        }
-        BluetoothCall call = await BluetoothCall.CreateAsync(active);
-        lock (_gate)
-        {
-            _pending.Remove(callId);
-            _calls[callId] = call;
-        }
-        call.Changed += () => OnCallChanged(call);
-        VeyroTrace.Info($"Bluetooth call tracked: {call.Status}");
-        CallAdded?.Invoke(call);
-        Raise();
-    }
+        string callId = native.CallId;
+        if (string.IsNullOrEmpty(callId) || CallPresentation.IsOver(BluetoothCall.StatusOf(native.Status))) return;
+        // A call is announced once, even when two events report it while its details load.
+        if (!_claimedCalls.TryAdd(callId, 0)) return;
 
-    private void OnCallChanged(BluetoothCall call)
-    {
+        BluetoothCall call;
+        try
+        {
+            call = await BluetoothCall.OpenAsync(native);
+        }
+        catch
+        {
+            _claimedCalls.TryRemove(callId, out _);
+            throw;
+        }
+
+        _liveCalls[callId] = call;
+        call.Changed += () => OnTrackedCallChanged(call);
         if (CallPresentation.IsOver(call.Status))
         {
-            bool removed;
-            lock (_gate) removed = _calls.Remove(call.CallId);
-            Raise();
-            if (removed)
-            {
-                VeyroTrace.Info("Bluetooth call ended");
-                // Handlers of this Changed event already hold their snapshot, so the window still
-                // sees the final status before the wrapper lets go of the WinRT call.
-                call.Dispose();
-            }
+            // It ended while its details were loading: nobody was told about it, so say nothing.
+            RetireCall(call, announce: false);
             return;
         }
-        Raise();
+
+        VeyroTrace.Info($"Bluetooth call tracked: {call.Status}");
+        CallAdded?.Invoke(call);
+        NotifyChanged();
     }
 
-    private bool IsOurs(PhoneLine line)
+    private void OnTrackedCallChanged(BluetoothCall call)
     {
-        lock (_gate)
+        if (CallPresentation.IsOver(call.Status)) RetireCall(call, announce: true);
+        else NotifyChanged();
+    }
+
+    private void RetireCall(BluetoothCall call, bool announce)
+    {
+        bool wasLive = _liveCalls.TryRemove(call.CallId, out _);
+        _claimedCalls.TryRemove(call.CallId, out _);
+        if (announce) NotifyChanged();
+        if (!wasLive) return;
+        if (announce) VeyroTrace.Info("Bluetooth call ended");
+        // Subscribers have already read the final status by now. Releasing the Windows call is safe.
+        call.Dispose();
+    }
+
+    private void DropAllCalls()
+    {
+        foreach (BluetoothCall call in _liveCalls.Values.ToArray())
         {
-            return _status == BluetoothLineStatus.Connected && _transportId is not null &&
-                   string.Equals(line.TransportDeviceId, _transportId, StringComparison.OrdinalIgnoreCase);
+            _liveCalls.TryRemove(call.CallId, out _);
+            call.Dispose();
+        }
+        _claimedCalls.Clear();
+    }
+
+    private BluetoothCall? FindRinging()
+        => _liveCalls.Values.FirstOrDefault(call => call.Status == BluetoothCallStatus.Incoming);
+
+    private void NotifyChanged()
+    {
+        Action? subscribers = Changed;
+        if (subscribers is null) return;
+        foreach (Delegate subscriber in subscribers.GetInvocationList())
+        {
+            try { ((Action)subscriber)(); }
+            catch (Exception error) { VeyroTrace.Error("A Bluetooth calling change handler failed", error); }
         }
     }
 
-    private void ClearCalls()
+    private static bool CallingApiAvailable()
     {
-        BluetoothCall[] calls;
-        lock (_gate)
-        {
-            calls = [.. _calls.Values];
-            _calls.Clear();
-        }
-        foreach (BluetoothCall call in calls) call.Dispose();
-    }
-
-    private void SetStatus(BluetoothLineStatus status, string transportId, string? peerId)
-    {
-        lock (_gate)
-        {
-            _status = status;
-            _transportId = transportId;
-            _peerId = peerId;
-        }
-        Raise();
-    }
-
-    private void Raise()
-    {
-        if (Changed is not { } handlers) return;
-        foreach (Action handler in handlers.GetInvocationList().Cast<Action>())
-        {
-            try { handler(); }
-            catch (Exception error) { VeyroTrace.Error("Bluetooth calling change handler failed", error); }
-        }
-    }
-
-    private static bool ContractPresent()
-    {
-        try { return ApiInformation.IsApiContractPresent(CallsPhoneContract, 6); }
+        try { return ApiInformation.IsApiContractPresent(CallsContractName, CallsContractMajorVersion); }
         catch (Exception) { return false; }
     }
 }
