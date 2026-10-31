@@ -52,7 +52,11 @@ if ($code -ne 0) { throw "Gradle failed with exit code $code" }
 $apk = Get-ChildItem (Join-Path $android 'app\build\outputs\apk\release') -Filter '*.apk' | Sort-Object LastWriteTime | Select-Object -Last 1
 if (-not $apk) { throw 'No release APK was produced.' }
 
-$apksigner = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory | Sort-Object { [version]($_.Name -replace '[^\d.]', '') } | Select-Object -Last 1
+# The newest build-tools folder that actually has apksigner (a partial 37.0.0 install has none).
+$apksigner = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory |
+    Where-Object { Test-Path (Join-Path $_.FullName 'apksigner.bat') } |
+    Sort-Object { [version]($_.Name -replace '[^\d.]', '') } | Select-Object -Last 1
+if (-not $apksigner) { throw 'No build-tools folder contains apksigner.bat.' }
 $apksigner = Join-Path $apksigner.FullName 'apksigner.bat'
 $cert = & $apksigner verify --print-certs $apk.FullName 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) { throw "Signature check failed:`n$cert" }

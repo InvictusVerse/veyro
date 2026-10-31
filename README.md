@@ -1,20 +1,52 @@
 # Veyro
 
-**Seamlessly connected.** Cross-device file transfer, clipboard and sync between Windows and
-Android — over Wi-Fi/LAN/hotspot, with no Bluetooth requirement, no cloud, and no account.
+**Seamlessly connected.** Your Android phone and your Windows PC working as one: files, clipboard,
+notifications, messages, calls and media, over Wi-Fi, LAN or a hotspot. No Bluetooth requirement,
+no cloud, no account.
 
-```
-        Same Wi-Fi                Android hotspot            Windows hotspot
-   Windows ─── LAN ─── Android    Windows ──► 📱 AP          📱 ◄── AP ─── Windows
-            discovery                 discovery                  discovery
-            over IP                   over IP                    over IP
-```
+![Veyro on Windows: the phone panel with quick controls, notifications and messages](docs/screenshots/windows-phone-panel.png)
+
+<p align="center">
+  <img src="docs/screenshots/android-home.png" width="240" alt="Veyro on Android: home screen connected to a PC">
+  <img src="docs/screenshots/android-devices.png" width="240" alt="Veyro on Android: paired devices">
+  <img src="docs/screenshots/android-settings.png" width="240" alt="Veyro on Android: settings">
+</p>
+
+<sub>Personal data (names, messages, notifications, file names, fingerprints) is blurred in these screenshots.</sub>
+
+## Acknowledgements
+
+Veyro builds on **[Sefirah](https://github.com/shrimqy/Sefirah)** by
+**[shrimqy](https://github.com/shrimqy)**, a GPL-3.0 phone link app for Windows and
+[Android](https://github.com/shrimqy/Sefirah-Android). Veyro adapts Sefirah's Bluetooth calling
+on Windows (call handling and the call window) and parts of its Android interface (onboarding,
+theme, typography and several shared components), restructured onto Veyro's own modules and
+encrypted link protocol. Thank you, shrimqy and the Sefirah contributors.
+
+Every adapted file is listed with its original in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and carries a header naming its source.
+If you like Veyro, please also star and support [Sefirah](https://github.com/shrimqy/Sefirah).
+
+## Features
+
+- **Files and folders** both ways, with per-file SHA-256 verification and resume.
+- **Clipboard** sharing, text and images.
+- **Notifications** from the phone on the PC, with dismiss.
+- **Messages (SMS)**: read and send from the PC.
+- **Calls** through the PC over Bluetooth, with a call window.
+- **Photos** from the phone, browsable on the PC.
+- **Media**: see and control what the phone plays.
+- **Phone controls** from the PC: Do Not Disturb, ringer mode, find my phone, flashlight,
+  media volume and brightness.
+- **Lock PC** from the phone.
+- **Islune dynamic island** (optional): phone status, quick controls and drag-to-send on the
+  Windows desktop through a local bridge.
 
 ## Why
 
 Quick Share works well, but its discovery path involves Bluetooth/BLE, so you end up enabling a
 radio that the transfer will not even use. Veyro makes IP the only required path: if the two
-devices share a network — router, Android hotspot, or Windows Mobile Hotspot — they find each
+devices share a network (router, Android hotspot, or Windows Mobile Hotspot) they find each
 other and transfer, with Bluetooth off.
 
 ## Properties
@@ -25,51 +57,50 @@ other and transfer, with Bluetooth off.
 | **Security** | X25519 identities, confirm-code or QR pairing. Every command, notification, message and call event is encrypted and authenticated. File contents travel unencrypted on the local network for maximum speed, authenticated per transfer and SHA-256 verified. |
 | **Integrity** | Per-file SHA-256 verification, atomic commit, resume that re-verifies on-disk chunks. |
 | **Idle cost** | No background scanning, no beacons, no wakelocks when idle. Discovery runs only in a bounded, user-initiated window. |
-| **Diagnosis** | AP client isolation, blocked multicast, VPN interference and firewall blocks are detected and named — never a generic "device not found". |
+| **Diagnosis** | AP client isolation, blocked multicast, VPN interference and firewall blocks are detected and named, never a generic "device not found". |
 | **Privacy** | No cloud, no account, no telemetry. Display name hidden outside pairing mode. |
+
+## Install
+
+Download the latest files from [Releases](https://github.com/InvictusVerse/veyro/releases).
+
+- **Windows 11 (x64):** run `Veyro-Setup-<version>.exe`. It installs the Windows App Runtime and
+  Veyro's publisher certificate. The setup is self-signed, so Windows SmartScreen shows
+  "unknown publisher"; check the SHA-256 against the `.sha256` file before you run it.
+- **Android 10 or later:** install `Veyro-<version>.apk` (allow installs from your browser or
+  file manager when asked).
+
+Open Veyro on both devices on the same network and pair them with the code or QR shown.
 
 ## Repository layout
 
 ```
 veyro/
-├─ ProjectInfo/        All project knowledge: requirements, architecture, protocol,
-│                      security model, roadmap, status, decisions. START HERE.
+├─ docs/screenshots/   Images used by this README.
 ├─ protocol/           Language-neutral protocol schema (CDDL) + interop test vectors,
 │                      shared by the Android and Windows implementations.
 ├─ tools/              Helper scripts.
-├─ VeyroAndroid/       Android client — Kotlin 2.4.20, Jetpack Compose, multi-module.   ACTIVE
-└─ VeyroWindows/       Windows client — .NET 10.                                        SKELETON
+├─ VeyroAndroid/       Android client: Kotlin, Jetpack Compose, multi-module.
+└─ VeyroWindows/       Windows client: .NET 10, WinUI 3, packaged as MSIX.
 ```
 
-## Status
+## Build
 
-**Phase P0 — Foundation.** Structure and specification complete; Android implementation starting.
-Current state is tracked in [`ProjectInfo/07-STATUS.md`](ProjectInfo/07-STATUS.md).
-
-## Build (Android)
+Android:
 
 ```powershell
-cd D:\Coding\Projects\veyro\VeyroAndroid
+cd VeyroAndroid
 .\gradlew.bat assembleDebug
 .\gradlew.bat test
 ```
 
-Toolchain and pinned versions: [`ProjectInfo/09-ENVIRONMENT.md`](ProjectInfo/09-ENVIRONMENT.md).
+Windows:
 
-## Documentation index
-
-| Document | Contents |
-|---|---|
-| [Overview](ProjectInfo/01-PROJECT-OVERVIEW.md) | Vision, scenarios, principles, ecosystem map |
-| [Requirements](ProjectInfo/02-REQUIREMENTS.md) | `REQ-*` / `NFR-*` with status |
-| [Architecture](ProjectInfo/03-ARCHITECTURE.md) | Module map, layering rules, object graph |
-| [Protocol](ProjectInfo/04-PROTOCOL.md) | VLP v1 wire specification |
-| [Security](ProjectInfo/05-SECURITY.md) | Threat model, crypto design, test checklist |
-| [Roadmap](ProjectInfo/06-ROADMAP.md) | Phases P0–P8 with exit criteria |
-| [Status](ProjectInfo/07-STATUS.md) | What exists right now |
-| [Decisions](ProjectInfo/08-DECISIONS.md) | ADR log |
-| [Environment](ProjectInfo/09-ENVIRONMENT.md) | Toolchain, versions, build commands |
-| [Changelog](ProjectInfo/10-CHANGELOG.md) | Session-by-session history |
+```powershell
+cd VeyroWindows\src
+dotnet build Veyro\Veyro.csproj -c Debug -p:Platform=x64
+dotnet test Veyro.Tests
+```
 
 ## License
 
