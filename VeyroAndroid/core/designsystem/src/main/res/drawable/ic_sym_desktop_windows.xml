@@ -1,11 +1,18 @@
-<!-- Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/common/src/main/res/drawable/ic_desktop_windows.xml, GPL-3.0.
-     Modified for Veyro (renamed). Glyph: Google Material Symbols, Apache-2.0. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
+    android:viewportWidth="24"
+    android:viewportHeight="24">
   <path
-      android:fillColor="@android:color/white"
-      android:pathData="M400,760L400,680L160,680Q127,680 103.5,656.5Q80,633 80,600L80,200Q80,167 103.5,143.5Q127,120 160,120L800,120Q833,120 856.5,143.5Q880,167 880,200L880,600Q880,633 856.5,656.5Q833,680 800,680L560,680L560,760L600,760Q617,760 628.5,771.5Q640,783 640,800Q640,817 628.5,828.5Q617,840 600,840L360,840Q343,840 331.5,828.5Q320,817 320,800Q320,783 331.5,771.5Q343,760 360,760L400,760Z"/>
+      android:pathData="M4 4.5H20A1 1 0 0 1 21 5.5V15.5A1 1 0 0 1 20 16.5H4A1 1 0 0 1 3 15.5V5.5A1 1 0 0 1 4 4.5Z"
+      android:strokeColor="@android:color/white"
+      android:strokeWidth="2"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"/>
+  <path
+      android:pathData="M9 20H15M12 16.5V20"
+      android:strokeColor="@android:color/white"
+      android:strokeWidth="2"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"/>
 </vector>

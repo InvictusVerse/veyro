@@ -1,7 +1,6 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/settings/components/TextPrefrenceWidget.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components.preference
 
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -14,7 +13,8 @@ import androidx.compose.ui.text.TextStyle
 import com.veyro.core.designsystem.components.secondaryItemAlpha
 
 /**
- * Title + subtitle row. Veyro change: [subtitleStyle] so fingerprints can be shown in monospace.
+ * A settings row with a [title] and a dimmed [subtitle]. Pass a monospace [subtitleStyle] to show
+ * a fingerprint. A trailing [widget] and a click handler are both optional.
  */
 @Composable
 public fun TextPreferenceWidget(
@@ -27,35 +27,39 @@ public fun TextPreferenceWidget(
     widget: @Composable (() -> Unit)? = null,
     onPreferenceClick: (() -> Unit)? = null,
 ) {
+    val subtitleSlot: (@Composable ColumnScope.() -> Unit)? =
+        if (subtitle.isNullOrBlank()) {
+            null
+        } else {
+            { SubtitleLine(text = subtitle, style = subtitleStyle) }
+        }
+    val iconSlot: (@Composable () -> Unit)? =
+        if (icon == null) {
+            null
+        } else {
+            { Icon(imageVector = icon, contentDescription = null, tint = iconTint) }
+        }
+
     BasePreferenceWidget(
         modifier = modifier,
         title = title,
-        subcomponent = if (!subtitle.isNullOrBlank()) {
-            {
-                Text(
-                    text = subtitle,
-                    modifier = Modifier
-                        .padding(horizontal = PrefsHorizontalPadding)
-                        .secondaryItemAlpha(),
-                    style = subtitleStyle,
-                    maxLines = 10,
-                )
-            }
-        } else {
-            null
-        },
-        icon = if (icon != null) {
-            {
-                Icon(
-                    imageVector = icon,
-                    tint = iconTint,
-                    contentDescription = null,
-                )
-            }
-        } else {
-            null
-        },
+        subcomponent = subtitleSlot,
+        icon = iconSlot,
         onClick = onPreferenceClick,
         widget = widget,
     )
 }
+
+@Composable
+private fun SubtitleLine(text: String, style: TextStyle) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .padding(horizontal = PreferenceMetrics.sideInset)
+            .secondaryItemAlpha(),
+        style = style,
+        maxLines = SUBTITLE_MAX_LINES,
+    )
+}
+
+private const val SUBTITLE_MAX_LINES = 10

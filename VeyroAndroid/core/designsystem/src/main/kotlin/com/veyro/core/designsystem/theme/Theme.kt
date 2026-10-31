@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/ui/theme/Theme.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.theme
 
 import android.os.Build
@@ -14,21 +12,19 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-// ---------------------------------------------------------------------------
-// Colour schemes
-// ---------------------------------------------------------------------------
+// Fallback palettes
 //
-// Sefirah ships the Material baseline purple as its fallback. Veyro keeps its own identity
-// instead: the fallback is the Material 3 tonal-spot scheme for Veyro's cyan seed (#00D9FF), used
-// below Android 12 or when dynamic colour is switched off.
+// Both schemes are the Material 3 tonal-spot palette generated from Veyro's cyan seed (#00D9FF).
+// They apply below Android 12, and on any version when dynamic colour is switched off.
 
-private val VeyroLightScheme = lightColorScheme(
+private val CyanLight: ColorScheme = lightColorScheme(
     primary = Color(0xFF006782),
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFFBAEAFF),
@@ -42,6 +38,10 @@ private val VeyroLightScheme = lightColorScheme(
     onTertiary = Color(0xFFFFFFFF),
     tertiaryContainer = Color(0xFFE2DFFF),
     onTertiaryContainer = Color(0xFF191837),
+    error = Color(0xFFBA1A1A),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
     background = Color(0xFFF6FAFD),
     onBackground = Color(0xFF171C1F),
     surface = Color(0xFFF6FAFD),
@@ -51,10 +51,6 @@ private val VeyroLightScheme = lightColorScheme(
     surfaceTint = Color(0xFF006782),
     inverseSurface = Color(0xFF2C3134),
     inverseOnSurface = Color(0xFFEDF1F5),
-    error = Color(0xFFBA1A1A),
-    onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFFDAD6),
-    onErrorContainer = Color(0xFF410002),
     outline = Color(0xFF70787D),
     outlineVariant = Color(0xFFC0C8CD),
     scrim = Color(0xFF000000),
@@ -67,7 +63,7 @@ private val VeyroLightScheme = lightColorScheme(
     surfaceContainerHighest = Color(0xFFDFE3E6),
 )
 
-private val VeyroDarkScheme = darkColorScheme(
+private val CyanDark: ColorScheme = darkColorScheme(
     primary = Color(0xFF5FD4FD),
     onPrimary = Color(0xFF003545),
     primaryContainer = Color(0xFF004D62),
@@ -81,6 +77,10 @@ private val VeyroDarkScheme = darkColorScheme(
     onTertiary = Color(0xFF2E2D4D),
     tertiaryContainer = Color(0xFF444465),
     onTertiaryContainer = Color(0xFFE2DFFF),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
     background = Color(0xFF0F1417),
     onBackground = Color(0xFFDEE3E6),
     surface = Color(0xFF0F1417),
@@ -90,10 +90,6 @@ private val VeyroDarkScheme = darkColorScheme(
     surfaceTint = Color(0xFF5FD4FD),
     inverseSurface = Color(0xFFDEE3E6),
     inverseOnSurface = Color(0xFF2C3134),
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF690005),
-    errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
     outline = Color(0xFF8A9297),
     outlineVariant = Color(0xFF40484C),
     scrim = Color(0xFF000000),
@@ -106,16 +102,14 @@ private val VeyroDarkScheme = darkColorScheme(
     surfaceContainerHighest = Color(0xFF303638),
 )
 
-/** Sefirah uses the Material 3 default shapes; so does Veyro. Named so screens can refer to it. */
+/** Shapes for the whole app. Veyro uses the Material 3 defaults; the name lets screens refer to it. */
 public val VeyroShapes: Shapes = Shapes()
 
-// ---------------------------------------------------------------------------
-// Veyro extras - gradients, now derived from whichever scheme is active
-// ---------------------------------------------------------------------------
+// Gradient brushes
 
 /**
- * Brushes some older components still read through [VeyroExtras]. They are computed from the
- * active [ColorScheme], so with dynamic colour they follow the wallpaper like everything else.
+ * Brushes that older components still read through [VeyroExtras]. They are derived from the
+ * active [ColorScheme], so under dynamic colour they follow the wallpaper like everything else.
  */
 @Immutable
 public data class VeyroGradients(
@@ -129,49 +123,56 @@ public data class VeyroGradients(
     val progressFill: Brush,
 )
 
-private fun gradientsFor(scheme: ColorScheme): VeyroGradients = VeyroGradients(
-    cyanGlow = Brush.verticalGradient(listOf(scheme.primary.copy(alpha = 0.18f), Color.Transparent)),
-    blueGlow = Brush.verticalGradient(listOf(scheme.secondary.copy(alpha = 0.18f), Color.Transparent)),
-    violetGlow = Brush.verticalGradient(listOf(scheme.tertiary.copy(alpha = 0.18f), Color.Transparent)),
-    card = Brush.verticalGradient(listOf(scheme.surfaceContainerLow, scheme.surfaceContainerLow)),
-    cardSelected = Brush.verticalGradient(listOf(scheme.primaryContainer, scheme.primaryContainer)),
-    background = Brush.verticalGradient(listOf(scheme.background, scheme.background)),
-    progressTrack = Brush.horizontalGradient(listOf(scheme.surfaceContainerHighest, scheme.surfaceContainerHighest)),
-    progressFill = Brush.horizontalGradient(listOf(scheme.primary, scheme.primary)),
+/** A tint that fades to nothing towards the bottom. */
+private fun fadingGlow(tint: Color): Brush =
+    Brush.verticalGradient(listOf(tint.copy(alpha = GLOW_ALPHA), Color.Transparent))
+
+/** A single colour expressed as a vertical brush, for call sites that expect a [Brush]. */
+private fun flatVertical(color: Color): Brush = Brush.verticalGradient(listOf(color, color))
+
+/** A single colour expressed as a horizontal brush. */
+private fun flatHorizontal(color: Color): Brush = Brush.horizontalGradient(listOf(color, color))
+
+private const val GLOW_ALPHA = 0.18f
+
+private fun buildGradients(scheme: ColorScheme): VeyroGradients = VeyroGradients(
+    cyanGlow = fadingGlow(scheme.primary),
+    blueGlow = fadingGlow(scheme.secondary),
+    violetGlow = fadingGlow(scheme.tertiary),
+    card = flatVertical(scheme.surfaceContainerLow),
+    cardSelected = flatVertical(scheme.primaryContainer),
+    background = flatVertical(scheme.background),
+    progressTrack = flatHorizontal(scheme.surfaceContainerHighest),
+    progressFill = flatHorizontal(scheme.primary),
 )
 
-public val LocalVeyroGradients: androidx.compose.runtime.ProvidableCompositionLocal<VeyroGradients> =
-    staticCompositionLocalOf { gradientsFor(VeyroDarkScheme) }
+public val LocalVeyroGradients: ProvidableCompositionLocal<VeyroGradients> =
+    staticCompositionLocalOf { buildGradients(CyanDark) }
 
-// ---------------------------------------------------------------------------
 // Root theme
-// ---------------------------------------------------------------------------
 
 /**
- * Root theme, ported from Sefirah's.
+ * Wraps the app in Veyro's Material 3 theme.
  *
- * Dynamic colour is **on by default** now, as in Sefirah: on Android 12+ the palette comes from the
- * wallpaper. Below that, or with [dynamicColor] false, the Veyro cyan scheme above is used. Trust
- * state no longer depends on hue alone - every trust or connection indicator also carries text or
- * an icon - which was the reason dynamic colour used to be opt-in (ADR-031).
+ * With [dynamicColor] on (the default) and Android 12 or newer, the palette is taken from the
+ * wallpaper. Otherwise the cyan palettes above are used. Trust and connection state is never
+ * conveyed by hue alone, because every such indicator also carries text or an icon (ADR-031).
  */
 @Composable
 public fun VeyroTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
+    val useWallpaperColors = dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-
-        darkTheme -> VeyroDarkScheme
-        else -> VeyroLightScheme
+        useWallpaperColors && darkTheme -> dynamicDarkColorScheme(context)
+        useWallpaperColors -> dynamicLightColorScheme(context)
+        darkTheme -> CyanDark
+        else -> CyanLight
     }
-
-    val gradients = remember(colorScheme) { gradientsFor(colorScheme) }
+    val gradients = remember(colorScheme) { buildGradients(colorScheme) }
 
     CompositionLocalProvider(LocalVeyroGradients provides gradients) {
         MaterialTheme(
@@ -183,7 +184,7 @@ public fun VeyroTheme(
     }
 }
 
-/** Access the Veyro gradient brushes from any composable context. */
+/** Entry point to the Veyro-specific theme values that Material's own theme does not carry. */
 public object VeyroExtras {
     public val gradients: VeyroGradients
         @Composable

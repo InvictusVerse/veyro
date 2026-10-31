@@ -1,12 +1,11 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/navigation/graphs/RootNavGraph.kt, GPL-3.0.
-// Modified for Veyro.
-// The device routes follow app/src/main/java/com/castle/sefirah/navigation/graphs/DevicesNavGraph.kt.
 package com.veyro.ui.navigation
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -24,9 +23,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.veyro.core.designsystem.components.VeyroDetailScaffold
@@ -50,21 +52,24 @@ import com.veyro.ui.receive.ReceiveScreen
 import com.veyro.ui.receive.ReceiveViewModel
 import com.veyro.ui.settings.SettingsViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
- * The root navigation graph: the tabbed [MainScreen] plus every pushed screen, each with its own
- * back arrow (Sefirah's root graph).
+ * Root of the app's navigation: the tabbed [MainScreen] as the start destination, and every other
+ * screen pushed over it with its own back arrow.
  *
- * The one authoritative [ActiveTransferBanner] floats above the whole graph, so it shows on every
- * screen exactly once, and nothing under it moves when it appears or leaves (ADR-038). What it
- * shows and when it slides out is decided by [TransferBannerModel].
+ * Two things live above the graph so they behave the same on every screen:
+ *  - the transfer banner. It floats over the graph in a [Box] and is drawn exactly once, so it
+ *    never shifts the content underneath when it appears or slides out (ADR-038). What it shows,
+ *    and when it leaves, is decided by [TransferBannerModel].
+ *  - the transfer details dialog, opened by tapping the banner.
  *
- * Home and Devices share one [HomeViewModel], like Sefirah's ConnectionViewModel, so a Connect
- * started on one card shows on the other. It and [DevicesViewModel] are scoped to the Activity.
+ * Home and Devices read the same [HomeViewModel], so a connection started from one card shows on
+ * the other. It and [DevicesViewModel] are scoped to the Activity.
  *
- * [onSendFiles] is passed in from the Activity: Send files opens the system picker directly
- * (an `ActivityResultContract`, which only the Activity can launch) and sends the result to the
- * given PC, with no screen in between.
+ * File and folder picking need an `ActivityResultContract`, which only the Activity can launch,
+ * so [onSendFiles] and [onSendFolder] are handed in: they open the system picker and send the
+ * result to the given devices, with no screen of ours in between.
  */
 @Composable
 public fun VeyroNavHost(
@@ -86,34 +91,31 @@ public fun VeyroNavHost(
     onSendFolder: ((deviceIds: List<String>) -> Unit)? = null,
 ) {
     val navController = rememberNavController()
-    LaunchedEffect(openClipboard) {
-        if (!openClipboard) return@LaunchedEffect
-        if (navController.currentDestination?.hasRoute(VeyroDestination.Clipboard::class) != true) {
-            navController.navigate(VeyroDestination.Clipboard) { launchSingleTop = true }
-        }
-        onClipboardOpened()
-    }
-    val context = LocalContext.current
+    ShowClipboardOnRequest(navController, requested = openClipboard, onShown = onClipboardOpened)
 
+    val context = LocalContext.current
     val homeViewModel = viewModel<HomeViewModel>(factory = viewModelFactory)
     val devicesViewModel = viewModel<DevicesViewModel>(factory = viewModelFactory)
 
+    // Without a coordinator (previews, tests) the feed is simply always empty.
+    val transferFeed: StateFlow<ActiveTransfer?> = remember(transferCoordinator) {
+        transferCoordinator?.activeTransfer ?: MutableStateFlow<ActiveTransfer?>(null)
+    }
     val bannerScope = rememberCoroutineScope()
     val bannerModel = remember(transferCoordinator) {
         TransferBannerModel(
             scope = bannerScope,
-            transfers = transferCoordinator?.activeTransfer ?: MutableStateFlow<ActiveTransfer?>(null),
+            transfers = transferFeed,
             clear = { id -> transferCoordinator?.clearActiveTransfer(id) },
         )
     }
     val bannerTransfer by bannerModel.shown.collectAsStateWithLifecycle()
+    val activeTransfer by transferFeed.collectAsStateWithLifecycle()
 
-    var showTransferDialog by remember { mutableStateOf(false) }
-    val activeTransfer by (transferCoordinator?.activeTransfer ?: remember { MutableStateFlow(null) })
-        .collectAsStateWithLifecycle()
+    var detailsOpen by remember { mutableStateOf(false) }
     // The details dialog belongs to one transfer; it must not reopen for the next one.
     val noTransfer = activeTransfer == null
-    LaunchedEffect(noTransfer) { if (noTransfer) showTransferDialog = false }
+    LaunchedEffect(noTransfer) { if (noTransfer) detailsOpen = false }
 
     Box(
         modifier = modifier
@@ -124,123 +126,176 @@ public fun VeyroNavHost(
             navController = navController,
             startDestination = VeyroDestination.Main,
             modifier = Modifier.fillMaxSize(),
-            enterTransition = { NavigationTransitions.rootEnterTransition(this) },
-            exitTransition = { NavigationTransitions.rootExitTransition(this) },
-            popEnterTransition = { NavigationTransitions.rootPopEnterTransition(this) },
-            popExitTransition = { NavigationTransitions.rootPopExitTransition(this) },
+            enterTransition = { pushEnter() },
+            exitTransition = { pushExit() },
+            popEnterTransition = { backEnter() },
+            popExitTransition = { backExit() },
         ) {
-            composable<VeyroDestination.Main> {
-                MainScreen(
-                    rootNavController = navController,
-                    viewModelFactory = viewModelFactory,
-                    homeViewModel = homeViewModel,
-                    devicesViewModel = devicesViewModel,
-                    onRequestMessagingPermissions = onRequestMessagingPermissions,
-                    onSendFiles = onSendFiles,
-                    onFixLocalNetwork = onFixLocalNetwork,
-                    onSendFolder = onSendFolder,
-                )
-            }
-
-            composable<VeyroDestination.KeepConnected> {
-                VeyroDetailScaffold(title = "Keep Veyro connected", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    KeepConnectedScreen(
-                        viewModel = viewModel<KeepConnectedViewModel>(factory = viewModelFactory),
-                        onFixLocalNetwork = onFixLocalNetwork,
-                        modifier = Modifier.padding(padding),
-                    )
-                }
-            }
-
-            composable<VeyroDestination.Pairing> {
-                VeyroDetailScaffold(title = "Add device", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    PairingScreen(
-                        viewModel = viewModel<PairingViewModel>(factory = viewModelFactory),
-                        modifier = Modifier.padding(padding),
-                    )
-                }
-            }
-
-            composable<VeyroDestination.Receive> {
-                VeyroDetailScaffold(title = "Receive", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    ReceiveScreen(
-                        viewModel = viewModel<ReceiveViewModel>(factory = viewModelFactory),
-                        modifier = Modifier.padding(padding),
-                    )
-                }
-            }
-
-            composable<VeyroDestination.Clipboard> {
-                VeyroDetailScaffold(title = "Clipboard", onNavigateBack = { navController.navigateUp() }) { padding ->
-                    ClipboardScreen(
-                        viewModel = viewModel<ClipboardViewModel>(factory = viewModelFactory),
-                        modifier = Modifier.padding(padding),
-                    )
-                }
-            }
-
-            composable<VeyroDestination.DeviceSettings> { entry ->
-                val route = entry.toRoute<VeyroDestination.DeviceSettings>()
-                DeviceSettingsScreen(
-                    deviceId = route.deviceId,
-                    homeViewModel = homeViewModel,
-                    devicesViewModel = devicesViewModel,
-                    settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
-                    onNavigateBack = { navController.navigateUp() },
-                    onSendFiles = { onSendFiles(listOf(route.deviceId)) },
-                    onOpenMediaSettings = { navController.navigate(VeyroDestination.DeviceMedia) },
-                    onOpenMessagesSettings = { navController.navigate(VeyroDestination.DeviceMessages) },
-                    onRequestMessagingPermissions = onRequestMessagingPermissions,
-                    onRequestPhotosPermission = onRequestPhotosPermission,
-                )
-            }
-
-            composable<VeyroDestination.DeviceMedia> {
-                MediaSettingsScreen(
-                    settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
-                    onNavigateBack = { navController.navigateUp() },
-                )
-            }
-
-            composable<VeyroDestination.DeviceMessages> {
-                MessagesSettingsScreen(
-                    settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
-                    onNavigateBack = { navController.navigateUp() },
-                    onRequestMessagingPermissions = onRequestMessagingPermissions,
-                )
-            }
+            rootGraph(
+                navController = navController,
+                viewModelFactory = viewModelFactory,
+                homeViewModel = homeViewModel,
+                devicesViewModel = devicesViewModel,
+                onSendFiles = onSendFiles,
+                onSendFolder = onSendFolder,
+                onRequestMessagingPermissions = onRequestMessagingPermissions,
+                onRequestPhotosPermission = onRequestPhotosPermission,
+                onFixLocalNetwork = onFixLocalNetwork,
+            )
         }
 
-        // Drawn after the graph, so it floats above every screen.
+        // Declared after the graph, so it is drawn over every screen.
         ActiveTransferBanner(
             activeTransfer = bannerTransfer,
             onDismiss = { bannerModel.dismiss() },
-            onClick = { showTransferDialog = true },
+            onClick = { detailsOpen = true },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth(),
         )
     }
 
-    if (showTransferDialog && activeTransfer != null) {
+    if (detailsOpen && activeTransfer != null) {
         ActiveTransferDialog(
             activeTransfer = activeTransfer,
             onCancel = { transferCoordinator?.cancel() },
             onDismiss = {
-                showTransferDialog = false
+                detailsOpen = false
                 if (activeTransfer?.isTerminal == true) bannerModel.dismiss()
             },
-            onViewFile = { uriStr ->
-                runCatching {
-                    val uri = Uri.parse(uriStr)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: "*/*"
-                        setDataAndType(uri, mime)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(Intent.createChooser(intent, "Open file with..."))
-                }
-            },
+            onViewFile = { uriString -> openInViewer(context, uriString) },
+        )
+    }
+}
+
+/** Shows Clipboard once when [requested] turns true (the notification was tapped), then calls [onShown]. */
+@Composable
+private fun ShowClipboardOnRequest(navController: NavHostController, requested: Boolean, onShown: () -> Unit) {
+    LaunchedEffect(requested) {
+        if (!requested) return@LaunchedEffect
+        val alreadyThere = navController.currentDestination?.hasRoute(VeyroDestination.Clipboard::class) == true
+        if (!alreadyThere) {
+            navController.navigate(VeyroDestination.Clipboard) { launchSingleTop = true }
+        }
+        onShown()
+    }
+}
+
+/** Lets the user pick an app to open a received file; a missing handler is ignored. */
+private fun openInViewer(context: Context, uriString: String) {
+    runCatching {
+        val uri = Uri.parse(uriString)
+        val mimeType = runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: "*/*"
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(view, "Open file with..."))
+    }
+}
+
+/** A pushed screen: a titled page whose back arrow pops the root stack. */
+@Composable
+private fun DetailPage(
+    title: String,
+    navController: NavController,
+    content: @Composable (PaddingValues) -> Unit,
+) {
+    VeyroDetailScaffold(title = title, onNavigateBack = { navController.navigateUp() }) { padding ->
+        content(padding)
+    }
+}
+
+/** Every destination of the root graph. The tabs themselves are inside [MainScreen]. */
+private fun NavGraphBuilder.rootGraph(
+    navController: NavHostController,
+    viewModelFactory: ViewModelProvider.Factory,
+    homeViewModel: HomeViewModel,
+    devicesViewModel: DevicesViewModel,
+    onSendFiles: (deviceIds: List<String>) -> Unit,
+    onSendFolder: ((deviceIds: List<String>) -> Unit)?,
+    onRequestMessagingPermissions: () -> Unit,
+    onRequestPhotosPermission: () -> Unit,
+    onFixLocalNetwork: () -> Unit,
+) {
+    composable<VeyroDestination.Main> {
+        MainScreen(
+            rootNavController = navController,
+            viewModelFactory = viewModelFactory,
+            homeViewModel = homeViewModel,
+            devicesViewModel = devicesViewModel,
+            onRequestMessagingPermissions = onRequestMessagingPermissions,
+            onSendFiles = onSendFiles,
+            onFixLocalNetwork = onFixLocalNetwork,
+            onSendFolder = onSendFolder,
+        )
+    }
+
+    composable<VeyroDestination.KeepConnected> {
+        DetailPage("Keep Veyro connected", navController) { padding ->
+            KeepConnectedScreen(
+                viewModel = viewModel<KeepConnectedViewModel>(factory = viewModelFactory),
+                onFixLocalNetwork = onFixLocalNetwork,
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+
+    composable<VeyroDestination.Pairing> {
+        DetailPage("Add device", navController) { padding ->
+            PairingScreen(
+                viewModel = viewModel<PairingViewModel>(factory = viewModelFactory),
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+
+    composable<VeyroDestination.Receive> {
+        DetailPage("Receive", navController) { padding ->
+            ReceiveScreen(
+                viewModel = viewModel<ReceiveViewModel>(factory = viewModelFactory),
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+
+    composable<VeyroDestination.Clipboard> {
+        DetailPage("Clipboard", navController) { padding ->
+            ClipboardScreen(
+                viewModel = viewModel<ClipboardViewModel>(factory = viewModelFactory),
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+
+    composable<VeyroDestination.DeviceSettings> { entry ->
+        val deviceId = entry.toRoute<VeyroDestination.DeviceSettings>().deviceId
+        DeviceSettingsScreen(
+            deviceId = deviceId,
+            homeViewModel = homeViewModel,
+            devicesViewModel = devicesViewModel,
+            settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
+            onNavigateBack = { navController.navigateUp() },
+            onSendFiles = { onSendFiles(listOf(deviceId)) },
+            onOpenMediaSettings = { navController.navigate(VeyroDestination.DeviceMedia) },
+            onOpenMessagesSettings = { navController.navigate(VeyroDestination.DeviceMessages) },
+            onRequestMessagingPermissions = onRequestMessagingPermissions,
+            onRequestPhotosPermission = onRequestPhotosPermission,
+        )
+    }
+
+    composable<VeyroDestination.DeviceMedia> {
+        MediaSettingsScreen(
+            settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
+            onNavigateBack = { navController.navigateUp() },
+        )
+    }
+
+    composable<VeyroDestination.DeviceMessages> {
+        MessagesSettingsScreen(
+            settingsViewModel = viewModel<SettingsViewModel>(factory = viewModelFactory),
+            onNavigateBack = { navController.navigateUp() },
+            onRequestMessagingPermissions = onRequestMessagingPermissions,
         )
     }
 }

@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/settings/components/LogoHeader.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.settings
 
 import android.content.Context
@@ -22,23 +20,26 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
+private const val ICON_PIXELS = 256
+
 /**
- * App logo above the settings list.
+ * The Veyro launcher icon and name at the top of the settings list.
  *
- * Veyro change: shows Veyro's own launcher icon, read from the package manager, because the icon
- * lives in `:app` and this module cannot reference its resources. Sefirah's splash glyph is not used.
+ * The icon is read back from the package manager because it is declared in `:app`, which this
+ * module cannot reference. If it cannot be read (previews, unusual launchers) only the name shows.
  */
 @Composable
 internal fun LogoHeader() {
     val context = LocalContext.current
-    val icon = remember { loadAppIcon(context) }
+    val launcherIcon = remember(context) { renderLauncherIcon(context) }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (icon != null) {
+        launcherIcon?.let { bitmap ->
             Image(
-                bitmap = icon,
+                bitmap = bitmap,
                 contentDescription = null,
                 modifier = Modifier
                     .padding(top = 24.dp, bottom = 8.dp)
@@ -54,12 +55,13 @@ internal fun LogoHeader() {
     }
 }
 
-private fun loadAppIcon(context: Context): ImageBitmap? = runCatching {
+/** Draws the app's launcher drawable (adaptive icons included) into a square bitmap. */
+private fun renderLauncherIcon(context: Context): ImageBitmap? = try {
     val drawable = context.packageManager.getApplicationIcon(context.packageName)
-    val size = 256
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    drawable.setBounds(0, 0, size, size)
-    drawable.draw(canvas)
+    val bitmap = Bitmap.createBitmap(ICON_PIXELS, ICON_PIXELS, Bitmap.Config.ARGB_8888)
+    drawable.setBounds(0, 0, ICON_PIXELS, ICON_PIXELS)
+    drawable.draw(Canvas(bitmap))
     bitmap.asImageBitmap()
-}.getOrNull()
+} catch (_: Exception) {
+    null
+}

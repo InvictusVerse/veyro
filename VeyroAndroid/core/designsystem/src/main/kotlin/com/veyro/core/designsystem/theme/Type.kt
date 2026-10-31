@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/ui/theme/Type.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.theme
 
 import androidx.compose.material3.Typography
@@ -9,10 +7,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * Sefirah's typography: the Material 3 type scale with one override, bodyLarge. Veyro's earlier
- * bold display/headline scale is gone so text sizes match Sefirah's screens.
+ * Veyro's text scale: stock Material 3 sizes everywhere, with a single deviation. Body text gets
+ * 16 sp on a 24 sp line and slightly wider tracking so paragraphs in cards stay easy to read.
  */
-internal val VeyroTypography = Typography(
+internal val VeyroTypography: Typography = Typography(
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
@@ -23,10 +21,10 @@ internal val VeyroTypography = Typography(
 )
 
 /**
- * Monospace style for device fingerprints and pairing PINs.
+ * Fixed-pitch style for device fingerprints.
  *
- * This is a correctness concern, not decoration: a fingerprint comparison between two screens is
- * only reliable if the glyphs are unambiguous and the grouping is stable (REQ-I05, REQ-U04).
+ * Two people comparing a fingerprint on two screens need glyphs that cannot be confused and a
+ * grouping that does not reflow, which is why this is monospace (REQ-I05, REQ-U04).
  */
 public val VeyroCodeStyle: TextStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
@@ -35,10 +33,7 @@ public val VeyroCodeStyle: TextStyle = TextStyle(
     letterSpacing = 2.sp,
 )
 
-/**
- * Large monospace for the 6-digit pairing PIN display.
- * Slightly larger and bolder than VeyroCodeStyle to fill the pairing dialog.
- */
+/** Monospace style for the six-digit pairing PIN: bigger and bolder than [VeyroCodeStyle]. */
 public val VeyroPinStyle: TextStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
     fontWeight = FontWeight.Bold,
@@ -46,9 +41,7 @@ public val VeyroPinStyle: TextStyle = TextStyle(
     letterSpacing = 6.sp,
 )
 
-/**
- * Metric display style for bytes / transfer speed — large and readable.
- */
+/** Headline number for a transfer size or speed. */
 public val VeyroMetricStyle: TextStyle = TextStyle(
     fontFamily = FontFamily.Default,
     fontWeight = FontWeight.Bold,
@@ -56,9 +49,7 @@ public val VeyroMetricStyle: TextStyle = TextStyle(
     letterSpacing = 0.sp,
 )
 
-/**
- * Smaller sub-metric for secondary numbers (e.g. "of 2.4 MB").
- */
+/** Companion line under a [VeyroMetricStyle] number, for example "of 2.4 MB". */
 public val VeyroMetricSubStyle: TextStyle = TextStyle(
     fontFamily = FontFamily.Default,
     fontWeight = FontWeight.Medium,

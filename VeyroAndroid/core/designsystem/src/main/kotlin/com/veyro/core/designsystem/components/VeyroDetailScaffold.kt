@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/devices/MediaSessionSettingsScreen.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components
 
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,9 +13,9 @@ import androidx.compose.ui.Modifier
 import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
- * The frame every pushed screen uses: a [TopAppBar] with a back arrow and the title, as on
- * Sefirah's device sub-screens. Veyro change: extracted so Send, Receive, Pairing and the device
- * screens share it instead of each declaring its own bar.
+ * Frame for any screen pushed on top of the main tabs: a top bar with a back arrow, the [title]
+ * and optional [actions], above the [content]. Send, Receive, Pairing and the device screens use
+ * this one frame instead of each building its own bar.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,17 +28,25 @@ public fun VeyroDetailScaffold(
 ) {
     Scaffold(
         modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(VeyroIcons.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = actions,
-            )
-        },
+        topBar = { DetailTopBar(title = title, onNavigateBack = onNavigateBack, actions = actions) },
         content = content,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailTopBar(
+    title: String,
+    onNavigateBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    TopAppBar(
+        title = { Text(title) },
+        navigationIcon = {
+            IconButton(onClick = onNavigateBack) {
+                Icon(VeyroIcons.ArrowBack, contentDescription = "Back")
+            }
+        },
+        actions = actions,
     )
 }

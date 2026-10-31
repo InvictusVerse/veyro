@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/devices/DeviceScreen.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.devices
 
 import androidx.compose.foundation.layout.Arrangement
@@ -38,15 +36,17 @@ import com.veyro.core.designsystem.icons.VeyroIcons
 import com.veyro.core.model.DeviceId
 import com.veyro.core.model.fingerprint
 import com.veyro.ui.components.rememberTickingClock
+import com.veyro.ui.home.HomeUiState
 import com.veyro.ui.home.HomeViewModel
+import com.veyro.ui.home.PairedDeviceUi
 
 /**
- * Paired devices, one card each with every action for that device on the card: connect or
- * disconnect, send files, lock a PC, settings, rename and remove. Filtered by the top bar's
- * search (name or fingerprint). The "Add device" button is the host's floating action button.
+ * The Devices tab: every paired device as one card with all of its actions (connect or
+ * disconnect, send files, lock a PC, settings, rename, remove). The top bar's search narrows the
+ * list by name or fingerprint, and "Add device" is the host's floating action button.
  *
  * A trust store that failed its HMAC is reported above the list (REQ-I09). Discovery runs while
- * the screen is started so Connect has endpoints.
+ * the screen is started, so Connect has endpoints to use.
  */
 @Composable
 public fun DevicesScreen(
@@ -63,23 +63,23 @@ public fun DevicesScreen(
 ) {
     val home by homeViewModel.state.collectAsStateWithLifecycle()
     val trust by devicesViewModel.state.collectAsStateWithLifecycle()
-    var removingId by rememberSaveable { mutableStateOf<String?>(null) }
-    var renamingId by rememberSaveable { mutableStateOf<String?>(null) }
-    val snackbar = remember { SnackbarHostState() }
+    var renameTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var removeTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    val snackbarHost = remember { SnackbarHostState() }
 
     LifecycleStartEffect(Unit) {
         homeViewModel.acquireDiscovery()
         onStopOrDispose { homeViewModel.releaseDiscovery() }
     }
 
-    // Lock reports back through Home's one-shot message.
+    // The result of "lock" arrives as Home's one-shot message; show it, then clear it.
     LaunchedEffect(home.message) {
-        val message = home.message ?: return@LaunchedEffect
-        snackbar.showSnackbar(message)
+        val text = home.message ?: return@LaunchedEffect
+        snackbarHost.showSnackbar(text)
         homeViewModel.messageShown()
     }
 
-    // "Last connected 5 min ago" moves on while the screen is open.
+    // Keeps "Last connected 5 min ago" current while the screen stays open.
     val now = rememberTickingClock(periodMillis = 30_000)
 
     if (trust.isLoading) {
@@ -89,106 +89,74 @@ public fun DevicesScreen(
         return
     }
 
-    val devices = home.pairedDevices
-    val filteredDevices = remember(devices, searchQuery) {
-        if (searchQuery.isBlank()) {
-            devices
-        } else {
-            val q = searchQuery.trim()
-            devices.filter { device ->
-                device.name.contains(q, ignoreCase = true) ||
-                    device.deviceId.fingerprint().contains(q, ignoreCase = true)
-            }
-        }
-    }
+    val paired = home.pairedDevices
+    val visible = remember(paired, searchQuery) { paired.matching(searchQuery) }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            trust.loadError?.let { message ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    ),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Paired devices could not be verified", style = MaterialTheme.typography.titleMedium)
-                        Text(message, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+            trust.loadError?.let { problem ->
+                ProblemBanner(
+                    title = "Paired devices could not be verified",
+                    message = problem,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
 
-            if (filteredDevices.isEmpty()) {
+            if (visible.isEmpty()) {
                 EmptyScreen(
-                    message = if (devices.isEmpty()) {
+                    message = if (paired.isEmpty()) {
                         "No paired devices yet. Pair a PC or a phone once and it connects by itself from then on."
                     } else {
                         "No paired device matches \"$searchQuery\"."
                     },
                     icon = VeyroIcons.Desktop,
-                    action = if (devices.isEmpty()) {
+                    action = if (paired.isEmpty()) {
                         { Button(onClick = onAddDevice) { Text("Pair a device") } }
                     } else {
                         null
                     },
                 )
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    // Bottom room so the floating action button never covers the last card.
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    items(items = filteredDevices, key = { it.deviceId.value }) { device ->
-                        PairedDeviceCard(
-                            device = device,
-                            fingerprint = device.deviceId.fingerprint(),
-                            now = now,
-                            canLock = home.canLock(device),
-                            onOpenSettings = { onDeviceClick(device.deviceId) },
-                            onToggleConnection = { homeViewModel.toggleConnection(device.deviceId) },
-                            onSendFiles = { onSendFiles(device.deviceId) },
-                            onLock = { homeViewModel.lock(device.deviceId) },
-                            onRename = { renamingId = device.deviceId.value },
-                            onRemove = { removingId = device.deviceId.value },
-                            modifier = Modifier.animateItem(),
-                            onSendFolder = onSendFolder
-                                ?.takeIf { home.canSendFolder(device) }
-                                ?.let { send -> { send(device.deviceId) } },
-                        )
-                    }
-                }
+                PairedDeviceList(
+                    devices = visible,
+                    home = home,
+                    now = now,
+                    onOpenSettings = onDeviceClick,
+                    onToggleConnection = homeViewModel::toggleConnection,
+                    onLock = homeViewModel::lock,
+                    onSendFiles = onSendFiles,
+                    onSendFolder = onSendFolder,
+                    onRename = { renameTarget = it.value },
+                    onRemove = { removeTarget = it.value },
+                )
             }
         }
 
         SnackbarHost(
-            hostState = snackbar,
+            hostState = snackbarHost,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(16.dp),
         )
     }
 
-    val renaming = devices.firstOrNull { it.deviceId.value == renamingId }
-    if (renaming != null) {
-        // ADR-059: a rename here is this phone's nickname; the device keeps its own name.
-        val record = trust.devices.firstOrNull { it.deviceId == renaming.deviceId }
+    val toRename = paired.firstOrNull { it.deviceId.value == renameTarget }
+    if (toRename != null) {
+        // ADR-059: renaming here sets this phone's nickname; the device keeps its own name.
+        val record = trust.devices.firstOrNull { it.deviceId == toRename.deviceId }
         RenameDialog(
-            currentName = renaming.name,
-            onDismiss = { renamingId = null },
+            currentName = toRename.name,
+            onDismiss = { renameTarget = null },
             onRename = {
-                devicesViewModel.rename(renaming.deviceId, it)
-                renamingId = null
+                devicesViewModel.rename(toRename.deviceId, it)
+                renameTarget = null
             },
             supportingText = "Only this phone uses this name.",
             ownName = record?.name,
             onUseOwnName = if (record?.nickname != null) {
                 {
-                    devicesViewModel.useOwnName(renaming.deviceId)
-                    renamingId = null
+                    devicesViewModel.useOwnName(toRename.deviceId)
+                    renameTarget = null
                 }
             } else {
                 null
@@ -196,27 +164,108 @@ public fun DevicesScreen(
         )
     }
 
-    // ADR-042 and ADR-057: the other device forgets this phone too, now or when it next connects.
-    val removing = devices.firstOrNull { it.deviceId.value == removingId }
-    if (removing != null) {
-        AlertDialog(
-            onDismissRequest = { removingId = null },
-            title = { Text("Remove ${removing.name}?") },
-            text = {
-                Text(
-                    "This phone and ${removing.name} forget each other. If ${removing.name} is not " +
-                        "connected now, it is told the next time it connects. To use it again, pair it again.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    devicesViewModel.revoke(removing.deviceId)
-                    removingId = null
-                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { removingId = null }) { Text("Cancel") }
+    val toRemove = paired.firstOrNull { it.deviceId.value == removeTarget }
+    if (toRemove != null) {
+        RemoveDeviceDialog(
+            name = toRemove.name,
+            onDismiss = { removeTarget = null },
+            onConfirm = {
+                devicesViewModel.revoke(toRemove.deviceId)
+                removeTarget = null
             },
         )
+    }
+}
+
+/** Devices whose name or fingerprint contains [query]; everything when the query is blank. */
+private fun List<PairedDeviceUi>.matching(query: String): List<PairedDeviceUi> {
+    val needle = query.trim()
+    if (needle.isEmpty()) return this
+    return filter {
+        it.name.contains(needle, ignoreCase = true) || it.deviceId.fingerprint().contains(needle, ignoreCase = true)
+    }
+}
+
+@Composable
+private fun PairedDeviceList(
+    devices: List<PairedDeviceUi>,
+    home: HomeUiState,
+    now: Long,
+    onOpenSettings: (DeviceId) -> Unit,
+    onToggleConnection: (DeviceId) -> Unit,
+    onLock: (DeviceId) -> Unit,
+    onSendFiles: (DeviceId) -> Unit,
+    onSendFolder: ((DeviceId) -> Unit)?,
+    onRename: (DeviceId) -> Unit,
+    onRemove: (DeviceId) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        // Room under the last card so the floating action button never covers it.
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        items(items = devices, key = { it.deviceId.value }) { device ->
+            val id = device.deviceId
+            PairedDeviceCard(
+                device = device,
+                fingerprint = id.fingerprint(),
+                now = now,
+                canLock = home.canLock(device),
+                onOpenSettings = { onOpenSettings(id) },
+                onToggleConnection = { onToggleConnection(id) },
+                onSendFiles = { onSendFiles(id) },
+                onLock = { onLock(id) },
+                onRename = { onRename(id) },
+                onRemove = { onRemove(id) },
+                modifier = Modifier.animateItem(),
+                onSendFolder = if (onSendFolder != null && home.canSendFolder(device)) {
+                    { onSendFolder(id) }
+                } else {
+                    null
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The confirmation before trust is revoked (ADR-042, ADR-057): the other device forgets this
+ * phone too, now if it is connected and otherwise the next time it connects.
+ */
+@Composable
+internal fun RemoveDeviceDialog(name: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remove $name?") },
+        text = {
+            Text(
+                "This phone and $name forget each other. If $name is not connected now, " +
+                    "it is told the next time it connects. To use it again, pair it again.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** An error-coloured card for a problem the user must see above a list. */
+@Composable
+internal fun ProblemBanner(title: String, message: String, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(message, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }

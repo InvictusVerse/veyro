@@ -1,43 +1,33 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/settings/components/BasePreferenceWidget.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components.preference
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.StartOffset
-import androidx.compose.animation.core.StartOffsetType
-import androidx.compose.animation.core.repeatable
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import kotlin.time.Duration.Companion.seconds
 
 /**
- * One settings row: optional leading icon, title, optional subcomponent, optional trailing widget.
+ * The frame of one settings row: an optional leading [icon], a column with the [title] and an
+ * optional [subcomponent], and an optional trailing [widget]. The whole row is clickable when
+ * [onClick] is set.
  *
- * Veyro change: the highlight is a plain composable effect rather than `Modifier.composed`.
+ * If [LocalPreferenceHighlighted] is true the row flashes once, shortly after it first appears.
  */
 @Composable
 public fun BasePreferenceWidget(
@@ -48,84 +38,85 @@ public fun BasePreferenceWidget(
     onClick: (() -> Unit)? = null,
     widget: @Composable (() -> Unit)? = null,
 ) {
-    val highlighted = LocalPreferenceHighlighted.current
-    val minHeight = LocalPreferenceMinHeight.current
+    val flashStrength = rememberFlashStrength(requested = LocalPreferenceHighlighted.current)
+    val flashColor = MaterialTheme.colorScheme.surfaceTint
+
     Row(
         modifier = modifier
-            .background(highlightColor(highlighted))
-            .sizeIn(minHeight = minHeight)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .heightIn(min = LocalPreferenceMinHeight.current)
+            .drawBehind {
+                // Read here, in the draw phase, so each animation frame only redraws.
+                val strength = flashStrength.value
+                if (strength > 0f) drawRect(flashColor.copy(alpha = FLASH_PEAK_ALPHA * strength))
+            }
+            .tappable(onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
             Box(
-                modifier = Modifier.padding(start = PrefsHorizontalPadding, end = 8.dp),
-                content = { icon() },
-            )
+                modifier = Modifier.padding(
+                    start = PreferenceMetrics.sideInset,
+                    end = PreferenceMetrics.iconEndGap,
+                ),
+            ) {
+                icon()
+            }
         }
+
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = PrefsVerticalPadding),
+                .padding(vertical = PreferenceMetrics.verticalInset),
         ) {
             if (!title.isNullOrBlank()) {
                 Text(
-                    modifier = Modifier.padding(horizontal = PrefsHorizontalPadding),
                     text = title,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 2,
+                    modifier = Modifier.padding(horizontal = PreferenceMetrics.sideInset),
                     style = MaterialTheme.typography.titleLarge,
-                    fontSize = TitleFontSize,
+                    fontSize = PreferenceMetrics.titleSize,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             subcomponent?.invoke(this)
         }
+
         if (widget != null) {
-            Box(
-                modifier = Modifier.padding(end = PrefsHorizontalPadding),
-                content = { widget() },
-            )
+            Box(modifier = Modifier.padding(end = PreferenceMetrics.sideInset)) {
+                widget()
+            }
         }
     }
 }
 
+private fun Modifier.tappable(action: (() -> Unit)?): Modifier =
+    if (action == null) this else clickable(onClick = action)
+
+/**
+ * Drives the one-off attention flash: 0 = off, 1 = full tint. Pulses twice after a short delay,
+ * stays lit, then fades out, about three seconds in total. Only runs when [requested] was true
+ * when the row first entered the composition.
+ */
 @Composable
-private fun highlightColor(highlighted: Boolean): Color {
-    var highlightFlag by remember { mutableStateOf(false) }
+private fun rememberFlashStrength(requested: Boolean): State<Float> {
+    val strength = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        if (highlighted) {
-            highlightFlag = true
-            delay(3.seconds)
-            highlightFlag = false
+        if (!requested) return@LaunchedEffect
+        delay(FLASH_LEAD_IN_MS)
+        repeat(FLASH_PULSES) {
+            strength.animateTo(1f, tween(FLASH_STEP_MS))
+            strength.animateTo(0f, tween(FLASH_STEP_MS))
         }
+        strength.animateTo(1f, tween(FLASH_STEP_MS))
+        delay(FLASH_HOLD_MS)
+        strength.animateTo(0f, tween(FLASH_STEP_MS))
     }
-    val highlight by animateColorAsState(
-        targetValue = if (highlightFlag) {
-            MaterialTheme.colorScheme.surfaceTint.copy(alpha = .12f)
-        } else {
-            Color.Transparent
-        },
-        animationSpec = if (highlightFlag) {
-            repeatable(
-                iterations = 5,
-                animation = tween(durationMillis = 200),
-                repeatMode = RepeatMode.Reverse,
-                initialStartOffset = StartOffset(
-                    offsetMillis = 600,
-                    offsetType = StartOffsetType.Delay,
-                ),
-            )
-        } else {
-            tween(200)
-        },
-        label = "highlight",
-    )
-    return highlight
+    return strength.asState()
 }
 
-internal val TrailingWidgetBuffer = 16.dp
-// 20 dp (Sefirah uses 16): long subtitles and fingerprints need air from the screen edge (ADR-038).
-internal val PrefsHorizontalPadding = 20.dp
-internal val PrefsVerticalPadding = 16.dp
-internal val TitleFontSize = 16.sp
+private const val FLASH_PEAK_ALPHA = 0.12f
+private const val FLASH_LEAD_IN_MS = 600L
+private const val FLASH_HOLD_MS = 1400L
+private const val FLASH_STEP_MS = 200
+private const val FLASH_PULSES = 2

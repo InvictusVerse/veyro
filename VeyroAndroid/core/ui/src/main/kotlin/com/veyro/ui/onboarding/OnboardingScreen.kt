@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/onboarding/OnboardingScreen.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.onboarding
 
 import androidx.activity.compose.BackHandler
@@ -14,8 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -35,16 +35,16 @@ import com.veyro.core.network.LocalNetworkState
 import com.veyro.ui.onboarding.components.PageIndicator
 
 /**
- * First-run onboarding host (ADR-030): Welcome, Device name, Features, Pair, Done, in Sefirah's
- * pager with the page indicator and the primary button in the bottom bar.
+ * First-run onboarding host (ADR-030). It shows the five steps Welcome, Device name, Features,
+ * Pair and Done in a pager, with the progress indicator and the primary action in a bottom bar.
  *
- * Veyro changes from Sefirah's pager: the current page lives in [OnboardingViewModel] and the pager
- * follows it (swiping is off), so rotation keeps the place and Back always means "the previous
- * page". Only the current page and the one being left are composed, so the Pair page starts its
- * discovery when it is reached and not while the user is still on Features. Optional pages get a
- * Skip action and the primary button's label follows the page.
+ * The current step lives in [OnboardingViewModel]; the pager only follows it and cannot be
+ * swiped, so rotation keeps the place and Back always returns to the previous step. Just the
+ * current step and the one being left are composed, which means the Pair step starts its
+ * discovery when it is reached and not while the user is still choosing features. The Features
+ * step has a Skip action and the primary button label follows the step.
  *
- * [viewModelFactory] builds the regular PairingViewModel the Pair page reuses.
+ * [viewModelFactory] builds the regular PairingViewModel that the Pair step reuses.
  */
 @Composable
 public fun OnboardingScreen(
@@ -57,107 +57,129 @@ public fun OnboardingScreen(
     onFixLocalNetwork: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-
     val pagerState = rememberPagerState(initialPage = state.stepIndex) { state.stepCount }
 
+    // The view model is the source of truth for the step; scroll the pager to match it.
     LaunchedEffect(state.stepIndex) {
         if (pagerState.currentPage != state.stepIndex) {
-            pagerState.animateScrollToPage(page = state.stepIndex)
+            pagerState.animateScrollToPage(state.stepIndex)
         }
     }
 
     BackHandler(enabled = state.canGoBack) { viewModel.back() }
 
-    // Grants happen in system screens; re-read whenever the user comes back.
-    LifecycleResumeEffect(Unit) {
+    // Permissions are granted in system screens, so read them again whenever the user returns.
+    LifecycleResumeEffect(viewModel) {
         viewModel.refreshAccess()
         onPauseOrDispose { }
     }
 
     Scaffold(
         modifier = modifier,
-        topBar = {
-            Spacer(modifier = Modifier.statusBarsPadding().padding(16.dp))
-        },
+        topBar = { Spacer(Modifier.statusBarsPadding().padding(16.dp)) },
         bottomBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 30.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PageIndicator(
-                    modifier = Modifier.width(100.dp),
-                    pageCount = state.stepCount,
-                    selectedPage = state.stepIndex,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (state.step == OnboardingStep.FEATURES) {
-                        TextButton(onClick = viewModel::skip) {
-                            Text(
-                                text = "Skip",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            )
-                        }
-                    }
-                    val skipsPairing = state.step == OnboardingStep.PAIR && state.paired == null
-                    TextButton(
-                        onClick = if (skipsPairing) viewModel::skip else viewModel::next,
-                        enabled = state.step != OnboardingStep.DEVICE_NAME || state.deviceName.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                        ),
-                        shape = RoundedCornerShape(size = 6.dp),
-                    ) {
-                        Text(
-                            text = primaryLabel(state),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                    }
-                }
-            }
+            OnboardingBottomBar(
+                state = state,
+                onSkip = viewModel::skip,
+                onNext = viewModel::next,
+            )
         },
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .padding(paddingValues)
-                .fillMaxSize(),
-        ) {
-            HorizontalPager(
-                state = pagerState,
-                userScrollEnabled = false,
-                beyondViewportPageCount = 0,
-            ) { index ->
-                val composeIt = index == state.stepIndex || index == pagerState.settledPage
-                if (composeIt) {
-                    when (OnboardingStep.entries[index]) {
-                        OnboardingStep.WELCOME -> WelcomePage()
-                        OnboardingStep.DEVICE_NAME -> DeviceNamePage(
-                            name = state.deviceName,
-                            onNameChange = viewModel::setDeviceNameDraft,
-                            onDone = viewModel::next,
-                        )
-                        OnboardingStep.FEATURES -> FeaturesPage(
-                            features = state.features,
-                            onToggle = viewModel::setFeatureEnabled,
-                            onAccessChanged = viewModel::refreshAccess,
-                        )
-                        // The Pair page belongs to the pairing flow and is hosted here unchanged.
-                        OnboardingStep.PAIR -> PairPage(
-                            viewModelFactory = viewModelFactory,
-                            localNetwork = localNetwork,
-                            onFixLocalNetwork = onFixLocalNetwork,
-                        )
-                        OnboardingStep.DONE -> DonePage(paired = state.paired)
-                    }
-                } else {
-                    Box(Modifier.fillMaxSize())
-                }
+    ) { innerPadding ->
+        OnboardingPager(
+            pagerState = pagerState,
+            state = state,
+            viewModel = viewModel,
+            viewModelFactory = viewModelFactory,
+            localNetwork = localNetwork,
+            onFixLocalNetwork = onFixLocalNetwork,
+            modifier = Modifier.padding(innerPadding).fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun OnboardingBottomBar(
+    state: OnboardingViewModel.UiState,
+    onSkip: () -> Unit,
+    onNext: () -> Unit,
+) {
+    // On the Pair step with nothing paired, the primary button leaves the step instead of advancing.
+    val primaryLeavesPairing = state.step == OnboardingStep.PAIR && state.paired == null
+    val labelStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 30.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PageIndicator(
+            pageCount = state.stepCount,
+            selectedPage = state.stepIndex,
+            modifier = Modifier.width(100.dp),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (state.step == OnboardingStep.FEATURES) {
+                TextButton(onClick = onSkip) { Text("Skip", style = labelStyle) }
+            }
+            Button(
+                onClick = if (primaryLeavesPairing) onSkip else onNext,
+                enabled = state.step != OnboardingStep.DEVICE_NAME || state.deviceName.isNotBlank(),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = ButtonDefaults.TextButtonContentPadding,
+                colors = ButtonDefaults.buttonColors(
+                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                ),
+            ) {
+                Text(primaryLabel(state), style = labelStyle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingPager(
+    pagerState: PagerState,
+    state: OnboardingViewModel.UiState,
+    viewModel: OnboardingViewModel,
+    viewModelFactory: ViewModelProvider.Factory,
+    localNetwork: LocalNetworkState,
+    onFixLocalNetwork: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier,
+        userScrollEnabled = false,
+        beyondViewportPageCount = 0,
+    ) { index ->
+        // Compose the target step and the step being left (for the scroll animation); leave the rest empty.
+        val isVisibleStep = index == state.stepIndex || index == pagerState.settledPage
+        if (!isVisibleStep) {
+            Box(Modifier.fillMaxSize())
+        } else {
+            when (OnboardingStep.entries[index]) {
+                OnboardingStep.WELCOME -> WelcomePage()
+                OnboardingStep.DEVICE_NAME -> DeviceNamePage(
+                    name = state.deviceName,
+                    onNameChange = viewModel::setDeviceNameDraft,
+                    onDone = viewModel::next,
+                )
+                OnboardingStep.FEATURES -> FeaturesPage(
+                    features = state.features,
+                    onToggle = viewModel::setFeatureEnabled,
+                    onAccessChanged = viewModel::refreshAccess,
+                )
+                // The Pair step belongs to the pairing flow and is hosted here as it is.
+                OnboardingStep.PAIR -> PairPage(
+                    viewModelFactory = viewModelFactory,
+                    localNetwork = localNetwork,
+                    onFixLocalNetwork = onFixLocalNetwork,
+                )
+                OnboardingStep.DONE -> DonePage(paired = state.paired)
             }
         }
     }

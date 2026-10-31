@@ -1,34 +1,32 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/home/components/FlowingPageIndicator.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.times
-import androidx.compose.ui.zIndex
 import kotlin.math.abs
+import kotlin.math.min
 
 /**
- * Dots for a horizontal pager; the active dot stretches toward the next one while swiping.
- * Veyro change: public API, and an accessibility label for the whole row.
+ * Page dots for a horizontal pager. While the user swipes, the dot of the page being left
+ * stretches towards its neighbour, the neighbour stretches back, and the highlight hands over
+ * between them. At rest it is a plain row of dots with the current page highlighted.
+ *
+ * @param currentPageOffset signed scroll distance from [currentPage] as a fraction of a page:
+ * positive while moving to the next page, negative while moving to the previous one.
  */
 @Composable
 public fun FlowingPageIndicator(
@@ -41,191 +39,104 @@ public fun FlowingPageIndicator(
 ) {
     if (pageCount <= 1) return
 
-    // Calculate which dot is receiving the flow animation
-    val targetPage = if (currentPageOffset > 0) {
-        if (currentPage < pageCount - 1) currentPage + 1 else currentPage
-    } else {
-        if (currentPage > 0) currentPage - 1 else currentPage
-    }
-
-    // Absolute offset for animation calculations
-    val absOffset = abs(currentPageOffset)
-    val isMovingForward = currentPageOffset > 0
-
-    // Basic measurements
-    val dotSize = 7.dp
-    val expansionWidth = 14.dp
-
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .semantics(mergeDescendants = true) { contentDescription = "Page ${currentPage + 1} of $pageCount" },
-        contentAlignment = Alignment.Center
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Page ${currentPage + 1} of $pageCount"
+            },
+        contentAlignment = Alignment.Center,
     ) {
-        // Static dots - using absolute positioning to maintain consistent layout
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                modifier = Modifier,
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                for (index in 0 until pageCount) {
-                    if (index != currentPage && index != targetPage) {
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = dotSize / 2)
-                                .height(dotSize)
-                                .width(dotSize)
-                                .clip(CircleShape)
-                                .background(inactiveColor)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = dotSize / 2)
-                                .height(dotSize)
-                                .width(dotSize)
-                        ) {
-                            // Only show base circles when not animating
-                            if (absOffset < 0.01f) {
-                                Box(
-                                    modifier = Modifier
-                                        .height(dotSize)
-                                        .width(dotSize)
-                                        .clip(CircleShape)
-                                        .background(if (index == currentPage) activeColor else inactiveColor)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Animated dots overlay - same container as static dots
-        if (absOffset >= 0.01f) {
-            val animationPhase = when {
-                absOffset < 0.25f -> 1  // Phase 1: Source dot expands to target
-                absOffset < 0.5f -> 2   // Phase 2: Target dot expands to source
-                absOffset < 0.75f -> 3  // Phase 3: Source dot shrinks back
-                else -> 4               // Phase 4: Target dot shrinks back
-            }
-
-            // Calculate horizontal positions for each dot
-            val totalDotsWidth = pageCount * dotSize + (pageCount - 1) * dotSize
-            val startX = -totalDotsWidth / 2 + dotSize / 2
-            val dotPositions = List(pageCount) { index ->
-                startX + index * (dotSize + dotSize)
-            }
-
-            val spaceBetweenDots = dotPositions[1] - dotPositions[0]
-
-            // Source dot animation
-            val sourceWidth = when (animationPhase) {
-                1 -> {
-                    // Phase 1: Expand toward target
-                    val progress = absOffset / 0.25f
-                    dotSize + progress * (expansionWidth - dotSize)
-                }
-                2 -> expansionWidth // Phase 2: Stay expanded
-                3 -> {
-                    // Phase 3: Shrink back
-                    val progress = (absOffset - 0.5f) / 0.25f
-                    expansionWidth * (1 - progress) + dotSize * progress
-                }
-                else -> dotSize // Phase 4: Back to circle
-            }
-
-            // Calculate source dot movement and position
-
-            val moveProgress = when (animationPhase) {
-                1 -> absOffset / 0.25f                 // In phase 1, move from 0 to 1
-                2, 3 -> 1f                            // In phases 2 and 3, stay at full movement
-                4 -> 1f - ((absOffset - 0.75f) / 0.25f) // In phase 4, move back from 1 to 0
-                else -> 0f                            // Safety for unexpected cases
-            }
-            
-            // Calculate how far to move (up to half the distance between dots)
-            val movementDistance = (spaceBetweenDots / 2) * moveProgress
-            
-            // Set source dot position based on direction
-            val sourcePosition = if (isMovingForward) {
-                // Moving forward: source dot moves right
-                dotPositions[currentPage] + movementDistance
-            } else {
-                // Moving backward: source dot moves left
-                dotPositions[currentPage] - movementDistance
-            }
-
-            // Draw source dot
-            Box(
-                modifier = Modifier
-                    .offset(x = sourcePosition)
-                    .height(dotSize)
-                    .width(sourceWidth)
-                    .zIndex(if (animationPhase < 3) 2f else 0f)
-                    .clip(RoundedCornerShape(50))
-                    .background(activeColor)
-            )
-
-            // Target dot animation
-            val targetWidth = when (animationPhase) {
-                1 -> dotSize // Phase 1: Just a circle
-                2 -> {
-                    // Phase 2: Expand toward source
-                    val progress = (absOffset - 0.25f) / 0.25f
-                    dotSize + progress * (expansionWidth - dotSize)
-                }
-                3 -> expansionWidth // Phase 3: Stay expanded
-                else -> {
-                    // Phase 4: Shrink back
-                    val progress = (absOffset - 0.75f) / 0.25f
-                    expansionWidth * (1 - progress) + dotSize * progress
-                }
-            }
-
-            // Color transition for target dot
-            val colorProgress = if (animationPhase == 1) 0f else minOf(1f, (absOffset - 0.25f) / 0.5f)
-            val targetColor = Color(
-                red = inactiveColor.red + colorProgress * (activeColor.red - inactiveColor.red),
-                green = inactiveColor.green + colorProgress * (activeColor.green - inactiveColor.green),
-                blue = inactiveColor.blue + colorProgress * (activeColor.blue - inactiveColor.blue),
-                alpha = inactiveColor.alpha + colorProgress * (activeColor.alpha - inactiveColor.alpha)
-            )
-
-            // Calculate target dot movement (opposite of source dot)
-            val targetMoveProgress = when (animationPhase) {
-                1 -> 0f                              // In phase 1, don't move yet
-                2 -> (absOffset - 0.25f) / 0.25f     // In phase 2, move from 0 to 1
-                3, 4 -> 1f                          // In phases 3 and 4, stay at full movement
-                else -> 0f                          // Safety for unexpected cases
-            }
-            
-            // Calculate movement distance for target
-            val targetMovementDistance = (spaceBetweenDots / 2) * targetMoveProgress
-            
-            // Set target dot position based on direction
-            val targetPosition = if (isMovingForward) {
-                // Moving forward: target dot moves left
-                dotPositions[targetPage] - targetMovementDistance
-            } else {
-                // Moving backward: target dot moves right
-                dotPositions[targetPage] + targetMovementDistance
-            }
-
-            // Draw target dot
-            Box(
-                modifier = Modifier
-                    .offset(x = targetPosition)
-                    .height(dotSize)
-                    .width(targetWidth)
-                    .zIndex(if (animationPhase >= 3) 2f else 1f)
-                    .clip(RoundedCornerShape(50))
-                    .background(targetColor)
+        Canvas(modifier = Modifier.size(width = DOT_PITCH * pageCount, height = DOT_DIAMETER)) {
+            drawDots(
+                pageCount = pageCount,
+                currentPage = currentPage,
+                pageOffset = currentPageOffset,
+                activeColor = activeColor,
+                inactiveColor = inactiveColor,
             )
         }
     }
 }
+
+private val DOT_DIAMETER = 7.dp
+
+/** Distance between the centres of two neighbouring dots. */
+private val DOT_PITCH = 14.dp
+
+/** Width of a dot at its most stretched. */
+private val STRETCHED_WIDTH = 14.dp
+
+/** Below this scroll fraction the dots are drawn as a resting row. */
+private const val REST_THRESHOLD = 0.01f
+
+private fun DrawScope.drawDots(
+    pageCount: Int,
+    currentPage: Int,
+    pageOffset: Float,
+    activeColor: Color,
+    inactiveColor: Color,
+) {
+    val diameter = DOT_DIAMETER.toPx()
+    val pitch = DOT_PITCH.toPx()
+    val stretched = STRETCHED_WIDTH.toPx()
+
+    val progress = abs(pageOffset)
+    val movingForward = pageOffset > 0f
+    val neighbour = when {
+        movingForward -> if (currentPage < pageCount - 1) currentPage + 1 else currentPage
+        else -> if (currentPage > 0) currentPage - 1 else currentPage
+    }
+    val flowing = progress >= REST_THRESHOLD
+
+    fun centreOf(page: Int): Float = pitch * (page + 0.5f)
+
+    fun pill(centreX: Float, width: Float, color: Color) {
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(centreX - width / 2f, 0f),
+            size = Size(width, diameter),
+            cornerRadius = CornerRadius(diameter / 2f),
+        )
+    }
+
+    // The two dots that take part in the hand-over are skipped here while flowing; they are
+    // drawn below with their animated width, position and colour.
+    for (page in 0 until pageCount) {
+        if (flowing && (page == currentPage || page == neighbour)) continue
+        pill(centreOf(page), diameter, if (page == currentPage) activeColor else inactiveColor)
+    }
+    if (!flowing) return
+
+    // One scroll fraction drives both dots through four quarter-page steps. The leaving dot
+    // stretches over the first quarter and relaxes over the third; the arriving dot stretches
+    // over the second quarter and relaxes over the last.
+    val direction = if (movingForward) 1f else -1f
+    val halfPitch = pitch / 2f
+
+    val leavingStretch = min(ramp(progress, 0f, 0.25f), 1f - ramp(progress, 0.5f, 0.75f))
+    val leavingShift = min(ramp(progress, 0f, 0.25f), 1f - ramp(progress, 0.75f, 1f))
+    val leavingCentre = centreOf(currentPage) + direction * halfPitch * leavingShift
+    val leavingWidth = mix(diameter, stretched, leavingStretch)
+
+    val arrivingStretch = min(ramp(progress, 0.25f, 0.5f), 1f - ramp(progress, 0.75f, 1f))
+    val arrivingShift = ramp(progress, 0.25f, 0.5f)
+    val arrivingCentre = centreOf(neighbour) - direction * halfPitch * arrivingShift
+    val arrivingWidth = mix(diameter, stretched, arrivingStretch)
+    val arrivingColor = lerpColor(inactiveColor, activeColor, ramp(progress, 0.25f, 0.75f))
+
+    // Whichever dot is further along the hand-over is drawn on top.
+    if (progress < 0.5f) {
+        pill(arrivingCentre, arrivingWidth, arrivingColor)
+        pill(leavingCentre, leavingWidth, activeColor)
+    } else {
+        pill(leavingCentre, leavingWidth, activeColor)
+        pill(arrivingCentre, arrivingWidth, arrivingColor)
+    }
+}
+
+/** Position of [value] within [from]..[to], clamped to 0..1. */
+private fun ramp(value: Float, from: Float, to: Float): Float =
+    ((value - from) / (to - from)).coerceIn(0f, 1f)
+
+private fun mix(start: Float, end: Float, fraction: Float): Float = start + (end - start) * fraction

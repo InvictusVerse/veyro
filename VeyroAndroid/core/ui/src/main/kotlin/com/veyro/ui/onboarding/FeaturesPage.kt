@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/onboarding/PermissionStep.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.onboarding
 
 import android.content.ActivityNotFoundException
@@ -10,13 +8,12 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
@@ -32,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,16 +42,12 @@ import androidx.compose.ui.unit.dp
 import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
- * Page (c): the optional companion features, each off until switched on.
+ * Third onboarding step: the optional companion features, all off until the user switches them on.
  *
- * Kept from Sefirah: the elevated card of list items with a granted check or a Grant action,
- * the "optional" group label, re-reading state on resume, and detecting a sideloaded install to
- * explain Android 13's "restricted settings".
- *
- * Veyro changes: rows are features, not permissions. Turning a switch on stores the choice and
- * then asks for exactly what that feature still lacks: the runtime permissions first, then the
- * one system screen it needs. Nothing is asked for a feature left off, and every feature works
- * as "skip" by simply not touching it.
+ * Each row is a feature rather than a permission. Switching one on stores the choice and then
+ * asks for exactly what that feature still lacks: runtime permissions first, then the one system
+ * screen it needs. A feature left off asks for nothing, so skipping is simply not touching it.
+ * Access is shown under an enabled row and re-read by the host whenever the app resumes.
  */
 @Composable
 internal fun FeaturesPage(
@@ -62,39 +56,21 @@ internal fun FeaturesPage(
     onAccessChanged: () -> Unit,
 ) {
     val context = LocalContext.current
-    val sideloaded = remember { isSideloaded(context) }
-
-    // The system screen to open once the runtime dialog closes. Saveable: the dialog can outlive
-    // a rotation.
-    var pendingSpecial by rememberSaveable { mutableStateOf<SpecialAccess?>(null) }
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) {
-        onAccessChanged()
-        pendingSpecial?.let { openSpecialAccess(context, it) }
-        pendingSpecial = null
+    val requester = rememberAccessRequester(onAccessChanged)
+    // Android 13+ blocks some special access for apps installed outside Google Play.
+    val showRestrictedHint = remember(context) {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isSideloaded(context)
     }
 
-    fun requestWhatIsMissing(access: FeatureAccess) {
-        val special = access.specialAccess?.takeIf { !access.specialGranted }
-        if (access.missingPermissions.isNotEmpty()) {
-            pendingSpecial = special
-            permissionLauncher.launch(access.missingPermissions.toTypedArray())
-        } else if (special != null) {
-            openSpecialAccess(context, special)
-        }
-    }
-
-    // Photos on PC is on by default: ask for photo access once, when this page first shows, so
-    // the default actually works. Other features are still asked for only when switched on.
+    // Photos on the PC is on by default. Ask for photo access once, when this step first shows,
+    // so the default works; every other feature is asked about only when switched on.
     var askedForDefaults by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(features) {
         if (askedForDefaults) return@LaunchedEffect
-        val photos = features.firstOrNull { it.feature == OnboardingFeature.PHOTOS } ?: return@LaunchedEffect
+        val photos = features.firstOrNull { it.feature == OnboardingFeature.PHOTOS }
+            ?: return@LaunchedEffect
         askedForDefaults = true
-        if (photos.enabled && photos.access.missingPermissions.isNotEmpty()) {
-            permissionLauncher.launch(photos.access.missingPermissions.toTypedArray())
-        }
+        if (photos.enabled) requester.requestPermissionsOnly(photos.access)
     }
 
     OnboardingPage(
@@ -110,16 +86,16 @@ internal fun FeaturesPage(
         )
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column {
-                features.forEachIndexed { index, state ->
-                    if (index > 0) HorizontalDivider()
-                    FeatureItem(
-                        state = state,
-                        showRestrictedHint = sideloaded && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
-                        onToggle = { on ->
-                            onToggle(state.feature, on)
-                            if (on) requestWhatIsMissing(state.access)
+                features.forEachIndexed { position, featureState ->
+                    if (position > 0) HorizontalDivider()
+                    FeatureRow(
+                        state = featureState,
+                        showRestrictedHint = showRestrictedHint,
+                        onSwitch = { enabled ->
+                            onToggle(featureState.feature, enabled)
+                            if (enabled) requester.request(featureState.access)
                         },
-                        onGrant = { requestWhatIsMissing(state.access) },
+                        onGrant = { requester.request(featureState.access) },
                         onOpenAppInfo = { openAppInfo(context) },
                     )
                 }
@@ -128,81 +104,125 @@ internal fun FeaturesPage(
     }
 }
 
-private data class FeatureCopy(val title: String, val why: String)
+/**
+ * Runs the two-step request a feature can need. [askPermissions] shows the system permission
+ * dialog; [afterDialog] records which settings screen to open once that dialog has closed.
+ */
+private class AccessRequester(
+    private val context: Context,
+    private val askPermissions: (List<String>) -> Unit,
+    private val afterDialog: (SpecialAccess?) -> Unit,
+) {
+    fun request(access: FeatureAccess) {
+        val screen = access.specialAccess?.takeIf { !access.specialGranted }
+        if (access.missingPermissions.isNotEmpty()) {
+            afterDialog(screen)
+            askPermissions(access.missingPermissions)
+        } else if (screen != null) {
+            openSpecialAccess(context, screen)
+        }
+    }
 
-private fun OnboardingFeature.text(): FeatureCopy = when (this) {
-    OnboardingFeature.NOTIFICATIONS -> FeatureCopy(
-        "Notifications",
-        "See your phone's notifications on the PC and reply from there.",
-    )
-    OnboardingFeature.MEDIA -> FeatureCopy(
-        "Media",
-        "Control what is playing on your phone from the PC.",
-    )
-    OnboardingFeature.MESSAGES_AND_CALLS -> FeatureCopy(
-        "Messages and calls",
-        "Read and send texts and handle calls from the PC.",
-    )
-    OnboardingFeature.PHOTOS -> FeatureCopy(
-        "Photos",
-        "See recent camera photos and screenshots on the PC and open or save them there.",
-    )
-    OnboardingFeature.WALLPAPER -> FeatureCopy(
-        "Wallpaper on PC",
-        "The PC shows this phone with your exact wallpaper. Android only allows that with All files " +
-            "access; without it the PC uses your wallpaper's colours.",
-    )
-    OnboardingFeature.RING_AND_SOUND -> FeatureCopy(
-        "Ring and sound mode",
-        "Ring a lost phone and switch silent or Do Not Disturb from the PC.",
-    )
+    fun requestPermissionsOnly(access: FeatureAccess) {
+        if (access.missingPermissions.isNotEmpty()) askPermissions(access.missingPermissions)
+    }
 }
 
 @Composable
-private fun OnboardingFeature.icon(): ImageVector = when (this) {
-    OnboardingFeature.NOTIFICATIONS -> VeyroIcons.Notifications
-    OnboardingFeature.MEDIA -> VeyroIcons.PlayCircle
-    OnboardingFeature.MESSAGES_AND_CALLS -> VeyroIcons.Chat
-    OnboardingFeature.PHOTOS -> VeyroIcons.Image
-    OnboardingFeature.WALLPAPER -> VeyroIcons.Mobile
-    OnboardingFeature.RING_AND_SOUND -> VeyroIcons.VolumeUp
+private fun rememberAccessRequester(onAccessChanged: () -> Unit): AccessRequester {
+    val context = LocalContext.current
+    val latestOnAccessChanged by rememberUpdatedState(onAccessChanged)
+    // Saveable because the permission dialog can outlive a rotation.
+    var screenAfterDialog by rememberSaveable { mutableStateOf<SpecialAccess?>(null) }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        latestOnAccessChanged()
+        screenAfterDialog?.let { openSpecialAccess(context, it) }
+        screenAfterDialog = null
+    }
+
+    return remember(context, launcher) {
+        AccessRequester(
+            context = context,
+            askPermissions = { names -> launcher.launch(names.toTypedArray()) },
+            afterDialog = { screenAfterDialog = it },
+        )
+    }
 }
 
-private fun SpecialAccess.label(): String = when (this) {
+private class FeatureInfo(val icon: ImageVector, val title: String, val why: String)
+
+@Composable
+private fun infoFor(feature: OnboardingFeature): FeatureInfo = when (feature) {
+    OnboardingFeature.NOTIFICATIONS -> FeatureInfo(
+        icon = VeyroIcons.Notifications,
+        title = "Notifications",
+        why = "See your phone's notifications on the PC and reply from there.",
+    )
+    OnboardingFeature.MEDIA -> FeatureInfo(
+        icon = VeyroIcons.PlayCircle,
+        title = "Media",
+        why = "Control what is playing on your phone from the PC.",
+    )
+    OnboardingFeature.MESSAGES_AND_CALLS -> FeatureInfo(
+        icon = VeyroIcons.Chat,
+        title = "Messages and calls",
+        why = "Read and send texts and handle calls from the PC.",
+    )
+    OnboardingFeature.PHOTOS -> FeatureInfo(
+        icon = VeyroIcons.Image,
+        title = "Photos",
+        why = "See recent camera photos and screenshots on the PC and open or save them there.",
+    )
+    OnboardingFeature.WALLPAPER -> FeatureInfo(
+        icon = VeyroIcons.Mobile,
+        title = "Wallpaper on PC",
+        why = "The PC shows this phone with your exact wallpaper. Android only allows that with All files " +
+            "access; without it the PC uses your wallpaper's colours.",
+    )
+    OnboardingFeature.RING_AND_SOUND -> FeatureInfo(
+        icon = VeyroIcons.VolumeUp,
+        title = "Ring and sound mode",
+        why = "Ring a lost phone and switch silent or Do Not Disturb from the PC.",
+    )
+}
+
+private fun SpecialAccess.screenName(): String = when (this) {
     SpecialAccess.NOTIFICATION_LISTENER -> "Notification access"
     SpecialAccess.NOTIFICATION_POLICY -> "Do Not Disturb access"
     SpecialAccess.ALL_FILES -> "All files access"
 }
 
 @Composable
-private fun FeatureItem(
+private fun FeatureRow(
     state: FeatureState,
     showRestrictedHint: Boolean,
-    onToggle: (Boolean) -> Unit,
+    onSwitch: (Boolean) -> Unit,
     onGrant: () -> Unit,
     onOpenAppInfo: () -> Unit,
 ) {
-    val copy = state.feature.text()
+    val info = infoFor(state.feature)
     ListItem(
-        modifier = Modifier.toggleable(value = state.enabled, role = Role.Switch, onValueChange = onToggle),
+        // The whole row is the touch target; the Switch only shows the state.
+        modifier = Modifier.toggleable(value = state.enabled, role = Role.Switch, onValueChange = onSwitch),
         leadingContent = {
-            Icon(state.feature.icon(), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Icon(info.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         },
-        headlineContent = { Text(text = copy.title, style = MaterialTheme.typography.titleMedium) },
+        headlineContent = { Text(info.title, style = MaterialTheme.typography.titleMedium) },
         supportingContent = {
             Text(
-                text = copy.why,
+                text = info.why,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        // The row is the toggle target; the Switch only renders the state.
         trailingContent = { Switch(checked = state.enabled, onCheckedChange = null) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
-
     if (state.enabled) {
-        AccessStatus(
+        AccessNote(
             access = state.access,
             showRestrictedHint = showRestrictedHint,
             onGrant = onGrant,
@@ -211,29 +231,42 @@ private fun FeatureItem(
     }
 }
 
+/** Under an enabled feature: either "Access granted" or what is missing, with a Grant button. */
 @Composable
-private fun AccessStatus(
+private fun AccessNote(
     access: FeatureAccess,
     showRestrictedHint: Boolean,
     onGrant: () -> Unit,
     onOpenAppInfo: () -> Unit,
 ) {
-    val rowModifier = Modifier
+    val noteModifier = Modifier
         .fillMaxWidth()
         .padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
+
     if (access.granted) {
-        Row(modifier = rowModifier, verticalAlignment = Alignment.CenterVertically) {
-            Icon(VeyroIcons.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Access granted", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        Row(
+            modifier = noteModifier,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = VeyroIcons.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                text = "Access granted",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
         return
     }
-    val missing = buildList {
-        addAll(access.missingLabels)
-        access.specialAccess?.takeIf { !access.specialGranted }?.let { add(it.label()) }
-    }
-    Column(modifier = rowModifier) {
+
+    val pendingScreen = access.specialAccess?.takeIf { !access.specialGranted }
+    val missing = access.missingLabels + listOfNotNull(pendingScreen?.screenName())
+    Column(modifier = noteModifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Needs: ${missing.joinToString(", ")}",
@@ -242,8 +275,7 @@ private fun AccessStatus(
             )
             TextButton(onClick = onGrant) { Text("Grant") }
         }
-        val needsSpecial = access.specialAccess != null && !access.specialGranted
-        if (showRestrictedHint && needsSpecial) {
+        if (showRestrictedHint && pendingScreen != null) {
             Text(
                 text = "Installed from outside an app store? If Android says the setting is " +
                     "restricted, open App info, tap the three-dot menu, choose \"Allow restricted " +
@@ -260,7 +292,7 @@ private fun openSpecialAccess(context: Context, access: SpecialAccess) {
     val intent = when (access) {
         SpecialAccess.NOTIFICATION_LISTENER -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         SpecialAccess.NOTIFICATION_POLICY -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-        // Straight to Veyro's own switch rather than the list of every app.
+        // Open Veyro's own switch instead of the list of every app.
         SpecialAccess.ALL_FILES -> Intent(
             Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
             Uri.fromParts("package", context.packageName, null),
@@ -269,32 +301,38 @@ private fun openSpecialAccess(context: Context, access: SpecialAccess) {
     try {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
-        // Some builds hide the screen; the card keeps saying what is missing.
+        // Some builds hide the screen. Fall back to App info; the row still says what is missing.
         openAppInfo(context)
     }
 }
 
 private fun openAppInfo(context: Context) {
+    val details = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", context.packageName, null),
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
-        context.startActivity(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
+        context.startActivity(details)
     } catch (_: ActivityNotFoundException) {
-        // Nothing else to offer; the guidance text still explains the path.
+        // Nothing else to offer; the hint text already explains the path.
     }
 }
 
 /**
- * Whether this install came from somewhere other than Google Play. Android 13+ blocks
- * notification-listener access for such installs until "Allow restricted settings" is chosen.
+ * True unless the app was installed by Google Play. An unknown installer counts as sideloaded,
+ * because that is the case where Android 13+ hides notification-listener access behind
+ * "Allow restricted settings".
  */
-private fun isSideloaded(context: Context): Boolean = runCatching {
-    val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
-    } else {
-        @Suppress("DEPRECATION")
-        context.packageManager.getInstallerPackageName(context.packageName)
+private fun isSideloaded(context: Context): Boolean {
+    val installer = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getInstallerPackageName(context.packageName)
+        }
+    } catch (_: Exception) {
+        return true
     }
-    installer != "com.android.vending"
-}.getOrDefault(true)
+    return installer != "com.android.vending"
+}
