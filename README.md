@@ -104,6 +104,4 @@ dotnet test Veyro.Tests
 
 ## License
 
-GPL-3.0, see [`LICENSE`](LICENSE). Parts are adapted from
-[Sefirah](https://github.com/shrimqy/Sefirah) by shrimqy (GPL-3.0); see
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+GPL-3.0, see [`LICENSE`](LICENSE).

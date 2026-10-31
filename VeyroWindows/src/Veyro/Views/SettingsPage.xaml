@@ -637,8 +637,8 @@
                             <TextBlock Style="{StaticResource SettingsCardHeaderStyle}" Text="Licence" />
                             <TextBlock
                                 Style="{StaticResource SettingsCardDescriptionStyle}"
-                                Text="Veyro is free software under the GNU General Public License v3.0. Parts of its interface and Bluetooth calling are adapted from Sefirah by shrimqy (GPL-3.0); see THIRD_PARTY_NOTICES.md." />
-                            <HyperlinkButton Padding="0,4" Content="Sefirah on GitHub" NavigateUri="https://github.com/shrimqy/Sefirah" />
+                                Text="Veyro is free software under the GNU General Public License v3.0. It comes with no warranty." />
+                            <HyperlinkButton Padding="0,4" Content="InvictusVerse on GitHub" NavigateUri="https://github.com/InvictusVerse" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
