@@ -1,11 +1,12 @@
-<!-- Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/common/src/main/res/drawable/ic_keyboard_arrow_up.xml, GPL-3.0.
-     Modified for Veyro (renamed). Glyph: Google Material Symbols, Apache-2.0. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
+    android:viewportWidth="24"
+    android:viewportHeight="24">
   <path
-      android:fillColor="@android:color/white"
-      android:pathData="M480,432L324,588Q313,599 296,599Q279,599 268,588Q257,577 257,560Q257,543 268,532L452,348Q464,336 480,336Q496,336 508,348L692,532Q703,543 703,560Q703,577 692,588Q681,599 664,599Q647,599 636,588L480,432Z"/>
+      android:pathData="M6 14.5L12 8.5L18 14.5"
+      android:strokeColor="@android:color/white"
+      android:strokeWidth="2"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"/>
 </vector>
