@@ -65,6 +65,7 @@ Section "Install"
   File "/oname=veyro.cer" "${CERT}"
   File "/oname=runtime.msix" "${DEPENDENCY}"
   File "/oname=veyro.msix" "${MSIX}"
+  File "/oname=install-veyro.ps1" "${INSTALLSCRIPT}"
 
   DetailPrint "Trusting Veyro's publisher certificate..."
   nsExec::ExecToLog 'certutil.exe -f -addstore TrustedPeople "$PLUGINSDIR\veyro.cer"'
@@ -79,7 +80,11 @@ Section "Install"
   !insertmacro PS "Add-AppxPackage -Path '$PLUGINSDIR\runtime.msix' -ErrorAction SilentlyContinue; exit 0"
 
   DetailPrint "Installing Veyro..."
-  !insertmacro PS "try { Add-AppxPackage -Path '$PLUGINSDIR\veyro.msix' -ForceApplicationShutdown -ForceUpdateFromAnyVersion -ErrorAction Stop; exit 0 } catch { Write-Output $$_.Exception.Message; exit 1 }"
+  ; A script file, not -Command: braces and quotes in an inline command did not survive the
+  ; NSIS-to-PowerShell command line ("Missing closing '}'").
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-veyro.ps1" -Package "$PLUGINSDIR\veyro.msix"'
+  Pop $0
+  Pop $1
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "Veyro could not be installed:$\r$\n$1"
     Abort

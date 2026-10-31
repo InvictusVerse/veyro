@@ -53,7 +53,7 @@ if ($LASTEXITCODE -ne 0) { throw "Signing the MSIX failed ($LASTEXITCODE)." }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $setup = Join-Path $OutDir "Veyro-Setup-$version.exe"
 & $makensis /V2 "/DVERSION=$version" "/DMSIX=$($msix.FullName)" "/DDEPENDENCY=$($dependency.FullName)" `
-    "/DCERT=$cer" "/DTHUMBPRINT=$thumbprint" "/DOUTFILE=$setup" "/DICON=$(Join-Path $src 'Veyro\Assets\Veyro.ico')" `
+    "/DINSTALLSCRIPT=$(Join-Path $here 'install-veyro.ps1')" "/DCERT=$cer" "/DTHUMBPRINT=$thumbprint" "/DOUTFILE=$setup" "/DICON=$(Join-Path $src 'Veyro\Assets\Veyro.ico')" `
     (Join-Path $here 'veyro-setup.nsi')
 if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)." }
 
