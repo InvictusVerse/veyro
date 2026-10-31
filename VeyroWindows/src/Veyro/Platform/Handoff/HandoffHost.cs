@@ -13,6 +13,7 @@ namespace Veyro.Platform.Handoff;
 internal static class HandoffHost
 {
     private static HandoffPipeServer? _pipe;
+    private static IslandBridgeServer? _island;
 
     /// <summary>UI thread, once, after App.OnLaunched created the window.</summary>
     public static void StartMainInstance(DispatcherQueue ui, AppActivationArguments? startupActivation)
@@ -28,6 +29,17 @@ internal static class HandoffHost
         catch (Exception error)
         {
             VeyroTrace.Warn($"Hand-off startup failed: {error.GetType().Name}");
+        }
+
+        try
+        {
+            // ADR-076: the Islune dynamic island shows the phones and sends text and files.
+            _island = new IslandBridgeServer(ui);
+            _island.Start();
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Island bridge startup failed: {error.GetType().Name}");
         }
 
         if (startupActivation is not null) HandleActivation(startupActivation);
