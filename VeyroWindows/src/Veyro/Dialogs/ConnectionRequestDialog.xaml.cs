@@ -1,66 +1,74 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Dialogs/ConnectionRequestDialog.xaml.cs and
-// src/Sefirah/ViewModels/Dialogs/ConnectionRequestViewModel.cs, GPL-3.0.
-// Modified for Veyro.
 using Microsoft.UI.Xaml.Automation;
 
 namespace Veyro.Dialogs;
 
 /// <summary>
-/// Confirm-code pairing prompt (04-PROTOCOL.md 4.3, ADR-031): the phone's name, its fingerprint
-/// and the 6-digit code both screens show, with Accept / Decline. Declines by itself at the
-/// deadline and closes when the phone cancels. The code is shown, never logged.
+/// Confirm-code pairing prompt (04-PROTOCOL.md 4.3, ADR-031). Shows the phone's name and
+/// fingerprint and the six-digit code both screens display, with Accept and Decline. It declines
+/// by itself at the deadline and closes when the phone cancels the request. The code is shown on
+/// screen only; it is never logged.
 /// </summary>
 public sealed partial class ConnectionRequestDialog : ContentDialog
 {
-    private readonly DispatcherQueueTimer _timer;
+    private readonly DispatcherQueueTimer _tick;
     private readonly DateTimeOffset _deadline;
-    private readonly TimeSpan _window;
-    private readonly CancellationTokenRegistration _abandonedRegistration;
+    private readonly TimeSpan _totalWindow;
+    private readonly CancellationTokenRegistration _cancelHook;
 
+    /// <param name="phoneName">Name the phone announced; blank is shown as "Unnamed phone".</param>
+    /// <param name="fingerprint">The phone's fingerprint, for comparison with its own screen.</param>
+    /// <param name="code">The six-digit confirmation code.</param>
+    /// <param name="deadline">When the request expires and counts as declined.</param>
+    /// <param name="abandoned">Cancelled when the phone withdraws, which closes the dialog.</param>
     public ConnectionRequestDialog(
-        string peerName,
+        string phoneName,
         string fingerprint,
-        string sixDigitCode,
+        string code,
         DateTimeOffset deadline,
         CancellationToken abandoned = default)
     {
         InitializeComponent();
-        PeerNameText.Text = string.IsNullOrWhiteSpace(peerName) ? "Unnamed phone" : peerName;
-        FingerprintText.Text = fingerprint;
-        CodeText.Text = sixDigitCode.Length == 6 ? $"{sixDigitCode[..3]} {sixDigitCode[3..]}" : sixDigitCode;
-        // Read digit by digit, so a screen reader does not say "seventy-seven thousand".
-        AutomationProperties.SetName(CodeText, "Pairing code " + string.Join(' ', sixDigitCode.ToCharArray()));
+
+        PhoneNameBlock.Text = string.IsNullOrWhiteSpace(phoneName) ? "Unnamed phone" : phoneName;
+        PhoneFingerprintBlock.Text = fingerprint;
+        PairingCodeBlock.Text = code.Length == 6 ? $"{code[..3]} {code[3..]}" : code;
+        // Spell the digits out so a screen reader does not read the code as one large number.
+        AutomationProperties.SetName(PairingCodeBlock, "Pairing code " + string.Join(' ', code.ToCharArray()));
 
         _deadline = deadline;
-        _window = deadline - DateTimeOffset.UtcNow;
-        _timer = DispatcherQueue.GetForCurrentThread().CreateTimer();
-        _timer.Interval = TimeSpan.FromSeconds(1);
-        _timer.Tick += (_, _) => UpdateCountdown();
-        Opened += (_, _) => _timer.Start();
+        _totalWindow = deadline - DateTimeOffset.UtcNow;
+
+        DispatcherQueue queue = DispatcherQueue.GetForCurrentThread();
+        _tick = queue.CreateTimer();
+        _tick.Interval = TimeSpan.FromSeconds(1);
+        _tick.Tick += (_, _) => RefreshTimeLeft();
+
+        // The timer runs only while the dialog is open and is stopped when it closes.
+        Opened += (_, _) => _tick.Start();
         Closed += (_, _) =>
         {
-            _timer.Stop();
-            _abandonedRegistration.Dispose();
+            _tick.Stop();
+            _cancelHook.Dispose();
         };
 
-        // The phone cancelled or went away: the request no longer exists, so take it off screen.
-        DispatcherQueue queue = DispatcherQueue.GetForCurrentThread();
-        _abandonedRegistration = abandoned.Register(() => queue.TryEnqueue(Hide));
-        UpdateCountdown();
+        // The phone cancelled or went away: the request no longer exists, so remove the prompt.
+        _cancelHook = abandoned.Register(() => queue.TryEnqueue(Hide));
+
+        RefreshTimeLeft();
     }
 
-    private void UpdateCountdown()
+    private void RefreshTimeLeft()
     {
-        TimeSpan left = _deadline - DateTimeOffset.UtcNow;
-        if (left <= TimeSpan.Zero)
+        TimeSpan remaining = _deadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
         {
-            _timer.Stop();
-            // Closing without a button press is a decline.
+            _tick.Stop();
+            // Closing without pressing a button counts as declining.
             Hide();
             return;
         }
-        int seconds = (int)Math.Ceiling(left.TotalSeconds);
-        TimeoutText.Text = $"Declines automatically in {seconds} s";
-        CountdownRing.Value = _window <= TimeSpan.Zero ? 0 : Math.Clamp(left / _window * 100, 0, 100);
+
+        TimeLeftBlock.Text = $"Declines automatically in {(int)Math.Ceiling(remaining.TotalSeconds)} s";
+        TimeLeftBar.Value = _totalWindow <= TimeSpan.Zero ? 0 : Math.Clamp(remaining / _totalWindow * 100, 0, 100);
     }
 }

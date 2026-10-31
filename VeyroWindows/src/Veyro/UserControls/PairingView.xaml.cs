@@ -1,20 +1,19 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml.cs, GPL-3.0.
-// Modified for Veyro.
 using Veyro.Core.Diagnostics;
 using Veyro.Services;
 
 namespace Veyro.UserControls;
 
 /// <summary>
-/// The pairing screen body (ADR-030), shared by onboarding and Settings > Devices. The host calls
-/// <see cref="PairingViewModel.Start"/> and <see cref="PairingViewModel.Stop"/> so the pairing
-/// window is open only while the screen is visible.
+/// Body of the pairing screen (ADR-030), used by onboarding and by Settings > Devices. The host
+/// calls <see cref="PairingViewModel.Start"/> and <see cref="PairingViewModel.Stop"/>, so the
+/// pairing window is open only while the screen is visible. This control only renders.
 /// </summary>
 public sealed partial class PairingView : UserControl
 {
-    private int _renderVersion;
+    private const string NetworkSettingsUri = "ms-settings:network-status";
 
-    public PairingViewModel ViewModel => VeyroContainer.Instance.PairingViewModel;
+    /// <summary>Counts QR renders so a slow decode cannot overwrite a newer code.</summary>
+    private int _qrGeneration;
 
     public PairingView()
     {
@@ -22,30 +21,32 @@ public sealed partial class PairingView : UserControl
         Loaded += (_, _) =>
         {
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
-            _ = ShowQrAsync();
+            _ = RenderQrAsync();
         };
         Unloaded += (_, _) => ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
     }
 
+    public PairingViewModel ViewModel => VeyroContainer.Instance.PairingViewModel;
+
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(PairingViewModel.QrPng)) _ = ShowQrAsync();
+        if (e.PropertyName == nameof(PairingViewModel.QrPng)) _ = RenderQrAsync();
     }
 
-    private async Task ShowQrAsync()
+    private async Task RenderQrAsync()
     {
-        int version = ++_renderVersion;
+        int generation = ++_qrGeneration;
         byte[]? png = ViewModel.QrPng;
         if (png is null)
         {
-            QrImage.Source = null;
+            QrPicture.Source = null;
             return;
         }
+
         try
         {
             var bitmap = await QrCodeRenderer.ToBitmapAsync(png);
-            // A newer code may have arrived while this one decoded.
-            if (version == _renderVersion) QrImage.Source = bitmap;
+            if (generation == _qrGeneration) QrPicture.Source = bitmap;
         }
         catch (Exception error)
         {
@@ -60,15 +61,27 @@ public sealed partial class PairingView : UserControl
     private async void CheckAction_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: NetworkCheckUiModel check }) return;
+
         switch (check.Action)
         {
             case NetworkCheckAction.AddFirewallRule:
                 await ViewModel.AddFirewallRuleAsync();
                 break;
             case NetworkCheckAction.OpenNetworkSettings:
-                try { await global::Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:network-status")); }
-                catch (Exception error) { VeyroTrace.Error("Opening network settings failed", error); }
+                await OpenNetworkSettingsAsync();
                 break;
+        }
+    }
+
+    private static async Task OpenNetworkSettingsAsync()
+    {
+        try
+        {
+            await global::Windows.System.Launcher.LaunchUriAsync(new Uri(NetworkSettingsUri));
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Opening network settings failed", error);
         }
     }
 }

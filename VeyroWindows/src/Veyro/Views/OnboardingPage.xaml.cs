@@ -1,5 +1,3 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/Onboarding/WelcomePage.xaml.cs, GPL-3.0.
-// Modified for Veyro.
 using Microsoft.UI.Xaml.Media.Animation;
 using Veyro.Core.Diagnostics;
 using Veyro.Services;
@@ -7,13 +5,11 @@ using Veyro.Services;
 namespace Veyro.Views;
 
 /// <summary>
-/// First-run flow (ADR-030). The pairing window is open only while the Pair step is visible.
+/// First-run flow (ADR-030): welcome, get the Android app, pair, done. The pairing window is
+/// open only while the pairing step is on screen.
 /// </summary>
 public sealed partial class OnboardingPage : Page
 {
-    public OnboardingViewModel ViewModel => VeyroContainer.Instance.OnboardingViewModel;
-    private PairingViewModel Pairing => VeyroContainer.Instance.PairingViewModel;
-
     public OnboardingPage()
     {
         InitializeComponent();
@@ -25,14 +21,19 @@ public sealed partial class OnboardingPage : Page
         };
     }
 
+    public OnboardingViewModel ViewModel => VeyroContainer.Instance.OnboardingViewModel;
+
+    private PairingViewModel Pairing => VeyroContainer.Instance.PairingViewModel;
+
     private async void OnboardingPage_Loaded(object sender, RoutedEventArgs e)
     {
         Pairing.Paired += Pairing_Paired;
-        SetStep(ViewModel.Step);
+        GoToStep(ViewModel.Step);
+
         try
         {
             byte[] png = VeyroContainer.Instance.QrCodeRenderer.RenderPng(OnboardingViewModel.AndroidReleasesUrl);
-            AppQrImage.Source = await QrCodeRenderer.ToBitmapAsync(png);
+            DownloadQrPicture.Source = await QrCodeRenderer.ToBitmapAsync(png);
         }
         catch (Exception error)
         {
@@ -40,7 +41,8 @@ public sealed partial class OnboardingPage : Page
         }
     }
 
-    private void SetStep(int step)
+    /// <summary>Shows a step and keeps the pairing window open only for the pairing step.</summary>
+    private void GoToStep(int step)
     {
         ViewModel.Step = step;
         if (ViewModel.IsPair) Pairing.Start();
@@ -50,24 +52,31 @@ public sealed partial class OnboardingPage : Page
     private void Pairing_Paired(TrustedPeer peer)
     {
         ViewModel.ShowPaired(peer);
-        SetStep(OnboardingViewModel.SuccessStep);
+        GoToStep(OnboardingViewModel.SuccessStep);
     }
 
-    private void Next_Click(object sender, RoutedEventArgs e) => SetStep(ViewModel.Step + 1);
+    private void NextStep_Click(object sender, RoutedEventArgs e) => GoToStep(ViewModel.Step + 1);
 
-    private void Back_Click(object sender, RoutedEventArgs e) => SetStep(ViewModel.Step - 1);
+    private void PreviousStep_Click(object sender, RoutedEventArgs e) => GoToStep(ViewModel.Step - 1);
 
-    private async void PairLater_Click(object sender, RoutedEventArgs e) => await FinishAsync(null);
+    // "Pair later" and "Finish" both leave onboarding for the normal start page.
+    private async void FinishSetup_Click(object sender, RoutedEventArgs e) => await LeaveOnboardingAsync(settingsSection: null);
 
-    private async void Finish_Click(object sender, RoutedEventArgs e) => await FinishAsync(null);
+    private async void SetUpBluetooth_Click(object sender, RoutedEventArgs e) =>
+        await LeaveOnboardingAsync(MainPage.BluetoothSettingsSection);
 
-    private async void SetUpBluetooth_Click(object sender, RoutedEventArgs e) => await FinishAsync(MainPage.BluetoothSettingsSection);
-
-    private async Task FinishAsync(string? settingsSection)
+    private async Task LeaveOnboardingAsync(string? settingsSection)
     {
         Pairing.Stop();
-        try { await ViewModel.CompleteAsync(); }
-        catch (Exception error) { VeyroTrace.Error("Saving onboarding completion failed", error); }
+        try
+        {
+            await ViewModel.CompleteAsync();
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Error("Saving onboarding completion failed", error);
+        }
+
         Frame.Navigate(App.ShellPageType, settingsSection, new DrillInNavigationTransitionInfo());
         Frame.BackStack.Clear();
     }

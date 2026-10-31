@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/Settings/DeviceDiscoveryPage.xaml, GPL-3.0.
-  Modified for Veyro.
--->
 <UserControl
     x:Class="Veyro.UserControls.PairingView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -12,34 +8,120 @@
 
     <UserControl.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+        <Style x:Key="PairingCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+
+        <Style x:Key="PairingHintStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
+        <!--  One phone found on the network  -->
+        <DataTemplate x:Key="NearbyPhoneRow" x:DataType="models:NearbyPhoneUiModel">
+            <Grid
+                Padding="10,8"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                ColumnSpacing="12"
+                CornerRadius="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock
+                        FontWeight="SemiBold"
+                        Text="{x:Bind Name}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        FontFamily="Consolas"
+                        Style="{StaticResource PairingHintStyle}"
+                        Text="{x:Bind Detail}" />
+                </StackPanel>
+                <Border
+                    Grid.Column="2"
+                    Padding="8,2"
+                    VerticalAlignment="Center"
+                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                    CornerRadius="10"
+                    Visibility="{x:Bind IsPaired, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                        Text="Already paired" />
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <!--  One line of the network check: a result mark, what was found, an optional fix button  -->
+        <DataTemplate x:Key="NetworkCheckRow" x:DataType="models:NetworkCheckUiModel">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid Margin="0,2,0,0" VerticalAlignment="Top">
+                    <FontIcon
+                        AutomationProperties.Name="OK"
+                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                        Glyph="&#xE73E;"
+                        Visibility="{x:Bind IsOk, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <FontIcon
+                        AutomationProperties.Name="Problem"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        Glyph="&#xE7BA;"
+                        Visibility="{x:Bind IsProblem, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </Grid>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock
+                        FontWeight="SemiBold"
+                        Text="{x:Bind Title}"
+                        TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource PairingHintStyle}" Text="{x:Bind Detail}" />
+                </StackPanel>
+                <Button
+                    Grid.Column="2"
+                    VerticalAlignment="Center"
+                    Click="CheckAction_Click"
+                    Content="{x:Bind ActionText}"
+                    Tag="{x:Bind}"
+                    Visibility="{x:Bind HasAction, Converter={StaticResource BooleanToVisibilityConverter}}" />
+            </Grid>
+        </DataTemplate>
     </UserControl.Resources>
 
-    <Grid ColumnSpacing="16" RowSpacing="16">
+    <Grid ColumnSpacing="16">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" MinWidth="280" />
         </Grid.ColumnDefinitions>
 
-        <!--  QR code, countdown and the typed-code fallback  -->
+        <!--  Left card: this PC, the QR code, its countdown and the no-camera alternative  -->
         <Border
             Grid.Column="0"
             Padding="20"
             VerticalAlignment="Top"
-            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-            BorderThickness="1"
-            CornerRadius="8">
+            Style="{StaticResource PairingCardStyle}">
             <StackPanel Width="300" Spacing="12">
-                <TextBlock
-                    FontSize="16"
-                    FontWeight="SemiBold"
-                    Text="Scan with Veyro on your phone" />
-                <TextBlock
-                    FontSize="12"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Open Veyro on your phone and scan this code to pair. Scanning it is your approval, so no extra prompt appears on this PC."
-                    TextWrapping="Wrap" />
+                <StackPanel Spacing="4">
+                    <TextBlock
+                        FontSize="16"
+                        FontWeight="SemiBold"
+                        Text="Scan with Veyro on your phone" />
+                    <TextBlock
+                        Style="{StaticResource PairingHintStyle}"
+                        Text="Open Veyro on your phone and scan this code to pair. Scanning it is your approval, so no extra prompt appears on this PC." />
+                </StackPanel>
 
+                <!--  Exactly one of: the code, the expired notice, or the no-network notice is visible  -->
                 <Grid
                     Width="260"
                     Height="260"
@@ -50,10 +132,11 @@
                         CornerRadius="8"
                         Visibility="{x:Bind ViewModel.HasQr, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <Image
-                            x:Name="QrImage"
+                            x:Name="QrPicture"
                             AutomationProperties.Name="Pairing QR code"
                             Stretch="Uniform" />
                     </Border>
+
                     <StackPanel
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
@@ -63,17 +146,14 @@
                             FontSize="32"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Glyph="&#xE823;" />
+                        <TextBlock HorizontalAlignment="Center" Text="This code has expired." />
                         <TextBlock
                             HorizontalAlignment="Center"
-                            Text="This code has expired."
-                            TextAlignment="Center" />
-                        <TextBlock
-                            HorizontalAlignment="Center"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource PairingHintStyle}"
                             Text="Select New code to show a fresh one."
                             TextAlignment="Center" />
                     </StackPanel>
+
                     <StackPanel
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
@@ -92,15 +172,12 @@
                     </StackPanel>
                 </Grid>
 
-                <Grid ColumnSpacing="10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <!--  Time left for this code, and a way to replace it  -->
+                <StackPanel Orientation="Horizontal" Spacing="10">
                     <ProgressRing
                         Width="24"
                         Height="24"
+                        VerticalAlignment="Center"
                         AutomationProperties.Name="Time left for this code"
                         IsActive="True"
                         IsIndeterminate="False"
@@ -108,41 +185,41 @@
                         Minimum="0"
                         Value="{x:Bind ViewModel.ExpiryProgress, Mode=OneWay}" />
                     <TextBlock
-                        Grid.Column="1"
+                        MinWidth="120"
                         VerticalAlignment="Center"
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource PairingHintStyle}"
                         Text="{x:Bind ViewModel.RemainingText, Mode=OneWay}" />
                     <Button
-                        Grid.Column="2"
                         Click="NewCode_Click"
                         Content="New code"
                         ToolTipService.ToolTip="Replace the code and restart the five minutes" />
-                </Grid>
+                </StackPanel>
 
-                <MenuFlyoutSeparator />
+                <Rectangle Height="1" Fill="{ThemeResource ControlStrokeColorDefaultBrush}" />
 
                 <!--  ADR-031: the nearby-list path compares a code instead of typing one  -->
-                <StackPanel Orientation="Horizontal" Spacing="8">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
                     <FontIcon
                         VerticalAlignment="Top"
                         FontSize="14"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Glyph="&#xE8EA;" />
                     <TextBlock
-                        MaxWidth="270"
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="No camera? In Veyro on the phone, tap this PC in the nearby list. Both screens then show the same code: check it and click Accept here. Nothing to type."
-                        TextWrapping="Wrap" />
-                </StackPanel>
+                        Grid.Column="1"
+                        Style="{StaticResource PairingHintStyle}"
+                        Text="No camera? In Veyro on the phone, tap this PC in the nearby list. Both screens then show the same code: check it and click Accept here. Nothing to type." />
+                </Grid>
 
                 <StackPanel Spacing="2">
+                    <TextBlock Style="{StaticResource PairingHintStyle}" Text="This PC" />
                     <TextBlock
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="This PC" />
-                    <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.PcName, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                        FontWeight="SemiBold"
+                        Text="{x:Bind ViewModel.PcName, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis" />
                     <TextBlock
                         FontFamily="Consolas"
                         IsTextSelectionEnabled="True"
@@ -152,67 +229,20 @@
             </StackPanel>
         </Border>
 
+        <!--  Right column: phones found on the network, then the network check  -->
         <StackPanel Grid.Column="1" Spacing="16">
-            <!--  Nearby phones  -->
-            <Border
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
+
+            <Border Padding="16" Style="{StaticResource PairingCardStyle}">
                 <StackPanel Spacing="8">
                     <TextBlock
                         FontSize="16"
                         FontWeight="SemiBold"
                         Text="Nearby phones" />
-                    <TextBlock
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="Phones with Veyro open on this network. A name here is only a hint; pairing proves who is who."
-                        TextWrapping="Wrap" />
-                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.NearbyPhones, Mode=OneWay}">
+                    <TextBlock Style="{StaticResource PairingHintStyle}" Text="Phones with Veyro open on this network. A name here is only a hint; pairing proves who is who." />
+                    <ItemsRepeater ItemTemplate="{StaticResource NearbyPhoneRow}" ItemsSource="{x:Bind ViewModel.NearbyPhones, Mode=OneWay}">
                         <ItemsRepeater.Layout>
                             <StackLayout Orientation="Vertical" Spacing="4" />
                         </ItemsRepeater.Layout>
-                        <ItemsRepeater.ItemTemplate>
-                            <DataTemplate x:DataType="models:NearbyPhoneUiModel">
-                                <Grid
-                                    Padding="10,8"
-                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                    ColumnSpacing="12"
-                                    CornerRadius="6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon VerticalAlignment="Center" Glyph="&#xE8EA;" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
-                                        <TextBlock
-                                            FontWeight="SemiBold"
-                                            Text="{x:Bind Name}"
-                                            TextTrimming="CharacterEllipsis" />
-                                        <TextBlock
-                                            FontFamily="Consolas"
-                                            FontSize="12"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Text="{x:Bind Detail}" />
-                                    </StackPanel>
-                                    <Border
-                                        Grid.Column="2"
-                                        Padding="8,2"
-                                        VerticalAlignment="Center"
-                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                        CornerRadius="10"
-                                        Visibility="{x:Bind IsPaired, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <TextBlock
-                                            FontSize="12"
-                                            Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
-                                            Text="Already paired" />
-                                    </Border>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
                     <StackPanel
                         Orientation="Horizontal"
@@ -230,17 +260,13 @@
                 </StackPanel>
             </Border>
 
-            <!--  Network check: names the problem instead of failing silently  -->
-            <Border
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
+            <!--  Names what is wrong with the network instead of failing silently  -->
+            <Border Padding="16" Style="{StaticResource PairingCardStyle}">
                 <StackPanel Spacing="8">
-                    <Grid>
+                    <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock
@@ -248,66 +274,23 @@
                             FontSize="16"
                             FontWeight="SemiBold"
                             Text="Network check" />
-                        <StackPanel
+                        <ProgressRing
                             Grid.Column="1"
-                            Orientation="Horizontal"
-                            Spacing="8">
-                            <ProgressRing
-                                Width="16"
-                                Height="16"
-                                IsActive="{x:Bind ViewModel.IsCheckingNetwork, Mode=OneWay}" />
-                            <Button
-                                AutomationProperties.Name="Check the network again"
-                                Click="CheckAgain_Click"
-                                ToolTipService.ToolTip="Check again">
-                                <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                            </Button>
-                        </StackPanel>
+                            Width="16"
+                            Height="16"
+                            IsActive="{x:Bind ViewModel.IsCheckingNetwork, Mode=OneWay}" />
+                        <Button
+                            Grid.Column="2"
+                            AutomationProperties.Name="Check the network again"
+                            Click="CheckAgain_Click"
+                            ToolTipService.ToolTip="Check again">
+                            <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                        </Button>
                     </Grid>
-                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.NetworkChecks, Mode=OneWay}">
+                    <ItemsRepeater ItemTemplate="{StaticResource NetworkCheckRow}" ItemsSource="{x:Bind ViewModel.NetworkChecks, Mode=OneWay}">
                         <ItemsRepeater.Layout>
                             <StackLayout Orientation="Vertical" Spacing="8" />
                         </ItemsRepeater.Layout>
-                        <ItemsRepeater.ItemTemplate>
-                            <DataTemplate x:DataType="models:NetworkCheckUiModel">
-                                <Grid ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon
-                                        Margin="0,2,0,0"
-                                        VerticalAlignment="Top"
-                                        AutomationProperties.Name="OK"
-                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                        Glyph="&#xE73E;"
-                                        Visibility="{x:Bind IsOk, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                    <FontIcon
-                                        Margin="0,2,0,0"
-                                        VerticalAlignment="Top"
-                                        AutomationProperties.Name="Problem"
-                                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                        Glyph="&#xE7BA;"
-                                        Visibility="{x:Bind IsProblem, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
-                                        <TextBlock FontWeight="SemiBold" Text="{x:Bind Title}" TextWrapping="Wrap" />
-                                        <TextBlock
-                                            FontSize="12"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Text="{x:Bind Detail}"
-                                            TextWrapping="Wrap" />
-                                    </StackPanel>
-                                    <Button
-                                        Grid.Column="2"
-                                        VerticalAlignment="Center"
-                                        Click="CheckAction_Click"
-                                        Content="{x:Bind ActionText}"
-                                        Tag="{x:Bind}"
-                                        Visibility="{x:Bind HasAction, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
                 </StackPanel>
             </Border>
