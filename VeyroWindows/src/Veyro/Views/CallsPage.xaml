@@ -1,7 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
 <!--
-    Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/CallsPage.xaml, GPL-3.0.
-    Modified for Veyro: call history and the current call from CallsPageViewModel (ADR-027) on the
-    left, Sefirah's dial pad on the right. Contact search is not in Veyro's protocol yet.
+    Calls page (ADR-027, ADR-029). Left: the phone's call log and the call in progress. Right: a dial pad
+    that places the call on the phone. Bindings come from CallsPageViewModel. Contact search is not part
+    of Veyro's protocol yet.
 -->
 <Page
     x:Class="Veyro.Views.CallsPage"
@@ -15,19 +16,26 @@
     <Page.Resources>
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <Style x:Key="DialPadKeyStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
-            <Setter Property="MinHeight" Value="52" />
-            <Setter Property="MinWidth" Value="72" />
-            <Setter Property="Padding" Value="8,4" />
+        <!--  One key of the dial pad  -->
+        <Style x:Key="KeypadKeyStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="MinWidth" Value="76" />
+            <Setter Property="MinHeight" Value="54" />
+            <Setter Property="Padding" Value="0" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Stretch" />
             <Setter Property="FontSize" Value="22" />
             <Setter Property="FontWeight" Value="SemiLight" />
         </Style>
+
+        <!--  Round icon-only button without a frame  -->
+        <Style x:Key="QuietIconButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
     </Page.Resources>
 
     <Grid>
-        <!--  Phone not connected / feature off  -->
+        <!--  The phone is not paired or not connected  -->
         <StackPanel
             MaxWidth="440"
             Margin="24"
@@ -35,8 +43,14 @@
             VerticalAlignment="Center"
             Spacing="8"
             Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <FontIcon FontSize="36" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE717;" />
-            <TextBlock HorizontalAlignment="Center" FontSize="18" FontWeight="SemiBold" Text="Calls" />
+            <FontIcon
+                FontSize="36"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Glyph="&#xE717;" />
+            <TextBlock
+                HorizontalAlignment="Center"
+                Style="{StaticResource SubtitleTextBlockStyle}"
+                Text="Calls" />
             <TextBlock
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 Text="{x:Bind ViewModel.UnavailableText, Mode=OneWay}"
@@ -44,18 +58,16 @@
                 TextWrapping="Wrap" />
         </StackPanel>
 
-        <Grid Visibility="{x:Bind ViewModel.IsAvailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <Grid ColumnSpacing="0" Visibility="{x:Bind ViewModel.IsAvailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
-                <ColumnDefinition Width="*" MinWidth="280" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <!--  Call history  -->
+            <!--  Call log and call in progress  -->
             <Grid
                 Grid.Column="0"
-                Padding="24,20,16,0"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="0,0,1,0"
+                Padding="24,20,20,0"
                 RowSpacing="12">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -64,39 +76,31 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0">
+                <Grid Grid.Row="0" ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Spacing="4">
-                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="Calls" />
-                        <TextBlock
-                            FontSize="13"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="{x:Bind ViewModel.HeaderText, Mode=OneWay}"
-                            TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Calls" />
+                        <TextBlock Style="{StaticResource RowHintStyle}" Text="{x:Bind ViewModel.HeaderText, Mode=OneWay}" />
                     </StackPanel>
                     <Button
                         Grid.Column="1"
                         VerticalAlignment="Top"
                         AutomationProperties.Name="Refresh call history"
-                        Background="Transparent"
-                        BorderThickness="0"
                         Click="Refresh_Click"
+                        Style="{StaticResource QuietIconButtonStyle}"
                         ToolTipService.ToolTip="Refresh">
                         <FontIcon FontSize="14" Glyph="&#xE72C;" />
                     </Button>
                 </Grid>
 
-                <!--  Current call  -->
+                <!--  The call in progress, if any  -->
                 <Border
                     Grid.Row="1"
-                    Padding="16,12"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8"
+                    Style="{StaticResource RowSurfaceStyle}"
                     Visibility="{x:Bind ViewModel.HasCurrentCall, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
@@ -104,19 +108,27 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" VerticalAlignment="Center" Glyph="&#xE717;" />
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                        <FontIcon
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                            Glyph="&#xE717;" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock
-                                FontWeight="SemiBold"
+                                Style="{StaticResource BodyStrongTextBlockStyle}"
                                 Text="{x:Bind ViewModel.CurrentCallTitle, Mode=OneWay}"
                                 TextTrimming="CharacterEllipsis" />
                             <TextBlock
-                                FontSize="12"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource RowHintStyle}"
                                 Text="{x:Bind ViewModel.CurrentCallText, Mode=OneWay}"
-                                TextTrimming="CharacterEllipsis" />
+                                TextTrimming="CharacterEllipsis"
+                                TextWrapping="NoWrap" />
                         </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <StackPanel
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            Orientation="Horizontal"
+                            Spacing="8">
                             <Button
                                 Click="Answer_Click"
                                 Content="{x:Bind ViewModel.AnswerText, Mode=OneWay}"
@@ -138,12 +150,11 @@
                     </Grid>
                 </Border>
 
+                <!--  Progress and the result of the last action  -->
                 <StackPanel Grid.Row="2" Spacing="8">
                     <TextBlock
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource RowHintStyle}"
                         Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
-                        TextWrapping="Wrap"
                         Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     <ProgressBar
                         IsIndeterminate="True"
@@ -156,20 +167,21 @@
                     ItemsSource="{x:Bind ViewModel.Entries, Mode=OneWay}"
                     SelectionMode="None">
                     <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem">
+                        <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="8,0,16,0" />
+                            <Setter Property="Padding" Value="4,0,12,0" />
                         </Style>
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:CallLogItemViewModel">
-                            <Grid Height="64" Padding="0,8" ColumnSpacing="12">
+                            <Grid MinHeight="68" Padding="0,8" ColumnSpacing="12">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
+
                                 <Border
                                     Grid.Column="0"
                                     Width="40"
@@ -183,37 +195,39 @@
                                         Glyph="{x:Bind Glyph}"
                                         ToolTipService.ToolTip="{x:Bind TypeText}" />
                                 </Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <TextBlock
-                                        FontWeight="SemiBold"
+                                        Style="{StaticResource BodyStrongTextBlockStyle}"
                                         Text="{x:Bind Title}"
                                         TextTrimming="CharacterEllipsis" />
                                     <TextBlock
-                                        FontSize="12"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Style="{StaticResource RowHintStyle}"
                                         Text="{x:Bind Number}"
                                         TextTrimming="CharacterEllipsis"
+                                        TextWrapping="NoWrap"
                                         Visibility="{x:Bind HasNumberLine, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <TextBlock
-                                        FontSize="12"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Style="{StaticResource RowHintStyle}"
                                         Text="{x:Bind DetailText}"
-                                        TextTrimming="CharacterEllipsis" />
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="NoWrap" />
                                 </StackPanel>
+
                                 <TextBlock
                                     Grid.Column="2"
                                     VerticalAlignment="Center"
-                                    FontSize="12"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="{x:Bind TimeText}" />
+                                    Style="{StaticResource RowHintStyle}"
+                                    Text="{x:Bind TimeText}"
+                                    TextWrapping="NoWrap" />
+
                                 <Button
                                     Grid.Column="3"
                                     VerticalAlignment="Center"
                                     AutomationProperties.Name="{x:Bind CallLabel}"
-                                    Background="Transparent"
-                                    BorderThickness="0"
                                     Click="CallBack_Click"
                                     IsEnabled="{x:Bind CanCall}"
+                                    Style="{StaticResource QuietIconButtonStyle}"
                                     ToolTipService.ToolTip="Call on the phone">
                                     <FontIcon FontSize="14" Glyph="&#xE717;" />
                                 </Button>
@@ -235,100 +249,102 @@
             </Grid>
 
             <!--  Dial pad  -->
-            <StackPanel
+            <Border
                 Grid.Column="1"
-                Padding="16"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Spacing="16">
-                <TextBox
-                    x:Name="DialBox"
-                    MinWidth="236"
-                    HorizontalAlignment="Center"
-                    AutomationProperties.Name="Number to dial"
-                    FontSize="22"
-                    KeyDown="DialBox_KeyDown"
-                    MaxLength="64"
-                    PlaceholderText="Enter a number"
-                    Text="{x:Bind ViewModel.DialNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                    TextAlignment="Center" />
+                Width="312"
+                Margin="0,20,24,24"
+                Padding="18"
+                VerticalAlignment="Top"
+                Style="{StaticResource RowSurfaceStyle}">
+                <StackPanel Spacing="14">
+                    <TextBox
+                        x:Name="DialBox"
+                        AutomationProperties.Name="Number to dial"
+                        FontSize="22"
+                        KeyDown="DialBox_KeyDown"
+                        MaxLength="64"
+                        PlaceholderText="Enter a number"
+                        Text="{x:Bind ViewModel.DialNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        TextAlignment="Center" />
 
-                <Grid
-                    HorizontalAlignment="Center"
-                    ColumnSpacing="10"
-                    RowSpacing="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <Button Grid.Row="0" Grid.Column="0" Click="DialKey_Click" Content="1" Style="{StaticResource DialPadKeyStyle}" Tag="1" />
-                    <Button Grid.Row="0" Grid.Column="1" Click="DialKey_Click" Content="2" Style="{StaticResource DialPadKeyStyle}" Tag="2" />
-                    <Button Grid.Row="0" Grid.Column="2" Click="DialKey_Click" Content="3" Style="{StaticResource DialPadKeyStyle}" Tag="3" />
-                    <Button Grid.Row="1" Grid.Column="0" Click="DialKey_Click" Content="4" Style="{StaticResource DialPadKeyStyle}" Tag="4" />
-                    <Button Grid.Row="1" Grid.Column="1" Click="DialKey_Click" Content="5" Style="{StaticResource DialPadKeyStyle}" Tag="5" />
-                    <Button Grid.Row="1" Grid.Column="2" Click="DialKey_Click" Content="6" Style="{StaticResource DialPadKeyStyle}" Tag="6" />
-                    <Button Grid.Row="2" Grid.Column="0" Click="DialKey_Click" Content="7" Style="{StaticResource DialPadKeyStyle}" Tag="7" />
-                    <Button Grid.Row="2" Grid.Column="1" Click="DialKey_Click" Content="8" Style="{StaticResource DialPadKeyStyle}" Tag="8" />
-                    <Button Grid.Row="2" Grid.Column="2" Click="DialKey_Click" Content="9" Style="{StaticResource DialPadKeyStyle}" Tag="9" />
-                    <Button Grid.Row="3" Grid.Column="0" Click="DialKey_Click" Content="*" Style="{StaticResource DialPadKeyStyle}" Tag="*" />
-                    <Button
-                        Grid.Row="3"
-                        Grid.Column="1"
-                        AutomationProperties.Name="0, right-click for plus"
-                        Click="DialKey_Click"
-                        RightTapped="DialZero_RightTapped"
-                        Style="{StaticResource DialPadKeyStyle}"
-                        Tag="0">
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <TextBlock HorizontalAlignment="Center" Text="0" />
-                            <TextBlock HorizontalAlignment="Center" FontSize="12" Opacity="0.75" Text="+" />
-                        </StackPanel>
-                    </Button>
-                    <Button Grid.Row="3" Grid.Column="2" Click="DialKey_Click" Content="#" Style="{StaticResource DialPadKeyStyle}" Tag="#" />
-                </Grid>
+                    <Grid ColumnSpacing="8" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
 
-                <Grid HorizontalAlignment="Center" ColumnSpacing="10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="72" />
-                        <ColumnDefinition Width="72" />
-                        <ColumnDefinition Width="72" />
-                    </Grid.ColumnDefinitions>
-                    <Button
-                        Grid.Column="1"
-                        Width="48"
-                        Height="48"
-                        Padding="0"
-                        HorizontalAlignment="Center"
-                        AutomationProperties.Name="Call on the phone"
-                        Click="Dial_Click"
-                        CornerRadius="24"
-                        IsEnabled="{x:Bind ViewModel.CanDial, Mode=OneWay}"
-                        Style="{StaticResource AccentButtonStyle}"
-                        ToolTipService.ToolTip="Call on the phone">
-                        <FontIcon FontSize="18" Glyph="&#xE717;" />
-                    </Button>
-                    <Button
-                        Grid.Column="2"
-                        Width="48"
-                        Height="48"
-                        Padding="0"
-                        HorizontalAlignment="Center"
-                        AutomationProperties.Name="Delete last digit"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Click="Backspace_Click"
-                        ToolTipService.ToolTip="Delete">
-                        <FontIcon FontSize="18" Glyph="&#xE750;" />
-                    </Button>
-                </Grid>
-            </StackPanel>
+                        <Button Grid.Row="0" Grid.Column="0" Click="Key_Click" Content="1" Style="{StaticResource KeypadKeyStyle}" Tag="1" />
+                        <Button Grid.Row="0" Grid.Column="1" Click="Key_Click" Content="2" Style="{StaticResource KeypadKeyStyle}" Tag="2" />
+                        <Button Grid.Row="0" Grid.Column="2" Click="Key_Click" Content="3" Style="{StaticResource KeypadKeyStyle}" Tag="3" />
+                        <Button Grid.Row="1" Grid.Column="0" Click="Key_Click" Content="4" Style="{StaticResource KeypadKeyStyle}" Tag="4" />
+                        <Button Grid.Row="1" Grid.Column="1" Click="Key_Click" Content="5" Style="{StaticResource KeypadKeyStyle}" Tag="5" />
+                        <Button Grid.Row="1" Grid.Column="2" Click="Key_Click" Content="6" Style="{StaticResource KeypadKeyStyle}" Tag="6" />
+                        <Button Grid.Row="2" Grid.Column="0" Click="Key_Click" Content="7" Style="{StaticResource KeypadKeyStyle}" Tag="7" />
+                        <Button Grid.Row="2" Grid.Column="1" Click="Key_Click" Content="8" Style="{StaticResource KeypadKeyStyle}" Tag="8" />
+                        <Button Grid.Row="2" Grid.Column="2" Click="Key_Click" Content="9" Style="{StaticResource KeypadKeyStyle}" Tag="9" />
+                        <Button Grid.Row="3" Grid.Column="0" Click="Key_Click" Content="*" Style="{StaticResource KeypadKeyStyle}" Tag="*" />
+                        <Button
+                            Grid.Row="3"
+                            Grid.Column="1"
+                            AutomationProperties.Name="0, right-click for plus"
+                            Click="Key_Click"
+                            RightTapped="ZeroKey_RightTapped"
+                            Style="{StaticResource KeypadKeyStyle}"
+                            Tag="0">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock HorizontalAlignment="Center" Text="0" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontSize="12"
+                                    Opacity="0.7"
+                                    Text="+" />
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Row="3" Grid.Column="2" Click="Key_Click" Content="#" Style="{StaticResource KeypadKeyStyle}" Tag="#" />
+                    </Grid>
+
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button
+                            Grid.Column="1"
+                            Width="48"
+                            Height="48"
+                            Padding="0"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Call on the phone"
+                            Click="Dial_Click"
+                            CornerRadius="24"
+                            IsEnabled="{x:Bind ViewModel.CanDial, Mode=OneWay}"
+                            Style="{StaticResource AccentButtonStyle}"
+                            ToolTipService.ToolTip="Call on the phone">
+                            <FontIcon FontSize="18" Glyph="&#xE717;" />
+                        </Button>
+                        <Button
+                            Grid.Column="2"
+                            Width="48"
+                            Height="48"
+                            Padding="0"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Delete last digit"
+                            Click="Backspace_Click"
+                            Style="{StaticResource QuietIconButtonStyle}"
+                            ToolTipService.ToolTip="Delete">
+                            <FontIcon FontSize="18" Glyph="&#xE750;" />
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
         </Grid>
     </Grid>
 </Page>
