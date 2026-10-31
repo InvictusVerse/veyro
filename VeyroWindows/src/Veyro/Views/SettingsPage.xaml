@@ -142,7 +142,7 @@
                                 Loaded="UiStyleCombo_Loaded"
                                 SelectionChanged="UiStyleCombo_SelectionChanged">
                                 <ComboBoxItem Content="Modern" Tag="modern" />
-                                <ComboBoxItem Content="Classic" Tag="classic" />
+                                <ComboBoxItem Content="Classic (default)" Tag="classic" />
                             </ComboBox>
                         </Grid>
                     </Border>

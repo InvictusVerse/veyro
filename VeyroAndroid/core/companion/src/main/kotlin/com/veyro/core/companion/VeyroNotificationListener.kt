@@ -58,6 +58,18 @@ public class VeyroNotificationListener : NotificationListenerService() {
             )
         }
 
+        /**
+         * Access is granted but the system has not bound the listener (seen on HyperOS after an
+         * app update: notifications and media sessions then stay empty until a reboot). Asks the
+         * system to bind it again; harmless when it is already bound or access is off.
+         */
+        public fun rebindIfNeeded(context: Context) {
+            if (ListenerBridge.listener.value != null || !isAccessGranted(context)) return
+            runCatching {
+                requestRebind(ComponentName(context, VeyroNotificationListener::class.java))
+            }.onFailure { com.veyro.core.common.VeyroLog.w("NotificationListener") { "Rebind refused: ${it.javaClass.simpleName}" } }
+        }
+
         /** Opens the system screen where notification access is granted. */
         public fun accessSettingsIntent(): Intent =
             Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)

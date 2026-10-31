@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import com.veyro.core.companion.VeyroNotificationListener
 import com.veyro.core.service.BackgroundHost
 import com.veyro.core.service.ScreenShareServiceHost
 import com.veyro.di.VeyroContainer
@@ -70,6 +71,10 @@ public class VeyroApplication : Application(), BackgroundHost.Provider, ScreenSh
         // ADR-062: a placed widget follows the connection from now on; nothing is built without one.
         container.refreshWidgets()
         registerActivityLifecycleCallbacks(VisibilityTracker())
+        // After an update HyperOS can leave the notification listener unbound although access is
+        // granted: no notifications and no "now playing" on the PC. Give the system a moment to
+        // bind it by itself, then ask once more (and again whenever Veyro is opened).
+        android.os.Handler(mainLooper).postDelayed({ VeyroNotificationListener.rebindIfNeeded(this) }, 8_000)
     }
 
     /** Counts started Activities, so the offer notification knows when the prompt cannot be seen. */
@@ -83,6 +88,7 @@ public class VeyroApplication : Application(), BackgroundHost.Provider, ScreenSh
                 container.backgroundController.onAppVisible()
                 container.offerNotifier.start()
                 container.transferNotifier.start()
+                VeyroNotificationListener.rebindIfNeeded(this@VeyroApplication)
             }
         }
 

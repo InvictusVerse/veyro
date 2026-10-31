@@ -63,9 +63,10 @@ public sealed record AppSettings(
     int WebcamHeight = 720,
     int WebcamFps = 30,
     bool WebcamMirror = false,
-    // ADR-074: "modern" (every phone action visible on Home, floating controls in the mirror and
-    // camera windows) or "classic" (the earlier layout with the More menu and a toolbar).
-    string UiStyle = AppUiStyle.Modern
+    // ADR-074: "classic" (default for new installs: the side pane, the More menu and a toolbar) or
+    // "modern" (the dashboard Home, floating controls in the mirror and camera windows). A PC
+    // that already saved its settings keeps the layout it had.
+    string UiStyle = AppUiStyle.Classic
 );
 
 /// <summary>ADR-074: the two PC layouts, switched in Settings &gt; General.</summary>
