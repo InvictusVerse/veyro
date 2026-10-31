@@ -68,7 +68,7 @@ public sealed partial class OnboardingPage : Page
         Pairing.Stop();
         try { await ViewModel.CompleteAsync(); }
         catch (Exception error) { VeyroTrace.Error("Saving onboarding completion failed", error); }
-        Frame.Navigate(typeof(MainPage), settingsSection, new DrillInNavigationTransitionInfo());
+        Frame.Navigate(App.ShellPageType, settingsSection, new DrillInNavigationTransitionInfo());
         Frame.BackStack.Clear();
     }
 }

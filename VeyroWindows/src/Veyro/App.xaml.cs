@@ -525,6 +525,10 @@ public partial class App : Application
         VeyroContainer.Instance.BackgroundPower.WindowChanged();
     }
 
+    /// <summary>ADR-074: the window's page for the chosen layout (Modern by default, Classic is MainPage).</summary>
+    public static Type ShellPageType =>
+        AppUiStyle.IsClassic(VeyroContainer.Instance.SettingsStore.Current) ? typeof(MainPage) : typeof(ModernShellPage);
+
     /// <summary>Creates the main page (or onboarding) if the frame is empty. UI thread.</summary>
     private static void EnsurePages()
     {
@@ -532,7 +536,7 @@ public partial class App : Application
         var container = VeyroContainer.Instance;
         try
         {
-            frame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? typeof(MainPage) : typeof(OnboardingPage));
+            frame.Navigate(container.SettingsStore.Current.OnboardingCompleted ? ShellPageType : typeof(OnboardingPage));
         }
         catch (Exception error)
         {

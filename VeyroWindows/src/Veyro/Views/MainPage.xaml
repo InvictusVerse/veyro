@@ -169,20 +169,9 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <!--  ADR-074: Settings > General > Layout picks one of the two  -->
-                        <Grid
-                            x:Name="ClassicHomeHost"
+                        <userControls:DeviceControlCenter
                             Grid.Row="0"
-                            Visibility="Collapsed">
-                            <userControls:DeviceControlCenter Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        </Grid>
-                        <ScrollViewer
-                            x:Name="ModernHomeHost"
-                            Grid.Row="0"
-                            HorizontalScrollBarVisibility="Disabled"
-                            VerticalScrollBarVisibility="Auto">
-                            <userControls:ModernDeviceHome Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        </ScrollViewer>
+                            Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
                         <StackPanel Grid.Row="1" Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Rectangle Height="1" Fill="{ThemeResource ControlStrokeColorDefaultBrush}" />

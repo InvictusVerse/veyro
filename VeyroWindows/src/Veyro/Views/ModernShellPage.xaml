@@ -1,0 +1,123 @@
+<!--
+    ADR-074: the Modern layout's window. A left rail (Home, Messages, Calls, Photos, Notifications,
+    Transfers, Clipboard, Settings) and the page. Home is the full-width phone dashboard.
+    The Classic layout is MainPage; Settings > General > Layout switches between the two.
+-->
+<Page
+    x:Class="Veyro.Views.ModernShellPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:Veyro.Converters"
+    xmlns:userControls="using:Veyro.UserControls"
+    Background="{ThemeResource App.PageBackgroundBrush}">
+
+    <Page.Resources>
+        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Page.Resources>
+
+    <Grid
+        AllowDrop="True"
+        DragOver="Root_DragOver"
+        Drop="Root_Drop">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <userControls:TitleBar
+            Grid.Row="0"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top" />
+
+        <NavigationView
+            x:Name="Rail"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="True"
+            OpenPaneLength="220"
+            PaneDisplayMode="Left"
+            SelectionChanged="Rail_SelectionChanged">
+            <NavigationView.Resources>
+                <Thickness x:Key="NavigationViewContentGridBorderThickness">1,1,0,0</Thickness>
+                <CornerRadius x:Key="NavigationViewContentGridCornerRadius">10,0,0,0</CornerRadius>
+            </NavigationView.Resources>
+            <NavigationView.MenuItems>
+                <NavigationViewItem
+                    x:Name="HomeItem"
+                    Content="Home"
+                    Tag="Home">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE80F;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="MessagesItem"
+                    Content="Messages"
+                    Tag="Messages"
+                    Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8BD;" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge
+                            AutomationProperties.Name="Unread messages"
+                            Visibility="{x:Bind MessagesViewModel.HasUnread, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"
+                            Value="{x:Bind MessagesViewModel.UnreadCount, Mode=OneWay}" />
+                    </NavigationViewItem.InfoBadge>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="CallsItem"
+                    Content="Calls"
+                    Tag="Calls"
+                    Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE717;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="PhotosItem"
+                    Content="Photos"
+                    Tag="Photos"
+                    Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE91B;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="NotificationsItem"
+                    Content="Notifications"
+                    Tag="Notifications"
+                    Visibility="{x:Bind ViewModel.HasActiveDevice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xEA8F;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="TransfersItem"
+                    Content="Transfers"
+                    Tag="Transfers">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE898;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="ClipboardItem"
+                    Content="Clipboard"
+                    Tag="Clipboard">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xF0E3;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <userControls:ActiveTransferBanner Grid.Row="0" />
+                <Frame x:Name="ContentFrame" Grid.Row="1" />
+            </Grid>
+        </NavigationView>
+    </Grid>
+</Page>

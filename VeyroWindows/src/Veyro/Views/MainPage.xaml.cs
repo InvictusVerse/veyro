@@ -1,4 +1,4 @@
-// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/MainPage.xaml.cs, GPL-3.0.
+﻿// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/MainPage.xaml.cs, GPL-3.0.
 // Modified for Veyro.
 
 using Windows.ApplicationModel.DataTransfer;
@@ -60,18 +60,17 @@ public sealed partial class MainPage : Page
         ViewModel.PairRequested += OpenPairing;
         ViewModel.PropertyChanged += OnViewModelChanged;
         VeyroContainer.Instance.SettingsStore.SettingsChanged += OnSettingsChanged;
-        ApplyUiStyle();
     }
 
-    private void OnSettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(ApplyUiStyle);
-
-    /// <summary>ADR-074: Modern or Classic Home, at once.</summary>
-    private void ApplyUiStyle()
+    // ADR-074: this page is the Classic layout; choosing Modern swaps the whole window to ModernShellPage.
+    private void OnSettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(() =>
     {
-        bool classic = AppUiStyle.IsClassic(VeyroContainer.Instance.SettingsStore.Current);
-        ClassicHomeHost.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
-        ModernHomeHost.Visibility = classic ? Visibility.Collapsed : Visibility.Visible;
-    }
+        if (!AppUiStyle.IsClassic(settings) && Frame is { } frame && ReferenceEquals(frame.Content, this))
+        {
+            frame.Navigate(typeof(ModernShellPage), ModernShellPage.SettingsTarget);
+            frame.BackStack.Clear();
+        }
+    });
 
     private void Unsubscribe()
     {
@@ -168,77 +167,10 @@ public sealed partial class MainPage : Page
 
     private void PairPhone_Click(object sender, RoutedEventArgs e) => ViewModel.RequestPairing();
 
-    // Discovery is untrusted: the phone's key must match the id it advertised, and the user
-    // compares the code on both screens and accepts on the phone (04-PROTOCOL.md 4.3).
+    // Discovery is untrusted; see PairingFlow (shared with the Modern shell, ADR-074).
     private async void DiscoveredDevice_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is not string deviceId) return;
-        var container = Veyro.Container.VeyroContainer.Instance;
-        PeerDevice? phone = container.DeviceManager.FindDiscoveredPeer(deviceId);
-        PeerEndpoint? endpoint = phone?.Endpoints.FirstOrDefault();
-        if (phone is null || endpoint is null)
-        {
-            ViewModel.RequestPairing();
-            return;
-        }
-
-        using var cancel = new CancellationTokenSource();
-        var code = new TextBlock
-        {
-            FontSize = 40,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            CharacterSpacing = 120,
-            Text = "..."
-        };
-        var status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            Text = $"Connecting to {phone.DisplayName}..."
-        };
-        var dialog = new ContentDialog
-        {
-            Title = $"Pair with {phone.DisplayName}",
-            Content = new StackPanel { Spacing = 16, MinWidth = 320, Children = { code, status } },
-            CloseButtonText = "Cancel",
-            XamlRoot = XamlRoot
-        };
-        dialog.Closed += (_, _) => cancel.Cancel();
-
-        Task<PcPairResult> pairing = container.LinkServer.PairWithPhoneAsync(
-            endpoint,
-            deviceId,
-            showCode: digits => DispatcherQueue.TryEnqueue(() =>
-            {
-                code.Text = digits.Length == 6 ? $"{digits[..3]} {digits[3..]}" : digits;
-                status.Text = $"Check that {phone.DisplayName} shows the same code, then tap Accept on the phone.";
-            }),
-            cancel.Token);
-        _ = dialog.ShowAsync();
-
-        PcPairResult result = await pairing;
-        if (result.Outcome == PcPairOutcome.Paired)
-        {
-            dialog.Hide();
-            container.DeviceManager.ReloadPairedDevices();
-            return;
-        }
-        if (result.Outcome == PcPairOutcome.Cancelled) return;
-        code.Text = string.Empty;
-        status.Text = result.Outcome switch
-        {
-            PcPairOutcome.Declined => "Pairing was declined on the phone.",
-            PcPairOutcome.TimedOut => "Nobody accepted on the phone in time. Try again.",
-            PcPairOutcome.Unreachable => "The phone could not be reached. Keep Veyro open on it and both devices on the same Wi-Fi.",
-            PcPairOutcome.Busy => "The phone is busy with another pairing. Try again in a moment.",
-            PcPairOutcome.IdentityMismatch => "The device that answered is not the phone you picked. Nothing was saved.",
-            PcPairOutcome.Refused => "The phone refused to pair. Update Veyro on the phone and try again.",
-            _ => "Pairing failed. Try again, or pair from the phone instead."
-        };
-        dialog.CloseButtonText = "Close";
+        if ((sender as FrameworkElement)?.Tag is string deviceId) await PairingFlow.PairWithDiscoveredAsync(XamlRoot, DispatcherQueue, deviceId, ViewModel);
     }
 
     // Responsive pane, as in Sefirah: inline when wide, a rail with an overlay when narrow.
@@ -287,9 +219,6 @@ public sealed partial class MainPage : Page
     {
         double height = SideBar.ActualHeight;
         if (height > 0 && PaneCustomRoot.Height != height) PaneCustomRoot.Height = height;
-        // ADR-074: the Modern panel scrolls rather than leave no room for the notification feed.
-        double cap = Math.Max(300, height * 0.62);
-        if (height > 0 && ModernHomeHost.MaxHeight != cap) ModernHomeHost.MaxHeight = cap;
     }
 
     private void UpdatePaneVisuals(bool? isPaneOpen = null)
