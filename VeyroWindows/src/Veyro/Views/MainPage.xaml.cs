@@ -1,258 +1,276 @@
-﻿// Adapted from Sefirah (https://github.com/shrimqy/Sefirah), src/Sefirah/Views/MainPage.xaml.cs, GPL-3.0.
-// Modified for Veyro.
-
-using Windows.ApplicationModel.DataTransfer;
+﻿using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 
 namespace Veyro.Views;
 
+/// <summary>
+/// The Classic window (ADR-074): a phone pane on the left and a tab strip with the page of the
+/// selected tab on the right. Choosing the Modern layout swaps the whole window to
+/// <see cref="ModernShellPage"/>.
+/// </summary>
 public sealed partial class MainPage : Page
 {
     /// <summary>Navigation parameter: open Settings scrolled to Bluetooth calling.</summary>
     public const string BluetoothSettingsSection = SettingsPage.BluetoothSection;
 
-    // Left = inline expanded pane. Used at >= 1200 px and when the window is as narrow as the pane.
-    // LeftCompact = rail when closed, overlay when open.
-    private const double ExpandedPaneMinWidth = 1200;
+    /// <summary>From this window width the phone pane is always shown inline.</summary>
+    private const double InlinePaneMinWidth = 1200;
 
-    private readonly Dictionary<string, Type> _pages = new()
+    /// <summary>Tab tag to page type. Settings is the NavigationView's own settings item.</summary>
+    private static readonly IReadOnlyDictionary<string, Type> TabPages = new Dictionary<string, Type>
     {
-        { "Calls", typeof(CallsPage) },
-        { "Messages", typeof(MessagesPage) },
-        { "Transfers", typeof(TransfersPage) },
-        { "Photos", typeof(PhotosPage) },
-        { "Clipboard", typeof(ClipboardPage) }
+        ["Calls"] = typeof(CallsPage),
+        ["Messages"] = typeof(MessagesPage),
+        ["Transfers"] = typeof(TransfersPage),
+        ["Photos"] = typeof(PhotosPage),
+        ["Clipboard"] = typeof(ClipboardPage)
     };
 
-    public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
-    public NotificationsViewModel NotificationsViewModel => VeyroContainer.Instance.NotificationsViewModel;
-    public PhoneMediaViewModel MediaViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
-    public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
-    public MessagesViewModel MessagesViewModel => VeyroContainer.Instance.MessagesViewModel;
+    /// <summary>Tabs that only make sense while a phone is paired.</summary>
+    private static readonly string[] PhoneOnlyTabs = { "Calls", "Messages", "Photos" };
 
-    private string? _pendingSettingsSection;
-    private bool IsInline => SideBar.PaneDisplayMode is NavigationViewPaneDisplayMode.Left;
+    private string? _settingsSectionToShow;
+    private bool _listening;
 
     public MainPage()
     {
         InitializeComponent();
-        // Subscribed here (requests can come right after navigation, before Loaded) and released
-        // on Unloaded: the view models live for the whole app, and ADR-047 drops this page while
-        // Veyro is in the tray, so a lingering handler would keep every old page alive.
-        Subscribe();
+
+        // Listen from construction on: a toast can ask for a conversation right after navigation,
+        // before Loaded. Stop on Unloaded, because the view models outlive the page (ADR-047 drops
+        // the page while Veyro sits in the tray) and a leftover handler would keep it alive.
+        StartListening();
         Loaded += (_, _) =>
         {
-            Subscribe();
-            ApplyPaneMode(ActualWidth);
-            UpdatePaneCustomHeight();
+            StartListening();
+            FitPaneToWindow(ActualWidth);
+            StretchPaneHost();
         };
-        Unloaded += (_, _) => Unsubscribe();
+        Unloaded += (_, _) => StopListening();
     }
 
-    private bool _subscribed;
+    public MainPageViewModel ViewModel => VeyroContainer.Instance.MainPageViewModel;
 
-    private void Subscribe()
+    public NotificationsViewModel NotificationsViewModel => VeyroContainer.Instance.NotificationsViewModel;
+
+    public PhoneMediaViewModel MediaViewModel => VeyroContainer.Instance.PhoneMediaViewModel;
+
+    public DeviceStatusViewModel StatusViewModel => VeyroContainer.Instance.DeviceStatusViewModel;
+
+    public MessagesViewModel MessagesViewModel => VeyroContainer.Instance.MessagesViewModel;
+
+    private bool PaneIsInline => PhonePane.PaneDisplayMode is NavigationViewPaneDisplayMode.Left;
+
+    // ---- Wiring ----------------------------------------------------------------------------
+
+    private void StartListening()
     {
-        if (_subscribed) return;
-        _subscribed = true;
-        VeyroContainer.Instance.MessagesViewModel.OpenRequested += OnOpenMessages;
-        ViewModel.OpenDeviceSettingsRequested += OnOpenDeviceSettings;
-        ViewModel.PairRequested += OpenPairing;
-        ViewModel.PropertyChanged += OnViewModelChanged;
-        VeyroContainer.Instance.SettingsStore.SettingsChanged += OnSettingsChanged;
+        if (_listening) return;
+        _listening = true;
+        MessagesViewModel.OpenRequested += ShowMessagesTab;
+        ViewModel.OpenDeviceSettingsRequested += ShowDeviceSettings;
+        ViewModel.PairRequested += ShowPairingPage;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        VeyroContainer.Instance.SettingsStore.SettingsChanged += SettingsStore_SettingsChanged;
     }
 
-    // ADR-074: this page is the Classic layout; choosing Modern swaps the whole window to ModernShellPage.
-    private void OnSettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(() =>
+    private void StopListening()
     {
-        if (!AppUiStyle.IsClassic(settings) && Frame is { } frame && ReferenceEquals(frame.Content, this))
-        {
-            frame.Navigate(typeof(ModernShellPage), ModernShellPage.SettingsTarget);
-            frame.BackStack.Clear();
-        }
+        if (!_listening) return;
+        _listening = false;
+        MessagesViewModel.OpenRequested -= ShowMessagesTab;
+        ViewModel.OpenDeviceSettingsRequested -= ShowDeviceSettings;
+        ViewModel.PairRequested -= ShowPairingPage;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        VeyroContainer.Instance.SettingsStore.SettingsChanged -= SettingsStore_SettingsChanged;
+    }
+
+    private void SettingsStore_SettingsChanged(AppSettings settings) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (AppUiStyle.IsClassic(settings) || Frame is not { } frame || !ReferenceEquals(frame.Content, this)) return;
+        frame.Navigate(typeof(ModernShellPage), ModernShellPage.SettingsTarget);
+        frame.BackStack.Clear();
     });
 
-    private void Unsubscribe()
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (!_subscribed) return;
-        _subscribed = false;
-        VeyroContainer.Instance.MessagesViewModel.OpenRequested -= OnOpenMessages;
-        ViewModel.OpenDeviceSettingsRequested -= OnOpenDeviceSettings;
-        ViewModel.PairRequested -= OpenPairing;
-        ViewModel.PropertyChanged -= OnViewModelChanged;
-        VeyroContainer.Instance.SettingsStore.SettingsChanged -= OnSettingsChanged;
-    }
-
-    // A toast asked for a conversation: switch to the Messages tab (the view model selects the thread).
-    private void OnOpenMessages() => NavigateToPage("Messages");
-
-    private void OnOpenDeviceSettings() => OpenSettings(SettingsPage.DevicesSection);
-
-    private void OnViewModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        // The phone tabs hide without a phone; do not leave one of them on screen.
-        if (e.PropertyName == nameof(MainPageViewModel.HasActiveDevice) && !ViewModel.HasActiveDevice &&
-            MainNavigationView.SelectedItem is NavigationViewItem { Tag: "Calls" or "Messages" or "Photos" })
-        {
-            OpenSettings(null);
-        }
+        // Calls, Messages and Photos disappear without a phone; move off them when that happens.
+        if (e.PropertyName != nameof(MainPageViewModel.HasActiveDevice) || ViewModel.HasActiveDevice) return;
+        if (TabBar.SelectedItem is NavigationViewItem { Tag: string tag } && PhoneOnlyTabs.Contains(tag))
+            ShowSettings(null);
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        _pendingSettingsSection = e.Parameter as string;
+        _settingsSectionToShow = e.Parameter as string;
     }
 
-    private void MainNavigationView_Loaded(object sender, RoutedEventArgs e)
+    // ---- Tabs ------------------------------------------------------------------------------
+
+    private void TabBar_Loaded(object sender, RoutedEventArgs e)
     {
-        if (!string.IsNullOrEmpty(_pendingSettingsSection))
+        if (!string.IsNullOrEmpty(_settingsSectionToShow))
         {
-            OpenSettings(_pendingSettingsSection);
-            return;
+            ShowSettings(_settingsSectionToShow);
         }
-        // As in Sefirah: no phone, start in Settings where pairing lives.
-        if (ViewModel.HasActiveDevice) NavigateToPage("Messages");
-        else OpenSettings(null);
-    }
-
-    private void NavigationView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
-    {
-        if (args.IsSettingsSelected)
+        else if (ViewModel.HasActiveDevice)
         {
-            ContentFrame.Navigate(typeof(SettingsPage), _pendingSettingsSection);
-            _pendingSettingsSection = null;
-            return;
-        }
-
-        if (args.SelectedItemContainer is NavigationViewItem { Tag: string tag } && _pages.TryGetValue(tag, out Type? page))
-            ContentFrame.Navigate(page);
-    }
-
-    private void NavigateToPage(string tag)
-    {
-        NavigationViewItem? item = tag switch
-        {
-            "Calls" => CallsNavigationItem,
-            "Messages" => MessagesNavigationItem,
-            "Transfers" => TransfersNavigationItem,
-            "Photos" => PhotosNavigationItem,
-            "Clipboard" => ClipboardNavigationItem,
-            _ => null
-        };
-        if (item is not null && !ReferenceEquals(MainNavigationView.SelectedItem, item))
-            MainNavigationView.SelectedItem = item;
-    }
-
-    private void OpenSettings(string? section)
-    {
-        _pendingSettingsSection = section;
-        if (ReferenceEquals(MainNavigationView.SelectedItem, MainNavigationView.SettingsItem))
-        {
-            ContentFrame.Navigate(typeof(SettingsPage), _pendingSettingsSection);
-            _pendingSettingsSection = null;
+            SelectTab("Messages");
         }
         else
         {
-            MainNavigationView.SelectedItem = MainNavigationView.SettingsItem;
+            // Without a phone the first screen is Settings, where pairing starts.
+            ShowSettings(null);
         }
     }
 
-    private void OpenPairing()
+    private void TabBar_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        // The pairing screen is a page of its own; clearing the tab lets any tab bring the user back.
-        MainNavigationView.SelectedItem = null;
-        ContentFrame.Navigate(typeof(PairDevicePage));
+        if (args.IsSettingsSelected)
+        {
+            TabContent.Navigate(typeof(SettingsPage), _settingsSectionToShow);
+            _settingsSectionToShow = null;
+        }
+        else if (args.SelectedItemContainer?.Tag is string tag && TabPages.TryGetValue(tag, out Type? pageType))
+        {
+            TabContent.Navigate(pageType);
+        }
     }
+
+    private void SelectTab(string tag)
+    {
+        NavigationViewItem? tab = tag switch
+        {
+            "Calls" => CallsTab,
+            "Messages" => MessagesTab,
+            "Transfers" => TransfersTab,
+            "Photos" => PhotosTab,
+            "Clipboard" => ClipboardTab,
+            _ => null
+        };
+        if (tab is not null && !ReferenceEquals(TabBar.SelectedItem, tab)) TabBar.SelectedItem = tab;
+    }
+
+    private void ShowSettings(string? section)
+    {
+        _settingsSectionToShow = section;
+        if (!ReferenceEquals(TabBar.SelectedItem, TabBar.SettingsItem))
+        {
+            // Selecting the item raises SelectionChanged, which navigates.
+            TabBar.SelectedItem = TabBar.SettingsItem;
+            return;
+        }
+        TabContent.Navigate(typeof(SettingsPage), _settingsSectionToShow);
+        _settingsSectionToShow = null;
+    }
+
+    // A toast asked for a conversation; the view model selects the thread itself.
+    private void ShowMessagesTab() => SelectTab("Messages");
+
+    private void ShowDeviceSettings() => ShowSettings(SettingsPage.DevicesSection);
+
+    private void ShowPairingPage()
+    {
+        // Pairing is a page of its own. No tab stays selected, so any tab leads back out of it.
+        TabBar.SelectedItem = null;
+        TabContent.Navigate(typeof(PairDevicePage));
+    }
+
+    // ---- Pairing prompt in the pane --------------------------------------------------------
 
     private void PairPhone_Click(object sender, RoutedEventArgs e) => ViewModel.RequestPairing();
 
-    // Discovery is untrusted; see PairingFlow (shared with the Modern shell, ADR-074).
-    private async void DiscoveredDevice_Click(object sender, RoutedEventArgs e)
+    // Discovery data is untrusted; PairingFlow (shared with the Modern shell) asks the user first.
+    private async void NearbyPhone_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is string deviceId) await PairingFlow.PairWithDiscoveredAsync(XamlRoot, DispatcherQueue, deviceId, ViewModel);
+        if (sender is FrameworkElement { Tag: string deviceId })
+            await PairingFlow.PairWithDiscoveredAsync(XamlRoot, DispatcherQueue, deviceId, ViewModel);
     }
 
-    // Responsive pane, as in Sefirah: inline when wide, a rail with an overlay when narrow.
-    private NavigationViewPaneDisplayMode NavigationMode(double width)
-        => width <= SideBar.OpenPaneLength || width >= ExpandedPaneMinWidth
+    // ---- Phone pane: inline when the window is wide, a rail plus overlay when it is narrow --
+
+    private void PhonePane_SizeChanged(object sender, SizeChangedEventArgs e) => FitPaneToWindow(ActualWidth);
+
+    private void FitPaneToWindow(double windowWidth)
+    {
+        // Before the first layout the width can be the rail's, not the window's.
+        if (windowWidth <= PhonePane.CompactPaneLength) return;
+
+        bool inline = windowWidth <= PhonePane.OpenPaneLength || windowWidth >= InlinePaneMinWidth;
+        NavigationViewPaneDisplayMode wanted = inline
             ? NavigationViewPaneDisplayMode.Left
             : NavigationViewPaneDisplayMode.LeftCompact;
+        if (PhonePane.PaneDisplayMode == wanted) return;
 
-    private void SideBar_SizeChanged(object sender, SizeChangedEventArgs e) => ApplyPaneMode(ActualWidth);
-
-    private void ApplyPaneMode(double width)
-    {
-        // The first layout can report the rail width rather than the window.
-        if (width <= SideBar.CompactPaneLength) return;
-        NavigationViewPaneDisplayMode mode = NavigationMode(width);
-        if (SideBar.PaneDisplayMode == mode) return;
-        SideBar.PaneDisplayMode = mode;
-        bool open = mode is NavigationViewPaneDisplayMode.Left;
-        if (SideBar.IsPaneOpen != open) SideBar.IsPaneOpen = open;
-        UpdatePaneVisuals(open);
+        PhonePane.PaneDisplayMode = wanted;
+        if (PhonePane.IsPaneOpen != inline) PhonePane.IsPaneOpen = inline;
+        ShowPaneContent(inline);
     }
 
-    private void SideBar_PaneOpening(NavigationView sender, object args) => UpdatePaneVisuals(isPaneOpen: true);
+    private void PhonePane_PaneOpening(NavigationView sender, object args) => ShowPaneContent(paneOpen: true);
 
-    private void SideBar_PaneClosing(NavigationView sender, NavigationViewPaneClosingEventArgs args) => UpdatePaneVisuals(isPaneOpen: false);
+    private void PhonePane_PaneClosing(NavigationView sender, NavigationViewPaneClosingEventArgs args) => ShowPaneContent(paneOpen: false);
 
-    private void SideBar_PaneClosed(NavigationView sender, object args)
+    private void PhonePane_PaneClosed(NavigationView sender, object args)
     {
-        if (IsInline)
+        if (PaneIsInline)
         {
-            // Inline should stay open; a close here would leave a zero-width pane.
-            if (!SideBar.IsPaneOpen) SideBar.IsPaneOpen = true;
+            // An inline pane never closes; a closed one would leave an empty strip.
+            if (!PhonePane.IsPaneOpen) PhonePane.IsPaneOpen = true;
             return;
         }
-        UpdatePaneVisuals(isPaneOpen: false);
+        ShowPaneContent(paneOpen: false);
     }
 
-    private void SideBar_LayoutUpdated(object? sender, object e) => UpdatePaneCustomHeight();
+    private void PhonePane_LayoutUpdated(object? sender, object e) => StretchPaneHost();
 
-    private void OpenSideBar_Click(object sender, RoutedEventArgs e) => SideBar.IsPaneOpen = true;
+    private void PaneOpenRequested(object sender, RoutedEventArgs e) => PhonePane.IsPaneOpen = true;
 
-    private void CloseSideBar_Click(object sender, RoutedEventArgs e) => SideBar.IsPaneOpen = false;
+    private void PaneCloseRequested(object sender, RoutedEventArgs e) => PhonePane.IsPaneOpen = false;
 
-    /// <summary>PaneCustomContent does not stretch to the navigation height on its own.</summary>
-    private void UpdatePaneCustomHeight()
+    /// <summary>The pane's custom content is not stretched by the NavigationView; give it the full height.</summary>
+    private void StretchPaneHost()
     {
-        double height = SideBar.ActualHeight;
-        if (height > 0 && PaneCustomRoot.Height != height) PaneCustomRoot.Height = height;
+        double height = PhonePane.ActualHeight;
+        if (height > 0 && PaneHost.Height != height) PaneHost.Height = height;
     }
 
-    private void UpdatePaneVisuals(bool? isPaneOpen = null)
+    private void ShowPaneContent(bool? paneOpen = null)
     {
-        bool paneOpen = isPaneOpen ?? SideBar.IsPaneOpen;
-        bool rail = !paneOpen && !IsInline;
-        CompactPaneContent.Visibility = rail ? Visibility.Visible : Visibility.Collapsed;
-        ExpandedPaneContent.Visibility = rail ? Visibility.Collapsed : Visibility.Visible;
-        CollapsePaneButton.Visibility = !IsInline && paneOpen ? Visibility.Visible : Visibility.Collapsed;
+        bool open = paneOpen ?? PhonePane.IsPaneOpen;
+        bool showRail = !open && !PaneIsInline;
+        RailView.Visibility = showRail ? Visibility.Visible : Visibility.Collapsed;
+        FullPaneView.Visibility = showRail ? Visibility.Collapsed : Visibility.Visible;
+        ClosePaneButton.Visibility = open && !PaneIsInline ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void Grid_DragOver(object sender, DragEventArgs e)
+    // ---- Dropping files on the window sends them to the phone ------------------------------
+
+    private bool CanDropFiles(DataPackageView data) =>
+        // A photo dragged out of the Photos tab came from the phone and must not go back to it.
+        !PhotosPage.IsDraggingPhoto && ViewModel.HasActiveDevice && data.Contains(StandardDataFormats.StorageItems);
+
+    private void FilesDragOver(object sender, DragEventArgs e)
     {
-        // A photo dragged out of the Photos tab came from the phone; dropping it here must not send it back.
-        if (PhotosPage.IsDraggingPhoto) return;
-        if (!ViewModel.HasActiveDevice || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        if (!CanDropFiles(e.DataView)) return;
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.DragUIOverride.Caption = $"Send to {ViewModel.Device?.Name}";
     }
 
-    private async void Page_Drop(object sender, DragEventArgs e)
+    private async void FilesDropped(object sender, DragEventArgs e)
     {
-        if (PhotosPage.IsDraggingPhoto) return;
-        if (!ViewModel.HasActiveDevice || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        if (!CanDropFiles(e.DataView)) return;
 
-        var items = await e.DataView.GetStorageItemsAsync();
-        // Files and whole folders (ADR-064).
-        var filePaths = items
+        // Files and whole folders are both accepted (ADR-064).
+        IReadOnlyList<IStorageItem> dropped = await e.DataView.GetStorageItemsAsync();
+        List<string> paths = dropped
             .Where(item => item is StorageFile or StorageFolder)
             .Select(item => item.Path)
-            .Where(p => !string.IsNullOrEmpty(p))
+            .Where(path => !string.IsNullOrEmpty(path))
             .ToList();
 
-        if (filePaths.Count > 0)
-            await VeyroContainer.Instance.TransfersPageViewModel.SendFilesToActiveDeviceAsync(filePaths);
+        if (paths.Count > 0)
+            await VeyroContainer.Instance.TransfersPageViewModel.SendFilesToActiveDeviceAsync(paths);
     }
 }
