@@ -33,6 +33,15 @@ public sealed partial class HomePage : Page
 
     public string OnOff(bool on) => on ? "On" : "Off";
 
+    private const double MaxContentWidth = 1180;
+
+    /// <summary>The page is exactly as wide as what is visible (at most 1180), never wider.</summary>
+    private void PageScroller_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        double width = Math.Min(MaxContentWidth, Math.Max(320, e.NewSize.Width));
+        if (Math.Abs(PageContent.Width - width) > 0.5) PageContent.Width = width;
+    }
+
     public string RingText(bool ringing) => ringing ? "Ringing. Click to stop" : "Ring the phone";
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -95,7 +104,9 @@ public sealed partial class HomePage : Page
 
         bool mine = id is not null && string.Equals(container.Speaker.PeerId, id, StringComparison.OrdinalIgnoreCase);
         SpeakerTile.IsEnabled = id is not null && (mine || container.Speaker.CanUse(id));
-        SpeakerSwitch.IsOn = mine;
+        SpeakerPillText.Text = mine ? "On" : "Off";
+        SpeakerPill.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[mine ? "AccentFillColorDefaultBrush" : "ControlFillColorSecondaryBrush"];
+        SpeakerPillText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[mine ? "TextOnAccentFillColorPrimaryBrush" : "TextFillColorPrimaryBrush"];
         SpeakerText.Text = !mine ? "Hear this PC through the phone" : container.Speaker.IsPlaying ? "Playing now" : "Starting on the phone...";
         SpeakerLink.Text = mine ? "Stop ›" : "Start ›";
         SpeakerTile.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[mine ? "AccentFillColorDefaultBrush" : "CardStrokeColorDefaultBrush"];

@@ -85,9 +85,15 @@
         </Style>
     </Page.Resources>
 
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer
+        x:Name="PageScroller"
+        HorizontalScrollBarVisibility="Disabled"
+        SizeChanged="PageScroller_SizeChanged"
+        VerticalScrollBarVisibility="Auto">
+        <!--  Width set from the visible area (at most 1180), so tiles shrink instead of pushing past the edge  -->
         <StackPanel
-            MaxWidth="1180"
+            x:Name="PageContent"
+            HorizontalAlignment="Center"
             Padding="24,16,24,28"
             Spacing="12">
 
@@ -407,16 +413,15 @@
                                     <FontIcon FontSize="18" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Glyph="&#xE7F5;" />
                                 </Border>
                                 <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Text="PC sound on phone" TextWrapping="Wrap" />
-                                <ToggleSwitch
-                                    x:Name="SpeakerSwitch"
+                                <Border
+                                    x:Name="SpeakerPill"
                                     Grid.Column="2"
-                                    MinWidth="0"
-                                    Margin="0,0,-12,0"
+                                    Padding="10,3"
                                     VerticalAlignment="Center"
-                                    IsHitTestVisible="False"
-                                    IsTabStop="False"
-                                    OffContent=""
-                                    OnContent="" />
+                                    Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                    CornerRadius="11">
+                                    <TextBlock x:Name="SpeakerPillText" FontSize="12" FontWeight="SemiBold" Text="Off" />
+                                </Border>
                             </Grid>
                             <TextBlock
                                 x:Name="SpeakerText"
