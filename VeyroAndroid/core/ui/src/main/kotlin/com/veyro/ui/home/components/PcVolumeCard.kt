@@ -1,5 +1,3 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/home/components/AudioDeviceBottomSheet.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.ui.home.components
 
 import androidx.compose.foundation.layout.Column
@@ -18,10 +16,9 @@ import androidx.compose.ui.unit.dp
 import com.veyro.core.designsystem.icons.VeyroIcons
 
 /**
- * The PC's master volume, from Sefirah's "selected audio device" card.
- *
- * Veyro changes: the PC reports one master volume in `mediaState`, so there is no device list and
- * no bottom sheet; the card is not clickable. Mute and volume go out as `mediaCmd`.
+ * The connected PC's master volume. The PC reports a single volume and mute state in `mediaState`
+ * (there is no list of audio devices), so the card is just a title and a [VolumeSlider]; mute and
+ * level changes go back as `mediaCmd`. [volume] is a percentage and is kept within 0..100.
  */
 @Composable
 internal fun PcVolumeCard(
@@ -32,17 +29,13 @@ internal fun PcVolumeCard(
     onToggleMute: () -> Unit,
 ) {
     Card(
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-        ) {
+        Column(Modifier.padding(16.dp)) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = "$pcName volume",
@@ -56,10 +49,10 @@ internal fun PcVolumeCard(
                 )
             }
             VolumeSlider(
-                volume = volume.coerceIn(0, 100).toFloat(),
-                onVolumeChange = { onVolumeChange(it.toInt().coerceIn(0, 100)) },
-                isMuted = muted,
-                toggleMute = onToggleMute,
+                level = volume.coerceIn(0, 100).toFloat(),
+                muted = muted,
+                onLevelSet = { onVolumeChange(it.toInt().coerceIn(0, 100)) },
+                onToggleMute = onToggleMute,
             )
         }
     }
