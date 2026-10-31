@@ -1,16 +1,13 @@
-// Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), app/src/main/java/com/castle/sefirah/presentation/settings/components/SwitchPreference.kt, GPL-3.0.
-// Modified for Veyro.
 package com.veyro.core.designsystem.components.preference
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -25,10 +22,17 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * A row with a switch. With [onContentClick] set and the switch on, the text part opens a detail
- * screen and only the switch toggles, separated by a divider (Sefirah's split row).
+ * A settings row with a switch.
  *
- * Veyro change: the toggle targets carry `Role.Switch` so TalkBack announces them as switches.
+ * Without [onContentClick] the whole row toggles. With it, the row is split once the switch is
+ * on: tapping the text calls [onContentClick] (typically to open a detail screen) and only the
+ * switch side toggles, with a divider between the two. While the switch is off, a tap anywhere
+ * turns it on.
+ *
+ * Toggle targets are marked [Role.Switch] so TalkBack announces them as switches.
+ *
+ * @param checkedIcon shown instead of [icon] while checked, if [uncheckedIcon] is also given.
+ * @param uncheckedIcon shown instead of [icon] while unchecked, if [checkedIcon] is also given.
  */
 @Composable
 public fun SwitchPreferenceWidget(
@@ -43,110 +47,150 @@ public fun SwitchPreferenceWidget(
     onCheckedChanged: (Boolean) -> Unit,
     onContentClick: (() -> Unit)? = null,
 ) {
-    val resolvedIcon = when {
-        checkedIcon != null && uncheckedIcon != null -> if (checked) checkedIcon else uncheckedIcon
-        else -> icon
+    val shownIcon = if (checkedIcon != null && uncheckedIcon != null) {
+        if (checked) checkedIcon else uncheckedIcon
+    } else {
+        icon
     }
 
     if (onContentClick == null) {
-        TextPreferenceWidget(
-            modifier = modifier.toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                onValueChange = onCheckedChanged,
-            ),
+        WholeRowSwitch(
+            modifier = modifier,
             title = title,
             subtitle = subtitle,
-            icon = resolvedIcon,
-            widget = {
-                Switch(
-                    checked = checked,
-                    onCheckedChange = null,
-                    enabled = enabled,
-                    modifier = Modifier.padding(start = TrailingWidgetBuffer),
-                )
-            },
-            onPreferenceClick = null,
+            icon = shownIcon,
+            checked = checked,
+            enabled = enabled,
+            onCheckedChanged = onCheckedChanged,
         )
-        return
+    } else {
+        SplitRowSwitch(
+            modifier = modifier,
+            title = title,
+            subtitle = subtitle,
+            icon = shownIcon,
+            checked = checked,
+            enabled = enabled,
+            onCheckedChanged = onCheckedChanged,
+            onContentClick = onContentClick,
+        )
+    }
+}
+
+/** Row where any tap flips the switch. */
+@Composable
+private fun WholeRowSwitch(
+    modifier: Modifier,
+    title: String,
+    subtitle: String?,
+    icon: ImageVector?,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChanged: (Boolean) -> Unit,
+) {
+    TextPreferenceWidget(
+        modifier = modifier.toggleable(
+            value = checked,
+            enabled = enabled,
+            role = Role.Switch,
+            onValueChange = onCheckedChanged,
+        ),
+        title = title,
+        subtitle = subtitle,
+        icon = icon,
+        widget = {
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                enabled = enabled,
+                modifier = Modifier.padding(start = PreferenceMetrics.widgetGap),
+            )
+        },
+        onPreferenceClick = null,
+    )
+}
+
+/** Row with a separate text target and switch target; see [SwitchPreferenceWidget]. */
+@Composable
+private fun SplitRowSwitch(
+    modifier: Modifier,
+    title: String,
+    subtitle: String?,
+    icon: ImageVector?,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChanged: (Boolean) -> Unit,
+    onContentClick: () -> Unit,
+) {
+    // While off, the entire row is one big "turn on" target. While on, only the switch cell is a
+    // toggle, so the text cell stays free to handle its own click.
+    val turnOnEverywhere = if (checked) {
+        Modifier
+    } else {
+        Modifier.toggleable(
+            value = false,
+            enabled = enabled,
+            role = Role.Switch,
+            onValueChange = { onCheckedChanged(true) },
+        )
+    }
+    val turnOffFromSwitchCell = if (checked) {
+        Modifier.toggleable(
+            value = true,
+            enabled = enabled,
+            role = Role.Switch,
+            onValueChange = { onCheckedChanged(false) },
+        )
+    } else {
+        Modifier
     }
 
-    val minHeight = LocalPreferenceMinHeight.current
-
-    Box(
+    Row(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = LocalPreferenceMinHeight.current)
             .height(IntrinsicSize.Max)
-            .sizeIn(minHeight = minHeight)
-            .then(
-                if (!checked) {
-                    Modifier.toggleable(
-                        value = false,
-                        enabled = enabled,
-                        role = Role.Switch,
-                        onValueChange = { onCheckedChanged(true) },
-                    )
-                } else {
-                    Modifier
-                },
-            ),
+            .then(turnOnEverywhere),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max)) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            ) {
-                TextPreferenceWidget(
-                    modifier = Modifier.fillMaxWidth(),
-                    title = title,
-                    subtitle = subtitle,
-                    icon = resolvedIcon,
-                    onPreferenceClick = if (checked) onContentClick else null,
-                    widget = null,
-                )
-            }
+        TextPreferenceWidget(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            title = title,
+            subtitle = subtitle,
+            icon = icon,
+            widget = null,
+            onPreferenceClick = if (checked) onContentClick else null,
+        )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .padding(horizontal = DividerSlotHorizontalPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                VerticalDivider(
-                    modifier = Modifier.height(DividerHeight),
-                    color = if (checked) MaterialTheme.colorScheme.primary else Color.Transparent,
-                )
-            }
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = DIVIDER_SIDE_GAP),
+            contentAlignment = Alignment.Center,
+        ) {
+            VerticalDivider(
+                modifier = Modifier.height(DIVIDER_LENGTH),
+                color = if (checked) MaterialTheme.colorScheme.primary else Color.Transparent,
+            )
+        }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .then(
-                        if (checked) {
-                            Modifier.toggleable(
-                                value = true,
-                                enabled = enabled,
-                                role = Role.Switch,
-                                onValueChange = { onCheckedChanged(false) },
-                            )
-                        } else {
-                            Modifier
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Switch(
-                    checked = checked,
-                    onCheckedChange = null,
-                    enabled = enabled,
-                    modifier = Modifier.padding(horizontal = PrefsHorizontalPadding),
-                )
-            }
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .then(turnOffFromSwitchCell),
+            contentAlignment = Alignment.Center,
+        ) {
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                enabled = enabled,
+                modifier = Modifier.padding(horizontal = PreferenceMetrics.sideInset),
+            )
         }
     }
 }
 
-private val DividerHeight: Dp = 32.dp
-private val DividerSlotHorizontalPadding: Dp = 8.dp
+private val DIVIDER_LENGTH: Dp = 32.dp
+private val DIVIDER_SIDE_GAP: Dp = 8.dp
