@@ -89,12 +89,18 @@
                 <Grid x:Name="PaneHost" Padding="0,32,0,0">
 
                     <!--  Collapsed rail: open button, a small phone, one button per notification  -->
-                    <StackPanel
+                    <Grid
                         x:Name="RailView"
                         Padding="0,4,0,8"
-                        Spacing="8"
+                        RowSpacing="8"
                         Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
                         <Button
+                            Grid.Row="0"
                             Width="40"
                             Height="36"
                             Padding="0"
@@ -108,6 +114,7 @@
                         </Button>
 
                         <Button
+                            Grid.Row="1"
                             Width="40"
                             Height="64"
                             Padding="0"
@@ -153,6 +160,7 @@
                         </Button>
 
                         <ScrollViewer
+                            Grid.Row="2"
                             HorizontalScrollBarVisibility="Disabled"
                             VerticalScrollBarVisibility="Auto">
                             <ItemsRepeater ItemTemplate="{StaticResource RailNotificationTemplate}" ItemsSource="{x:Bind NotificationsViewModel.Notifications, Mode=OneWay}">
@@ -161,7 +169,7 @@
                                 </ItemsRepeater.Layout>
                             </ItemsRepeater>
                         </ScrollViewer>
-                    </StackPanel>
+                    </Grid>
 
                     <!--  Full pane: either the phone panel or, without a phone, the pairing prompt  -->
                     <Grid x:Name="FullPaneView" Margin="16,4,16,16">
