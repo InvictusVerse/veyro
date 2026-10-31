@@ -44,7 +44,7 @@ import java.util.Locale
 
 /**
  * Transfer history: search, filter chips and one card per transfer with its real verification
- * outcome (REQ-T04), restyled as Material 3 list items to match the Sefirah-style screens.
+ * outcome (REQ-T04), restyled as Material 3 list items to match the other screens.
  *
  * No Receive button: receiving is always on (ADR-038).
  */

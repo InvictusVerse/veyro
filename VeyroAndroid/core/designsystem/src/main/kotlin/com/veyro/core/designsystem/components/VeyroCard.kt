@@ -15,12 +15,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * Veyro's card, now a plain Material 3 [Card] in the style of Sefirah's screens: tonal container,
+ * Veyro's card, now a plain Material 3 [Card] in the style of the other screens: tonal container,
  * large shape, no glow or gradient. The signature is unchanged so existing callers keep working.
  *
  * @param selected  Uses the primary container, for a chosen item (a send target, a feature that is on).
  * @param glow      Kept for source compatibility; now draws a thin primary outline on hero cards.
- * @param contentPadding  Inner padding. Defaults to 16.dp, as in Sefirah.
+ * @param contentPadding  Inner padding. Defaults to 16.dp.
  */
 @Composable
 public fun VeyroCard(
@@ -106,7 +106,7 @@ public fun VeyroHeroCard(
     }
 }
 
-/** Section header above a group of cards, in the primary colour like Sefirah's group labels. */
+/** Section header above a group of cards, in the primary colour. */
 @Composable
 public fun VeyroSectionHeader(
     text: String,

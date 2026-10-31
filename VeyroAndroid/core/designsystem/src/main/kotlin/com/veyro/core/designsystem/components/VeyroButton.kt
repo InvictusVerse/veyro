@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-// The Veyro button family, now thin wrappers over the Material 3 buttons Sefirah uses. Signatures
+// The Veyro button family, now thin wrappers over the Material 3 buttons. Signatures
 // are unchanged; `height` is a minimum so large fonts never clip the label.
 
 /** Primary action: a filled Material 3 [Button]. */

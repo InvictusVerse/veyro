@@ -103,7 +103,7 @@ public sealed class PairedDeviceUiModel : INotifyPropertyChanged
     public bool IsNotActive => !_isActive;
     public string SelectText => _isActive ? "Selected" : "Select";
 
-    /// <summary>Sefirah dims the phone's status row while it is offline.</summary>
+    /// <summary>The phone's status row is dimmed while it is offline.</summary>
     public double StatusOpacity => IsConnected ? 1.0 : 0.4;
 
     public event PropertyChangedEventHandler? PropertyChanged;

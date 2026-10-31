@@ -67,7 +67,7 @@ public static class PairedDeviceDirectory
         return current.DeviceId;
     }
 
-    /// <summary>Cycles through the list (mouse wheel over the phone, as in Sefirah). Delta sign gives the direction.</summary>
+    /// <summary>Cycles through the list (mouse wheel over the phone). Delta sign gives the direction.</summary>
     public static string? Step(IReadOnlyList<PairedDeviceEntry> devices, string? currentId, int delta)
     {
         ArgumentNullException.ThrowIfNull(devices);

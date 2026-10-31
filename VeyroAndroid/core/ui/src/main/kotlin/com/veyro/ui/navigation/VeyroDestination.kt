@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  * kind of bug that survives testing. Here it is a compile error.
  *
  * The four tabs show the bottom bar and the tab top bar; every other destination is a pushed
- * screen with its own back arrow, as in Sefirah's root graph.
+ * screen with its own back arrow.
  */
 public sealed interface VeyroDestination {
 
@@ -41,7 +41,7 @@ public sealed interface VeyroDestination {
     @Serializable
     public data object Clipboard : VeyroDestination
 
-    /** One paired device's settings (Sefirah's DeviceSettingsScreen). */
+    /** One paired device's settings (DeviceSettingsScreen). */
     @Serializable
     public data class DeviceSettings(val deviceId: String) : VeyroDestination
 

@@ -72,7 +72,7 @@ public sealed class PhoneMediaViewModel : BaseViewModel
     public string Title => _session?.Title ?? string.Empty;
     public bool HasTitle => !string.IsNullOrWhiteSpace(_session?.Title);
 
-    /// <summary>Sefirah's volume button reveals the volume slider under the track.</summary>
+    /// <summary>The volume button reveals the volume slider under the track.</summary>
     public bool IsVolumeOpen
     {
         get => _isVolumeOpen;

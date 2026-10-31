@@ -29,7 +29,7 @@ import com.veyro.ui.format.formatBytes
 
 /**
  * Receive: the receiver's state, live progress and the last outcome, restyled as Material 3 cards
- * to match the Sefirah-style screens.
+ * to match the other screens.
  *
  * The consent prompt for an incoming transfer is global (`InboundTransferDialog` in MainActivity),
  * not inline here, so it appears whichever screen is open.

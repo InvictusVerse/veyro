@@ -26,7 +26,7 @@ public enum class SpecialAccess {
     NOTIFICATION_LISTENER,
     NOTIFICATION_POLICY,
 
-    /** "All files access": Android 13+ gives the wallpaper image only with it (as Sefirah relies on). */
+    /** "All files access": Android 13+ gives the wallpaper image only with it. */
     ALL_FILES,
 }
 

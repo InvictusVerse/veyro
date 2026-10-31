@@ -14,19 +14,6 @@ no cloud, no account.
 
 <sub>Personal data (names, messages, notifications, file names, fingerprints) is blurred in these screenshots.</sub>
 
-## Acknowledgements
-
-Veyro builds on **[Sefirah](https://github.com/shrimqy/Sefirah)** by
-**[shrimqy](https://github.com/shrimqy)**, a GPL-3.0 phone link app for Windows and
-[Android](https://github.com/shrimqy/Sefirah-Android). Veyro adapts Sefirah's Bluetooth calling
-on Windows (call handling and the call window) and parts of its Android interface (onboarding,
-theme, typography and several shared components), restructured onto Veyro's own modules and
-encrypted link protocol. Thank you, shrimqy and the Sefirah contributors.
-
-Every adapted file is listed with its original in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and carries a header naming its source.
-If you like Veyro, please also star and support [Sefirah](https://github.com/shrimqy/Sefirah).
-
 ## Features
 
 - **Files and folders** both ways, with per-file SHA-256 verification and resume.

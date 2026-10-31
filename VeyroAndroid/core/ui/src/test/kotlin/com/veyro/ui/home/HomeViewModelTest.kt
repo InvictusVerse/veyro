@@ -38,7 +38,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-/** The device-card state and actions added for the Sefirah-style Home and Devices screens. */
+/** The device-card state and actions added for the Home and Devices screens. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelTest {
 

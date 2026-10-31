@@ -122,7 +122,7 @@ public sealed class PairingQrTests
     [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}")]
     [InlineData("veyro:pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=-5")]
     [InlineData("veyro:pair?v=2&v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
-    [InlineData("sefirah://pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
+    [InlineData("otherapp://pair?v=2&id={id}&n=x&a=192.168.1.2:5150&s={s}&e=1")]
     [InlineData("")]
     public void TryParse_RejectsRuleViolations(string template)
     {
