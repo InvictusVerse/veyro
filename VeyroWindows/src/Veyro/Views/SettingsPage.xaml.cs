@@ -24,11 +24,25 @@ public sealed partial class SettingsPage : Page
     /// <summary>Navigation parameter that opens the per-app notification rules (ADR-063).</summary>
     public const string NotificationsSection = "notifications";
 
-    private string _initialSection = "general";
+    private const string GeneralSection = "general";
+    private const string AboutSection = "about";
+
+    private string _initialSection = GeneralSection;
+
+    /// <summary>Section tag -> its entry in the list and the panel it shows.</summary>
+    private readonly Dictionary<string, (ListViewItem Entry, UIElement Panel)> _sections;
 
     public SettingsPage()
     {
         InitializeComponent();
+        _sections = new()
+        {
+            [GeneralSection] = (GeneralEntry, GeneralPanel),
+            [DevicesSection] = (DevicesEntry, DevicesPanel),
+            [NotificationsSection] = (NotificationsEntry, NotificationsPanel),
+            [BluetoothSection] = (BluetoothEntry, BluetoothPanel),
+            [AboutSection] = (AboutEntry, AboutPanel)
+        };
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -39,14 +53,7 @@ public sealed partial class SettingsPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        SettingsNav.SelectedItem = _initialSection switch
-        {
-            DevicesSection => DevicesItem,
-            NotificationsSection => NotificationsItem,
-            BluetoothSection => BluetoothItem,
-            "about" => AboutItem,
-            _ => GeneralItem
-        };
+        SectionList.SelectedItem = (_sections.TryGetValue(_initialSection, out var target) ? target : _sections[GeneralSection]).Entry;
         Devices.RefreshAutoAccept();
         await ViewModel.RefreshAsync();
     }
@@ -61,14 +68,11 @@ public sealed partial class SettingsPage : Page
         catch (Exception error) { VeyroTrace.Error("Saving auto-accept failed", error); }
     }
 
-    private void SettingsNav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private void SectionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        string tag = (args.SelectedItem as NavigationViewItem)?.Tag as string ?? "general";
-        GeneralSection.Visibility = tag == "general" ? Visibility.Visible : Visibility.Collapsed;
-        DevicesSectionPanel.Visibility = tag == DevicesSection ? Visibility.Visible : Visibility.Collapsed;
-        NotificationsSectionPanel.Visibility = tag == NotificationsSection ? Visibility.Visible : Visibility.Collapsed;
-        BluetoothSectionPanel.Visibility = tag == BluetoothSection ? Visibility.Visible : Visibility.Collapsed;
-        AboutSection.Visibility = tag == "about" ? Visibility.Visible : Visibility.Collapsed;
+        string tag = (SectionList.SelectedItem as ListViewItem)?.Tag as string ?? GeneralSection;
+        foreach (var (key, (_, panel)) in _sections)
+            panel.Visibility = key == tag ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Opens the shared QR pairing screen (ADR-030).</summary>

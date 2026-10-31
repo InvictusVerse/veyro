@@ -1,0 +1,40 @@
+<UserControl
+    x:Class="Veyro.UserControls.SettingRow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    HorizontalContentAlignment="Stretch">
+    <!--  One labelled row: optional glyph, title with hint, optional body under them, and a control slot at the end  -->
+    <Border Style="{StaticResource RowSurfaceStyle}">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <FontIcon
+                x:Name="GlyphIcon"
+                Margin="0,0,16,0"
+                VerticalAlignment="Center"
+                Visibility="Collapsed" />
+            <StackPanel
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Spacing="3">
+                <TextBlock
+                    x:Name="TitleText"
+                    Style="{StaticResource RowTitleStyle}"
+                    Visibility="Collapsed" />
+                <TextBlock
+                    x:Name="HintText"
+                    Style="{StaticResource RowHintStyle}"
+                    Visibility="Collapsed" />
+                <ContentPresenter x:Name="BodySlot" />
+            </StackPanel>
+            <ContentPresenter
+                x:Name="EndSlot"
+                Grid.Column="2"
+                Margin="16,0,0,0"
+                VerticalAlignment="Center" />
+        </Grid>
+    </Border>
+</UserControl>
