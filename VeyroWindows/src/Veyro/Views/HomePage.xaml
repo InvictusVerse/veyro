@@ -231,6 +231,19 @@
                                         </Flyout>
                                     </Button.Flyout>
                                 </Button>
+                                <!--  As in Classic: re-announces this PC so the phone reconnects  -->
+                                <Button
+                                    Width="30"
+                                    Height="30"
+                                    Margin="-8,0,0,0"
+                                    Padding="0"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Reconnect"
+                                    Click="Reconnect_Click"
+                                    CornerRadius="15"
+                                    ToolTipService.ToolTip="Reconnect">
+                                    <FontIcon FontSize="13" Glyph="&#xE72C;" />
+                                </Button>
                                 <FontIcon
                                     VerticalAlignment="Center"
                                     AutomationProperties.Name="{x:Bind StatusViewModel.BluetoothLabel, Mode=OneWay}"
