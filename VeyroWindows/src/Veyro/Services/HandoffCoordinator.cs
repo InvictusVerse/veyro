@@ -133,8 +133,11 @@ internal static class HandoffCoordinator
                 : new HandoffReply(HandoffOutcome.Failed, GenericFailure);
         if (toast)
         {
-            if (reply.Outcome == HandoffOutcome.Sent) container.NotificationToastService.ShowStatus($"Sent {what}", $"To {names}", tag: "handoff");
-            else container.NotificationToastService.ShowStatus($"Could not send {what}", reply.Message ?? GenericFailure, tag: "handoff");
+            // 1.0.5: results remove themselves from Windows notifications after five minutes.
+            if (reply.Outcome == HandoffOutcome.Sent)
+                container.NotificationToastService.ShowStatus($"Sent {what}", $"To {names}", "handoff", VeyroContainer.ResultToastLifetime);
+            else
+                container.NotificationToastService.ShowStatus($"Could not send {what}", reply.Message ?? GenericFailure, "handoff", VeyroContainer.ResultToastLifetime);
         }
         return reply;
     }

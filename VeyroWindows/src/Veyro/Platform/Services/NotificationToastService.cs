@@ -488,7 +488,11 @@ public sealed class NotificationToastService : INotificationToastService
         }
     }
 
-    public void ShowStatus(string title, string text, string? tag = null)
+    public void ShowStatus(string title, string text, string? tag = null) => ShowStatusCore(title, text, tag, null);
+
+    public void ShowStatus(string title, string text, string? tag, TimeSpan lifetime) => ShowStatusCore(title, text, tag, lifetime);
+
+    private void ShowStatusCore(string title, string text, string? tag, TimeSpan? lifetime)
     {
         if (!_registered) return;
         try
@@ -499,11 +503,77 @@ public sealed class NotificationToastService : INotificationToastService
                 .AddText(Clip(title, MaxTitleLength))
                 .AddText(Clip(text, MaxBodyLength));
             if (tag is not null) builder.SetTag(Hash("s|" + tag));
-            AppNotificationManager.Default.Show(builder.BuildNotification());
+            AppNotification notification = builder.BuildNotification();
+            if (lifetime is { } life)
+            {
+                notification.Expiration = DateTimeOffset.Now.Add(life);
+                notification.ExpiresOnReboot = true;
+            }
+            AppNotificationManager.Default.Show(notification);
         }
         catch (Exception error)
         {
             VeyroTrace.Warn($"Status toast failed: {error.GetType().Name}");
+        }
+    }
+
+    /// <summary>Received-files toasts handed out, token to path; only these paths are ever opened.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string? Open, string? Show)> _received = new();
+    private const int MaxReceivedTokens = 32;
+
+    public void ShowReceived(string title, string text, string? openPath, string? folderOrFilePath, TimeSpan lifetime)
+    {
+        if (!_registered) return;
+        try
+        {
+            if (_received.Count >= MaxReceivedTokens) _received.Clear();
+            string token = Guid.NewGuid().ToString("N");
+            _received[token] = (openPath, folderOrFilePath);
+            var builder = new AppNotificationBuilder()
+                .AddArgument("action", "open")
+                .SetGroup(StatusGroup)
+                .SetTag(Hash("s|received"))
+                .AddText(Clip(title, MaxTitleLength))
+                .AddText(Clip(text, MaxBodyLength));
+            if (openPath is not null)
+                builder.AddButton(new AppNotificationButton("Open").AddArgument("action", "recv-open").AddArgument("token", token));
+            if (folderOrFilePath is not null)
+                builder.AddButton(new AppNotificationButton("Show in folder").AddArgument("action", "recv-folder").AddArgument("token", token));
+            AppNotification notification = builder.BuildNotification();
+            notification.Expiration = DateTimeOffset.Now.Add(lifetime);
+            notification.ExpiresOnReboot = true;
+            AppNotificationManager.Default.Show(notification);
+        }
+        catch (Exception error)
+        {
+            VeyroTrace.Warn($"Received toast failed: {error.GetType().Name}");
+        }
+    }
+
+    /// <summary>Opens a received file, or shows it (or its folder) in Explorer. Paths come from Veyro, not the toast.</summary>
+    private void OpenReceived(IDictionary<string, string> arguments, bool open)
+    {
+        if (!arguments.TryGetValue("token", out string? token) || !_received.TryGetValue(token, out var paths)) return;
+        try
+        {
+            if (open && paths.Open is { } file && File.Exists(file))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = file, UseShellExecute = true });
+            }
+            else if (!open && paths.Show is { } target && (File.Exists(target) || Directory.Exists(target)))
+            {
+                // A Windows path cannot contain a quote, so quoting it is enough.
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = File.Exists(target) ? $"/select,\"{target}\"" : $"\"{target}\"",
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            VeyroTrace.Warn($"Opening a received file failed: {error.GetType().Name}");
         }
     }
 
@@ -555,6 +625,12 @@ public sealed class NotificationToastService : INotificationToastService
             case "mute-app":
                 if (arguments.TryGetValue("pkg", out string? package) && NotificationAppRules.IsValidPackage(package))
                     _ = TurnOffPopupsAsync(package);
+                return;
+            case "recv-open":
+                OpenReceived(arguments, open: true);
+                return;
+            case "recv-folder":
+                OpenReceived(arguments, open: false);
                 return;
         }
         if (action is "open" or "call-open")

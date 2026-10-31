@@ -21,6 +21,9 @@ public sealed class VeyroContainer
     public IIdentityManager IdentityManager { get; }
     public ISettingsStore SettingsStore { get; }
     public ITrustStore TrustStore { get; }
+
+    /// <summary>1.0.5: how long send and receive result toasts stay in Windows notifications (like the phone).</summary>
+    public static readonly TimeSpan ResultToastLifetime = TimeSpan.FromMinutes(5);
     public ITransferHistoryStore HistoryStore { get; }
     public IDiscoveryService DiscoveryService { get; }
     public LinkServer LinkServer { get; }
@@ -203,6 +206,21 @@ public sealed class VeyroContainer
         FileTransferService = fileTransfers;
         // Files and folders the phone sends go into the same Transfers history as sends.
         LinkServer.InboundTransferFinished += fileTransfers.RecordReceived;
+        // 1.0.5: a "Received" toast while the window is not on screen, gone after five minutes.
+        LinkServer.InboundTransferFinished += report =>
+        {
+            if (report.Outcome != Veyro.Core.Link.InboundTransferOutcome.Completed || App.WindowOnScreen) return;
+            string from = TrustStore.GetPeer(report.PeerDeviceId)?.ShownName ?? "your phone";
+            var saved = report.Items.Where(item => item.SavedPath is not null).ToList();
+            if (saved.Count == 0) return;
+            string what = report.FolderName is { } folder
+                ? $"{folder} ({saved.Count} {(saved.Count == 1 ? "file" : "files")})"
+                : saved.Count == 1 ? Path.GetFileName(saved[0].SavedPath!) : $"{saved.Count} files";
+            string? open = report.FolderName is null && saved.Count == 1 ? saved[0].SavedPath : null;
+            string show = report.FolderName is { } name ? Path.Combine(report.DestinationRoot, name)
+                : saved.Count == 1 ? saved[0].SavedPath! : report.DestinationRoot;
+            NotificationToastService.ShowReceived($"Received {what}", $"From {from}", open, show, ResultToastLifetime);
+        };
         // ADR-047: what Veyro may do in the background (polling, EcoQoS), from three facts.
         BackgroundPower = new BackgroundPower(
             PeerSessions, LinkServer, FileTransferService, PcMediaSource, PcWallpaperSource, PcNetworkSource,

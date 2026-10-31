@@ -20,4 +20,17 @@ public interface INotificationToastService : IDisposable
     /// replaces it. Clicking it opens Veyro. Never throws.
     /// </summary>
     void ShowStatus(string title, string text, string? tag = null);
+
+    /// <summary>
+    /// A status toast that removes itself from Windows notifications after
+    /// <paramref name="lifetime"/> (send and receive results, 1.0.5). Never throws.
+    /// </summary>
+    void ShowStatus(string title, string text, string? tag, TimeSpan lifetime);
+
+    /// <summary>
+    /// Files from a phone arrived (1.0.5): Open (one file) and Show in folder. The paths stay in
+    /// Veyro; the toast only carries a random token. Removed after <paramref name="lifetime"/>.
+    /// Never throws.
+    /// </summary>
+    void ShowReceived(string title, string text, string? openPath, string? folderOrFilePath, TimeSpan lifetime);
 }
