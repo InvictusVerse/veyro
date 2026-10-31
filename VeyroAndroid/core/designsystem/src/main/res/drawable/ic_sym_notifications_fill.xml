@@ -1,11 +1,15 @@
-<!-- Adapted from Sefirah-Android (https://github.com/shrimqy/Sefirah-Android), core/common/src/main/res/drawable/ic_notifications_fill.xml, GPL-3.0.
-     Modified for Veyro (renamed). Glyph: Google Material Symbols, Apache-2.0. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
+    android:viewportWidth="24"
+    android:viewportHeight="24">
   <path
-      android:pathData="M200,760q-17,0 -28.5,-11.5T160,720q0,-17 11.5,-28.5T200,680h40v-280q0,-83 50,-147.5T420,168v-28q0,-25 17.5,-42.5T480,80q25,0 42.5,17.5T540,140v28q80,20 130,84.5T720,400v280h40q17,0 28.5,11.5T800,720q0,17 -11.5,28.5T760,760L200,760ZM480,880q-33,0 -56.5,-23.5T400,800h160q0,33 -23.5,56.5T480,880Z"
+      android:pathData="M12 3.5A5.5 5.5 0 0 0 6.5 9V12.5L4.5 16V17H19.5V16L17.5 12.5V9A5.5 5.5 0 0 0 12 3.5Z"
+      android:fillColor="#e3e3e3"
+      android:strokeColor="#e3e3e3"
+      android:strokeWidth="1.5"
+      android:strokeLineJoin="round"/>
+  <path
+      android:pathData="M10 18.8H14A2 2 0 0 1 10 18.8Z"
       android:fillColor="#e3e3e3"/>
 </vector>
