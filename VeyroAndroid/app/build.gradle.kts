@@ -5,13 +5,29 @@ plugins {
     // No kotlin-android plugin: AGP 9 compiles Kotlin itself (built-in Kotlin).
 }
 
+// ADR-075: the release key comes only from environment variables that
+// VeyroAndroid/scripts/build-release-apk.ps1 sets for one Gradle run. Nothing about the key
+// (path, alias, passwords) is stored in the repository or in Gradle properties.
+val releaseStoreFile: String? = providers.environmentVariable("VEYRO_RELEASE_STORE_FILE").orNull
+
 android {
     namespace = "com.veyro"
 
     defaultConfig {
         applicationId = "com.veyro"
         versionCode = 1
-        versionName = "0.1.0-dev"
+        versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = providers.environmentVariable("VEYRO_RELEASE_STORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("VEYRO_RELEASE_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("VEYRO_RELEASE_KEY_PASSWORD").orNull
+            }
+        }
     }
 
     buildFeatures {
@@ -30,9 +46,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Debug signing for now so `assembleRelease` is runnable locally. Replace with a
-            // real signing config before any distribution.
-            signingConfig = signingConfigs.getByName("debug")
+            // The real key through the release script; otherwise debug-signed, for local checks
+            // only (the script refuses to publish a debug-signed APK).
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         // Release-speed ART and Compose without release minification, for judging smoothness.
         create("profile") {
